@@ -23,7 +23,7 @@ class LoginController extends GetxController {
   final CookieManager cookieManager = CookieManager.instance(webViewEnvironment: webViewEnvironment);
   InAppWebViewController? inAppWebViewController;
   final GlobalKey webViewKey = GlobalKey();
-  final InAppWebViewSettings settings = InAppWebViewSettings(isInspectable: kDebugMode, userAgent: kUserAgent["User-Agent"], javaScriptEnabled: true);
+  final InAppWebViewSettings settings = InAppWebViewSettings(isInspectable: kDebugMode, userAgent: kHeader["User-Agent"], javaScriptEnabled: true);
   RxString currentUrl = "".obs;
 
   Rx<PageState> pageState = PageState.success.obs;
