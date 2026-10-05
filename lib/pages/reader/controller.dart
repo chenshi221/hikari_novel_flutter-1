@@ -127,8 +127,10 @@ class ReaderController extends GetxController {
     //延迟更新阅读记录
     //debounce / ever / interval 只能在 Controller 生命周期里创建一次
     //TODO 还需要优化
-    debounce(currentLocation, (_) => setReadHistory(), time: const Duration(milliseconds: 150));
-    debounce(currentIndex, (_) => setReadHistory(), time: const Duration(milliseconds: 150));
+    ever(currentLocation, (_) => _skipPendingReadHistory = false);
+    ever(currentIndex, (_) => _skipPendingReadHistory = false);
+    debounce(currentLocation, (_) => _onReadPositionSettled(), time: const Duration(milliseconds: 150));
+    debounce(currentIndex, (_) => _onReadPositionSettled(), time: const Duration(milliseconds: 150));
   }
 
   @override
@@ -281,6 +283,7 @@ class ReaderController extends GetxController {
         ),
       );
     } else {
+      _saveReadHistoryBeforeChapterChange();
       if (currentVolumeIndex + 1 != currentVolumeTotal && currentChapterIndex + 1 == currentChapterTotal) {
         currentVolumeIndex++;
         currentChapterIndex = 0;
@@ -304,6 +307,7 @@ class ReaderController extends GetxController {
         ),
       );
     } else {
+      _saveReadHistoryBeforeChapterChange();
       if (currentVolumeIndex - 1 != -1 && currentChapterIndex - 1 == -1) {
         currentVolumeIndex--;
         currentChapterIndex = currentChapterTotal - 1;
@@ -314,6 +318,20 @@ class ReaderController extends GetxController {
       clearInitLocation();
       getContent();
     }
+  }
+
+  //防抖回调在150ms后才读取cid和位置，若期间切换了章节，会把上一章的位置写到新章节上
+  bool _skipPendingReadHistory = false;
+
+  void _onReadPositionSettled() {
+    if (_skipPendingReadHistory) return;
+    setReadHistory();
+  }
+
+  //切换章节前立即保存当前章节的位置，并丢弃尚未触发的防抖写入
+  void _saveReadHistoryBeforeChapterChange() {
+    setReadHistory();
+    _skipPendingReadHistory = true;
   }
 
   void setReadHistory() async {
@@ -741,6 +759,9 @@ class ReaderSettingsState {
     required this.readerBottomStatusBarHorizontalSpacing,
   });
 
+  //可为空的字段用哨兵值区分“未传入”和“显式传入null”，否则无法通过copyWith清空
+  static const Object _unset = Object();
+
   ReaderSettingsState copyWith({
     ReaderDirection? direction,
     bool? pageTurningAnimation,
@@ -756,17 +777,17 @@ class ReaderSettingsState {
     double? topMargin,
     double? rightMargin,
     double? bottomMargin,
-    Color? textColor,
-    Color? bgColor,
-    String? textStyleFilePath,
-    String? textFamily,
-    String? bgImagePath,
-    String? readerDayBgImage,
-    String? readerNightBgImage,
-    Color? readerDayTextColor,
-    Color? readerNightTextColor,
-    Color? readerDayBgColor,
-    Color? readerNightBgColor,
+    Object? textColor = _unset,
+    Object? bgColor = _unset,
+    Object? textStyleFilePath = _unset,
+    Object? textFamily = _unset,
+    Object? bgImagePath = _unset,
+    Object? readerDayBgImage = _unset,
+    Object? readerNightBgImage = _unset,
+    Object? readerDayTextColor = _unset,
+    Object? readerNightTextColor = _unset,
+    Object? readerDayBgColor = _unset,
+    Object? readerNightBgColor = _unset,
     int? readerParaIndent,
     int? readerParaSpacing,
     int? readerBottomStatusBarHorizontalSpacing,
@@ -785,17 +806,17 @@ class ReaderSettingsState {
     topMargin: topMargin ?? this.topMargin,
     rightMargin: rightMargin ?? this.rightMargin,
     bottomMargin: bottomMargin ?? this.bottomMargin,
-    textColor: textColor ?? this.textColor,
-    bgColor: bgColor ?? this.bgColor,
-    textStyleFilePath: textStyleFilePath ?? this.textStyleFilePath,
-    textFamily: textFamily ?? this.textFamily,
-    bgImagePath: bgImagePath ?? this.bgImagePath,
-    readerDayBgImage: readerDayBgImage ?? this.readerDayBgImage,
-    readerNightBgImage: readerNightBgImage ?? this.readerNightBgImage,
-    readerDayTextColor: readerDayTextColor ?? this.readerDayTextColor,
-    readerNightTextColor: readerNightTextColor ?? this.readerNightTextColor,
-    readerDayBgColor: readerDayBgColor ?? this.readerDayBgColor,
-    readerNightBgColor: readerNightBgColor ?? this.readerNightBgColor,
+    textColor: identical(textColor, _unset) ? this.textColor : textColor as Color?,
+    bgColor: identical(bgColor, _unset) ? this.bgColor : bgColor as Color?,
+    textStyleFilePath: identical(textStyleFilePath, _unset) ? this.textStyleFilePath : textStyleFilePath as String?,
+    textFamily: identical(textFamily, _unset) ? this.textFamily : textFamily as String?,
+    bgImagePath: identical(bgImagePath, _unset) ? this.bgImagePath : bgImagePath as String?,
+    readerDayBgImage: identical(readerDayBgImage, _unset) ? this.readerDayBgImage : readerDayBgImage as String?,
+    readerNightBgImage: identical(readerNightBgImage, _unset) ? this.readerNightBgImage : readerNightBgImage as String?,
+    readerDayTextColor: identical(readerDayTextColor, _unset) ? this.readerDayTextColor : readerDayTextColor as Color?,
+    readerNightTextColor: identical(readerNightTextColor, _unset) ? this.readerNightTextColor : readerNightTextColor as Color?,
+    readerDayBgColor: identical(readerDayBgColor, _unset) ? this.readerDayBgColor : readerDayBgColor as Color?,
+    readerNightBgColor: identical(readerNightBgColor, _unset) ? this.readerNightBgColor : readerNightBgColor as Color?,
     readerParaIndent: readerParaIndent ?? this.readerParaIndent,
     readerParaSpacing: readerParaSpacing ?? this.readerParaSpacing,
     readerBottomStatusBarHorizontalSpacing: readerBottomStatusBarHorizontalSpacing ?? this.readerBottomStatusBarHorizontalSpacing,
