@@ -91,10 +91,9 @@ class CacheQueueController extends GetxService {
       tasks.refresh();
       task.onCompleted?.call(task.cid);
     } catch (e) {
-      if (e.toString().contains('canceled')) {
-        task.status = CacheStatus.canceled;
-      } else {
-        task.status = CacheStatus.failed;
+      //暂停或取消时，状态已由pauseTask/cancelTask设置好，这里不再覆盖
+      if (task.status == CacheStatus.downloading) {
+        task.status = e.toString().contains('canceled') ? CacheStatus.canceled : CacheStatus.failed;
       }
       tasks.refresh();
     }
@@ -135,7 +134,7 @@ class CacheQueueController extends GetxService {
 
   Future<void> startAll() async {
     for (var t in tasks) {
-      if (t.status != CacheStatus.completed) t.status = CacheStatus.pending;
+      if (t.status != CacheStatus.completed && t.status != CacheStatus.downloading) t.status = CacheStatus.pending;
     }
     tasks.refresh();
     startProcessing();

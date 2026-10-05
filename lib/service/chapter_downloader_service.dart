@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:enough_convert/enough_convert.dart';
 import 'package:get/get.dart' hide Response;
+import 'package:html/parser.dart' show parse;
 import 'package:hikari_novel_flutter/service/api_service.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -89,7 +90,7 @@ class ChapterDownloaderService extends GetxService {
       Log.d("$url ${ApiService.instance.charsetType.name}");
 
       // 发起网络请求获取章节内容
-      final Response response = await _dio.get(
+      Response response = await _dio.get(
         url,
         cancelToken: cancelToken,
         onReceiveProgress: (received, total) {
@@ -100,9 +101,20 @@ class ChapterDownloaderService extends GetxService {
         },
       );
 
+      // 共享的Dio不跟随重定向，这里和ApiService一样手动跟随一次
+      final location = response.headers.value('location');
+      if (response.statusCode != null && response.statusCode! >= 300 && response.statusCode! < 400 && location != null) {
+        response = await _dio.get("${ApiService.instance.wenku8Node.node}/$location", cancelToken: cancelToken);
+      }
+
       // 检查是否在请求过程中被取消
       if (cancelToken.isCancelled) {
         throw DioException(requestOptions: response.requestOptions, type: DioExceptionType.cancel, message: '任务 $taskId 下载过程中被取消');
+      }
+
+      // 共享的Dio接受任何状态码，非200的错误页不能写进缓存，否则阅读器会一直读到它
+      if (response.statusCode != 200) {
+        throw Exception('任务 $taskId 下载失败: HTTP ${response.statusCode}');
       }
 
       // 解码
@@ -116,6 +128,11 @@ class ChapterDownloaderService extends GetxService {
           {
             content = Big5Codec().decode(response.data as Uint8List);
           }
+      }
+
+      // 不是章节页面（如登录页、提示页）时不缓存
+      if (parse(content).getElementById('content') == null) {
+        throw Exception('任务 $taskId 下载失败: 返回的不是章节内容');
       }
 
       // 写入文件（覆盖原有文件）
