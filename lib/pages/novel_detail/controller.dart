@@ -187,19 +187,19 @@ class NovelDetailController extends GetxController with GetSingleTickerProviderS
       if (entity is File) {
         final fileName = entity.uri.pathSegments.last;
 
-        if (fileName.contains("_")) {
-          final prefix = fileName.split("_").first;
-          final last = fileName.split("_").last;
+        //文件名格式为 {aid}_{cid}.txt
+        final separator = fileName.indexOf("_");
+        if (separator == -1 || !fileName.endsWith(".txt")) continue;
 
-          final number = int.tryParse(prefix);
-          if (number != null && number == int.parse(aid)) {
-            try {
-              await entity.delete();
-            } catch (e) {
-              null;
-            }
-          }
-          cachedChapter.remove(last);
+        final number = int.tryParse(fileName.substring(0, separator));
+        if (number == null || number != int.parse(aid)) continue;
+
+        final cid = fileName.substring(separator + 1, fileName.length - ".txt".length);
+        try {
+          await entity.delete();
+          cachedChapter.remove(cid);
+        } catch (e) {
+          null;
         }
       }
     }
@@ -301,20 +301,41 @@ class NovelDetailController extends GetxController with GetSingleTickerProviderS
   void removeFromBookshelf() async {
     if (_isRemoving) return;
     _isRemoving = true;
-    final bs = await DBService.instance.getAllBookshelf();
-    final delId = bs.firstWhere((i) => i.aid == aid).bid;
-    final result = await ApiService.instance.removeNovel(delid: delId);
-    switch (result) {
-      case Success():
-        {
-          isInBookshelf.value = false;
+    try {
+      Future<String?> findBid() async => (await DBService.instance.getAllBookshelf()).firstWhereOrNull((i) => i.aid == aid)?.bid;
+      var delId = await findBid();
+      if (delId == null) {
+        //本地书架里没有这本书（例如加入书架后刷新失败），从服务器同步一次再查
+        if (!await BookshelfController.syncBookshelf()) {
+          showErrorDialog("update_failed".tr, [TextButton(onPressed: Get.back, child: Text("confirm".tr))]);
+          return;
         }
-      case Error():
-        {
-          showErrorDialog(result.error.toString(), [TextButton(onPressed: Get.back, child: Text("confirm".tr))]);
-        }
+        delId = await findBid();
+      }
+      if (delId == null) {
+        //服务器书架里也没有，说明已经不在书架中
+        isInBookshelf.value = false;
+        return;
+      }
+      final result = await ApiService.instance.removeNovel(delid: delId);
+      switch (result) {
+        case Success():
+          {
+            if (Parser.isError(result.data)) {
+              showErrorDialog("update_failed".tr, [TextButton(onPressed: Get.back, child: Text("confirm".tr))]);
+              return;
+            }
+            await DBService.instance.deleteBookshelfByAid(aid);
+            isInBookshelf.value = false;
+          }
+        case Error():
+          {
+            showErrorDialog(result.error.toString(), [TextButton(onPressed: Get.back, child: Text("confirm".tr))]);
+          }
+      }
+    } finally {
+      _isRemoving = false;
     }
-    _isRemoving = false;
   }
 
   void recommendThisNovel() async {

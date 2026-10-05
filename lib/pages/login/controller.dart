@@ -7,14 +7,13 @@ import 'package:get/get.dart';
 import 'package:hikari_novel_flutter/main.dart';
 import 'package:hikari_novel_flutter/models/common/wenku8_node.dart';
 import 'package:hikari_novel_flutter/models/page_state.dart';
+import 'package:hikari_novel_flutter/pages/bookshelf/controller.dart';
 import 'package:hikari_novel_flutter/common/constants.dart';
 import 'package:hikari_novel_flutter/router/route_path.dart';
 import 'package:hikari_novel_flutter/service/api_service.dart';
 
-import '../../common/database/database.dart';
 import '../../models/resource.dart';
 import '../../parser/parser.dart';
-import '../../service/db_service.dart';
 import '../../service/local_storage_service.dart';
 
 class LoginController extends GetxController {
@@ -90,31 +89,6 @@ class LoginController extends GetxController {
   }
 
   Future<void> _refreshBookshelf() async {
-    await DBService.instance.deleteAllBookshelf();
-
-    final futures = Iterable.generate(6, (index) async {
-      await _insertAll(index);
-    });
-    await Future.wait(futures);
-  }
-
-  Future<void> _insertAll(int index) async {
-    final result = await ApiService.instance.getBookshelf(classId: index);
-    switch (result) {
-      case Success():
-        {
-          final bookshelf = Parser.getBookshelf(result.data, index);
-          if (bookshelf.list.isNotEmpty) {
-            final insertData = bookshelf.list.map((e) {
-              return BookshelfEntityData(aid: e.aid, bid: e.bid, url: e.url, title: e.title, img: e.img, classId: bookshelf.classId.toString());
-            });
-            await DBService.instance.insertAllBookshelf(insertData);
-          }
-        }
-      case Error():
-        {
-          throw result.error;
-        }
-    }
+    if (!await BookshelfController.syncBookshelf()) throw "update_failed".tr;
   }
 }

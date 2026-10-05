@@ -16,7 +16,7 @@ class BookshelfController extends GetxController with GetTickerProviderStateMixi
   Rx<PageState> pageState = Rx(PageState.bookshelfContent);
 
   late TabController tabController;
-  final List tabs = ["0", "1", "2", "3", "4", "5"];
+  final List tabs = List.generate(kBookshelfCount, (i) => "$i");
 
   RxBool isSelectionMode = false.obs;
 
@@ -27,38 +27,40 @@ class BookshelfController extends GetxController with GetTickerProviderStateMixi
   }
 
   Future<void> refreshDefaultBookshelf() async {
+    final data = await fetchBookshelf(0);
+    if (data == null) return; //获取失败时保留本地数据
     await DBService.instance.deleteDefaultBookshelf();
-    await _insertAll(0);
+    await DBService.instance.insertAllBookshelf(data);
   }
 
-  Future<String> refreshBookshelf() async {
+  Future<String> refreshBookshelf() async => await syncBookshelf() ? "update_successfully".tr : "update_failed".tr;
+
+  /// 从服务器拉取全部书架，全部成功后才替换本地数据，避免网络失败时清空本地书架
+  static Future<bool> syncBookshelf() async {
+    final results = await Future.wait(Iterable.generate(kBookshelfCount, fetchBookshelf));
+    if (results.any((r) => r == null)) return false;
+
     await DBService.instance.deleteAllBookshelf();
-
-    final futures = Iterable.generate(6, (index) async {
-      final result = await _insertAll(index);
-      if (!result) return "update_failed".tr;
-    });
-    await Future.wait(futures);
-    return "update_successfully".tr;
+    await DBService.instance.insertAllBookshelf(results.expand((r) => r!));
+    return true;
   }
 
-  Future<bool> _insertAll(int index) async {
+  static const kBookshelfCount = 6;
+
+  /// 获取指定书架，失败时返回null
+  static Future<List<BookshelfEntityData>?> fetchBookshelf(int index) async {
     final result = await ApiService.instance.getBookshelf(classId: index);
     switch (result) {
       case Success():
         {
           final bookshelf = Parser.getBookshelf(result.data, index);
-          if (bookshelf.list.isNotEmpty) {
-            final insertData = bookshelf.list.map((e) {
-              return BookshelfEntityData(aid: e.aid, bid: e.bid, url: e.url, title: e.title, img: e.img, classId: bookshelf.classId.toString());
-            });
-            await DBService.instance.insertAllBookshelf(insertData);
-          }
-          return true;
+          return bookshelf.list
+              .map((e) => BookshelfEntityData(aid: e.aid, bid: e.bid, url: e.url, title: e.title, img: e.img, classId: bookshelf.classId.toString()))
+              .toList();
         }
       case Error():
         {
-          return false;
+          return null;
         }
     }
   }
