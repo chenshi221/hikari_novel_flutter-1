@@ -25,26 +25,21 @@ extension ScreenInfo on BuildContext {
   }
 }
 
-extension UrlEncodingIfNotAscii on String {
-  String gbkUrlEncodingIfNotAscii() {
-    final bytes = GbkCodec().encode(this);
-    return _encode(bytes);
-  }
+extension FormUrlEncoding on String {
+  String gbkFormUrlEncode() => _encode(GbkCodec().encode(this));
 
-  String big5UrlEncodingIfNotAscii() {
-    final bytes = Big5Codec().encode(this);
-    return _encode(bytes);
-  }
+  String big5FormUrlEncode() => _encode(Big5Codec().encode(this));
 
-  // 只对非 ASCII 字节进行 %XX 编码
+  // application/x-www-form-urlencoded：仅保留字母数字和 -_.*，空格转为+，其余字节（含&=+%#等）都编码为 %XX
   String _encode(List<int> bytes) {
     final buffer = StringBuffer();
     for (final byte in bytes) {
-      if (byte >= 0x00 && byte <= 0x7F) {
-        // ASCII字符不编码
-        buffer.write(String.fromCharCode(byte));
+      final isUnreserved = (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A) || '-_.*'.codeUnits.contains(byte);
+      if (isUnreserved) {
+        buffer.writeCharCode(byte);
+      } else if (byte == 0x20) {
+        buffer.write('+');
       } else {
-        // 非ASCII字符转成 %XX 大写十六进制
         buffer.write('%${byte.toRadixString(16).toUpperCase().padLeft(2, '0')}');
       }
     }

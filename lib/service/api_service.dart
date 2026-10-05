@@ -220,12 +220,12 @@ class ApiService extends GetxService {
     switch (charsetType) {
       case CharsetType.gbk:
         submit = GbkEncoder().convert("发表书评").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        title = title.gbkUrlEncodingIfNotAscii();
-        content = content.gbkUrlEncodingIfNotAscii();
+        title = title.gbkFormUrlEncode();
+        content = content.gbkFormUrlEncode();
       case CharsetType.big5Hkscs:
         submit = Big5Encoder().convert("發表書評").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        title = title.big5UrlEncodingIfNotAscii();
-        content = content.big5UrlEncodingIfNotAscii();
+        title = title.big5FormUrlEncode();
+        content = content.big5FormUrlEncode();
     }
     //加上url编码的空格，即"+"
     submit = "+$submit+";
@@ -245,10 +245,10 @@ class ApiService extends GetxService {
     switch (charsetType) {
       case CharsetType.gbk:
         submit = GbkEncoder().convert("发表书评").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        content = content.gbkUrlEncodingIfNotAscii();
+        content = content.gbkFormUrlEncode();
       case CharsetType.big5Hkscs:
         submit = Big5Encoder().convert("發表書評").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        content = content.big5UrlEncodingIfNotAscii();
+        content = content.big5FormUrlEncode();
     }
     //加上url编码的空格，即"+"
     submit = "+$submit+";
