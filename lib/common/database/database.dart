@@ -16,12 +16,16 @@ class AppDatabase extends _$AppDatabase {
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (m, from, to) async {
-      if (from == 1 && to == 2) {
-        Migration.fromOneToTwo(this);
-      } else if (from == 2 && to == 3) {
-        Migration.fromTwoToThree();
-      } else if (from == 3 && to == 4) {
-        Migration.fromThreeToFour(this);
+      //逐级执行，跨版本升级（如1->4）时每一步都不会被跳过
+      for (var version = from; version < to; version++) {
+        switch (version) {
+          case 1:
+            await Migration.fromOneToTwo(this);
+          case 2:
+            Migration.fromTwoToThree();
+          case 3:
+            await Migration.fromThreeToFour(this);
+        }
       }
     },
   );
@@ -29,6 +33,8 @@ class AppDatabase extends _$AppDatabase {
   Future<void> insertAllBookshelf(Iterable<BookshelfEntityData> data) => batch((b) => b.insertAll(bookshelfEntity, data));
 
   Future<void> deleteAllBookshelf() => delete(bookshelfEntity).go();
+
+  Future<void> deleteBookshelfByAid(String aid) => (delete(bookshelfEntity)..where((i) => i.aid.equals(aid))).go();
 
   Future<void> deleteDefaultBookshelf() => (delete(bookshelfEntity)..where((i) => i.classId.equals("0"))).go();
 

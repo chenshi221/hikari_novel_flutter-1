@@ -51,7 +51,7 @@ class Migration {
     ApiService.instance.deleteCookie();
   }
 
-  static void fromThreeToFour(AppDatabase appDatabase) {
-    appDatabase.deleteAllReadHistory();
+  static Future<void> fromThreeToFour(AppDatabase appDatabase) async {
+    await appDatabase.deleteAllReadHistory();
   }
 }
