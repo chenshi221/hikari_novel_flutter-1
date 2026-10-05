@@ -32,7 +32,7 @@ class SettingController extends GetxController {
         Get.updateLocale(Locale("zh", "TW"));
       case Language.followSystem:
         {
-          if (Get.deviceLocale! != Locale("zh", "CN") && Get.deviceLocale! != Locale("zh", "CN")) {
+          if (Get.deviceLocale! != Locale("zh", "CN") && Get.deviceLocale! != Locale("zh", "TW")) {
             Get.updateLocale(Locale("zh", "CN"));
           } else {
             Get.updateLocale(Get.deviceLocale!);
