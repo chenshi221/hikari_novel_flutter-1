@@ -4,6 +4,7 @@ import 'package:hikari_novel_flutter/pages/welcome/controller.dart';
 import 'package:hikari_novel_flutter/router/route_path.dart';
 import 'package:hikari_novel_flutter/widgets/state_page.dart';
 import '../../models/common/wenku8_node.dart';
+import '../../widgets/wenku8_node_menu.dart';
 
 class WelcomePage extends StatelessWidget {
   WelcomePage({super.key});
@@ -29,28 +30,14 @@ class WelcomePage extends StatelessWidget {
             const SizedBox(height: 40),
             PopupMenuButton<Wenku8Node>(
               onSelected: (Wenku8Node value) => controller.changeWenku8Node(value),
-              itemBuilder: (BuildContext context) => [
-                PopupMenuItem<Wenku8Node>(
-                  value: Wenku8Node.wwwWenku8Net,
-                  child: Text(
-                    Wenku8Node.wwwWenku8Net.node,
-                    style: controller.wenku8Node == Wenku8Node.wwwWenku8Net ? TextStyle(color: primaryColor, fontWeight: FontWeight.bold) : null,
-                  ),
-                ),
-                PopupMenuItem<Wenku8Node>(
-                  value: Wenku8Node.wwwWenku8Cc,
-                  child: Text(
-                    Wenku8Node.wwwWenku8Cc.node,
-                    style: controller.wenku8Node == Wenku8Node.wwwWenku8Cc ? TextStyle(color: primaryColor, fontWeight: FontWeight.bold) : null,
-                  ),
-                ),
-              ],
+              itemBuilder: (BuildContext context) => buildWenku8NodeMenuItems(context, controller.wenku8Node.value),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.lan_outlined, size: 16, color: Theme.of(context).colorScheme.primary),
+                  Icon(Icons.lan_outlined, size: 16, color: primaryColor),
                   SizedBox(width: 8),
-                  Text("node".tr, style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                  //显示当前节点，切换后立即刷新，方便确认是否切换成功
+                  Obx(() => Text("${"node".tr}: ${controller.wenku8Node.value.node}", style: TextStyle(color: primaryColor))),
                 ],
               ),
             ),

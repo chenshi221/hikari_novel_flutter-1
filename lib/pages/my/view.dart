@@ -43,7 +43,7 @@ class MyPage extends StatelessWidget {
               height: 80,
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: controller.userInfo.value == null
+                child: controller.userInfo.value == null || controller.userInfo.value!.avatar.isEmpty
                     ? const CircleAvatar()
                     : CircleAvatar(backgroundImage: CachedNetworkImageProvider(controller.userInfo.value!.avatar, headers: kUserAgent)),
               ),

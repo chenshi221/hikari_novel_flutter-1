@@ -5,7 +5,9 @@ import 'package:hikari_novel_flutter/main.dart';
 import 'package:hikari_novel_flutter/models/page_state.dart';
 import 'package:hikari_novel_flutter/widgets/state_page.dart';
 
+import '../../models/common/wenku8_node.dart';
 import '../../router/route_path.dart';
+import '../../widgets/wenku8_node_menu.dart';
 import 'controller.dart';
 
 class LoginPage extends StatelessWidget {
@@ -21,20 +23,29 @@ class LoginPage extends StatelessWidget {
           titleSpacing: 0,
           leading: CloseButton(onPressed: Get.back),
           title: Obx(() => Text(controller.currentUrl.value)),
-          actions: controller.pageState.value == PageState.success
-              ? [
-                  IconButton(
-                    onPressed: () async {
-                      if (await controller.inAppWebViewController?.canGoBack() == true) {
-                        controller.inAppWebViewController?.goBack();
-                      }
-                    },
-                    icon: Icon(Icons.arrow_upward),
-                    tooltip: "back_to_previous_web_page".tr,
-                  ),
-                  IconButton(onPressed: () => controller.inAppWebViewController?.reload(), icon: Icon(Icons.refresh), tooltip: "refresh_web_page".tr),
-                ]
-              : [],
+          actions: [
+            //登录时也可以切换节点，切换后会用新节点重新打开登录页
+            PopupMenuButton<Wenku8Node>(
+              icon: const Icon(Icons.lan_outlined),
+              tooltip: "switch_node".tr,
+              onSelected: controller.changeWenku8Node,
+              itemBuilder: (BuildContext context) => buildWenku8NodeMenuItems(context, controller.wenku8Node.value),
+            ),
+            ...controller.pageState.value == PageState.success
+                ? [
+                    IconButton(
+                      onPressed: () async {
+                        if (await controller.inAppWebViewController?.canGoBack() == true) {
+                          controller.inAppWebViewController?.goBack();
+                        }
+                      },
+                      icon: Icon(Icons.arrow_upward),
+                      tooltip: "back_to_previous_web_page".tr,
+                    ),
+                    IconButton(onPressed: () => controller.inAppWebViewController?.reload(), icon: Icon(Icons.refresh), tooltip: "refresh_web_page".tr),
+                  ]
+                : <Widget>[],
+          ],
         ),
         body: Stack(
           children: [
@@ -54,7 +65,7 @@ class LoginPage extends StatelessWidget {
                     Expanded(
                       child: SafeArea(
                         child: InAppWebView(
-                          key: controller.webViewKey,
+                          key: ValueKey(controller.webViewGeneration.value),
                           webViewEnvironment: webViewEnvironment,
                           initialUrlRequest: URLRequest(url: WebUri(controller.url)),
                           initialSettings: controller.settings,

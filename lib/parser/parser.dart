@@ -434,33 +434,45 @@ class Parser {
 
   static UserInfo getUserInfo(String html) {
     Document document = parse(html);
-    Element content = document.getElementById('content')!;
-    Element tbody = content.querySelector('tbody')!;
-    List<Element> rows = tbody.querySelectorAll('tr');
-    Element row0 = rows[0];
-    String avatar = row0.querySelectorAll('td')[2].querySelector('img')!.attributes['src']!.replaceAll("https", "http");
-    String userID = row0.querySelectorAll('td')[1].text.trim();
-    String userName = rows[2].querySelectorAll('td')[1].text.trim();
-    String userLevel = rows[4].querySelectorAll('td')[1].text.trim();
-    String email = rows[7].querySelector('a')!.text.trim();
-    String signUpDate = rows[12].querySelectorAll('td')[1].text.trim();
-    String contribution = rows[13].querySelectorAll('td')[1].text.trim();
-    String experience = rows[14].querySelectorAll('td')[1].text.trim();
-    String score = rows[15].querySelectorAll('td')[1].text.trim();
-    String maxBookcase = rows[18].querySelectorAll('td')[1].text.trim();
-    String maxRecommend = rows[19].querySelectorAll('td')[1].text.trim();
+    // 没有 #content 说明拿到的不是用户详情页（未登录被跳回登录页、Cloudflare 验证页、节点不可用等），
+    // 这里抛出带说明的异常，而不是用 ! 强制解包导致 "Null check operator used on a null value"
+    final Element? content = document.getElementById('content');
+    final Element? tbody = content?.querySelector('tbody');
+    if (tbody == null) {
+      throw StateError("get_user_info_failed_tip".tr);
+    }
+    final List<Element> rows = tbody.querySelectorAll('tr');
+
+    // 安全地取第 [row] 行第 [col] 列的文本，不存在时返回空字符串
+    String cell(int row, int col) {
+      if (row >= rows.length) return "";
+      final tds = rows[row].querySelectorAll('td');
+      if (col >= tds.length) return "";
+      return tds[col].text.trim();
+    }
+
+    String avatar = "";
+    if (rows.isNotEmpty) {
+      final tds = rows[0].querySelectorAll('td');
+      if (tds.length > 2) {
+        avatar = (tds[2].querySelector('img')?.attributes['src'] ?? "").replaceAll("https", "http");
+      }
+    }
+    // 用户未公开/未设置邮箱时没有 <a> 标签，退回到单元格文本
+    final String email = rows.length > 7 ? (rows[7].querySelector('a')?.text.trim() ?? cell(7, 1)) : "";
+
     return UserInfo(
       avatar: avatar,
-      uid: userID,
-      username: userName,
-      userLevel: userLevel,
+      uid: cell(0, 1),
+      username: cell(2, 1),
+      userLevel: cell(4, 1),
       email: email,
-      registerDate: signUpDate,
-      contribution: contribution,
-      experience: experience,
-      point: score,
-      maxBookshelfNum: maxBookcase,
-      maxRecommendNum: maxRecommend,
+      registerDate: cell(12, 1),
+      contribution: cell(13, 1),
+      experience: cell(14, 1),
+      point: cell(15, 1),
+      maxBookshelfNum: cell(18, 1),
+      maxRecommendNum: cell(19, 1),
     );
   }
 
