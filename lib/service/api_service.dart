@@ -330,16 +330,21 @@ class _ApiClient {
     }
   }
 
-  Future<dynamic> _checkRedirects(Response response) async {
-    if (response.statusCode != null && response.statusCode! >= 300 && response.statusCode! < 400) {
-      final location = response.headers.value('location');
-      if (location != null) {
-        final node = LocalStorageService.instance.getWenku8Node();
-        final redirectedResponse = await dio.get("${node.node}/$location");
-        return redirectedResponse.data;
-      }
+  /// 手动处理重定向（dio 设置了 followRedirects: false）
+  /// - location 可能是相对路径（如 `userdetail.php`、`/login.php`），也可能是绝对地址（如 `https://www.wenku8.net/...`），
+  ///   所以要基于当前请求的地址进行解析，不能直接拼接到节点后面
+  /// - 最多跟随 [maxRedirects] 次，防止重定向死循环
+  Future<dynamic> _checkRedirects(Response response, {int maxRedirects = 5}) async {
+    var current = response;
+    for (var i = 0; i < maxRedirects; i++) {
+      final statusCode = current.statusCode;
+      if (statusCode == null || statusCode < 300 || statusCode >= 400) break;
+      final location = current.headers.value('location');
+      if (location == null || location.isEmpty) break;
+      final target = current.requestOptions.uri.resolve(location);
+      current = await dio.getUri(target);
     }
-    return response.data;
+    return current.data;
   }
 
   Future<Resource> postForm(String url, {required Object? data, required CharsetType charsetType}) async {
