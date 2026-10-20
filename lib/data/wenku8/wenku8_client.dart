@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 
 import '../../models/common/charset_type.dart';
@@ -17,8 +18,9 @@ class Wenku8Client {
     : _cookieJar = cookieJar ?? CookieJar() {
     this.dio = (dio ?? Dio())
       ..options = BaseOptions(headers: headers, responseType: ResponseType.bytes, followRedirects: false, validateStatus: (status) => status != null)
-      ..interceptors.add(_CloudflareInterceptor())
-      ..interceptors.add(CookieManager(_cookieJar));
+      ..interceptors.add(_CloudflareInterceptor());
+    // 浏览器自己管理 cookie，CookieManager 在网页环境会断言失败（网页预览的 cookie 由转发程序保存）
+    if (!kIsWeb) this.dio.interceptors.add(CookieManager(_cookieJar));
   }
 
   /// 当前节点地址，例如 `https://www.wenku8.net`
