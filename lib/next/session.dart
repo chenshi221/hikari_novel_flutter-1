@@ -138,11 +138,18 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
-  /// 账号密码登录。网页预览由转发程序提交并保存 cookie；原生 App 从 cookie jar 导出 cookie 保存。
+  /// 原生 App：在内嵌网页里登录后拿到的 cookie。
+  Future<void> loginWithCookie(String cookie) async {
+    await _client.clearCookie();
+    await _client.restoreCookie(cookie, Wenku8Node.values.map((e) => e.node));
+    await _confirm(cookie);
+  }
+
+  /// 网页预览：账号密码登录，由转发程序提交并保存 cookie。
   Future<void> loginWithPassword(String username, String password, int keepSeconds) async {
     await _client.clearCookie();
     await _client.postForm(_urls.loginSubmit(), _urls.loginForm(username, password, keepSeconds: keepSeconds));
-    await _confirm(isWebPreview ? 'preview' : await _client.exportCookie(siteBase(_store)));
+    await _confirm('preview');
   }
 
   Future<void> _confirm(String cookie) async {

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../models/common/wenku8_node.dart';
 import '../env.dart';
 import '../session.dart';
+import 'login_webview_page.dart';
 
 /// 登录页。游客在需要账号时按需打开，登录成功后自动返回上一页。
 ///
@@ -64,7 +65,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     if (username.isEmpty || _password.text.isEmpty) throw '请输入用户名和密码';
     await store.setProxy(_proxy.text);
     await store.setKeepSeconds(_keepSeconds);
-    await ref.read(sessionProvider.notifier).loginWithPassword(username, _password.text, _keepSeconds);
+    if (isWebPreview) {
+      await ref.read(sessionProvider.notifier).loginWithPassword(username, _password.text, _keepSeconds);
+    } else {
+      if (!mounted) return;
+      final cookie = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          builder: (_) => LoginWebViewPage(loginUrl: '${store.node.node}/login.php', username: username, password: _password.text, keepSeconds: _keepSeconds),
+        ),
+      );
+      if (cookie == null) return;
+      await ref.read(sessionProvider.notifier).loginWithCookie(cookie);
+    }
     await store.saveLogin(_remember ? username : null, _remember ? _password.text : null);
   });
 
