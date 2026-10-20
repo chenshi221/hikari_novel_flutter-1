@@ -37,7 +37,8 @@ class Wenku8Client {
   Future<void> restoreCookie(String cookie, Iterable<String> hosts) async {
     final cookies = cookie.split(';').map((e) => e.trim()).where((e) => e.contains('=')).map((e) {
       final kv = e.split('=');
-      return Cookie(kv[0], kv.sublist(1).join('='));
+      // dart:io 的 Cookie 不允许值里有空格、引号、逗号、分号、反斜杠（例如阅读记录 cookie 里的逗号），转义后再放进去
+      return Cookie(kv[0], kv.sublist(1).join('=').replaceAllMapped(RegExp(r'[ ",;\\]'), (m) => '%${m[0]!.codeUnitAt(0).toRadixString(16).toUpperCase()}'));
     }).toList();
     for (final host in hosts) {
       await _cookieJar.saveFromResponse(Uri.parse(host), cookies);

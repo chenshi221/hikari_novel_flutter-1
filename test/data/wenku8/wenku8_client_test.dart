@@ -62,4 +62,9 @@ void main() {
     final adapter = _FakeAdapter({'/x.php': () => ResponseBody.fromBytes(const [], 403)});
     await expectLater(_client(adapter).getPage('https://www.wenku8.net/x.php'), throwsA(isA<Cloudflare403Exception>()));
   });
+
+  test('恢复 cookie 时值里带逗号也不会报错', () async {
+    final client = _client(_FakeAdapter({}));
+    await client.restoreCookie('jieqiUserInfo=abc;jieqiRecentRead=1792527353,1792527401,1792527434', ['https://www.wenku8.net']);
+  });
 }
