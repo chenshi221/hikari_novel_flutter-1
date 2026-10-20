@@ -83,7 +83,7 @@ class LoginController extends GetxController {
         String cookie = "jieqiUserInfo=${getCookie.firstWhere((cookieItem) => cookieItem.name == "jieqiUserInfo").value};";
         cookie += "jieqiVisitInfo=${getCookie.firstWhere((cookieItem) => cookieItem.name == "jieqiVisitInfo").value}";
         LocalStorageService.instance.setCookie(cookie);
-        ApiService.instance.initCookie();
+        await ApiService.instance.initCookie();
 
         try {
           await _getUserInfo();

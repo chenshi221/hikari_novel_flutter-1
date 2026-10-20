@@ -1,388 +1,153 @@
-import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:cookie_jar/cookie_jar.dart' as ckjar;
 import 'package:dio/dio.dart';
-import 'package:dio_cookie_manager/dio_cookie_manager.dart';
-import 'package:enough_convert/enough_convert.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:hikari_novel_flutter/common/constants.dart';
-import 'package:hikari_novel_flutter/common/extension.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_charset.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_urls.dart';
 import 'package:hikari_novel_flutter/models/common/charset_type.dart';
 import 'package:hikari_novel_flutter/models/common/language.dart';
 import 'package:hikari_novel_flutter/models/common/wenku8_node.dart';
-import 'package:hikari_novel_flutter/models/custom_exception.dart';
 import 'package:hikari_novel_flutter/models/resource.dart';
 
 import '../common/log.dart';
 import 'local_storage_service.dart';
 
+/// 旧页面使用的接口入口。实际请求由 [Wenku8Client] 完成，地址由 [Wenku8Urls] 生成，
+/// 这里只负责读取用户设置（节点、语言）并把结果/异常包装成 [Resource]。
 class ApiService extends GetxService {
   static ApiService get instance => Get.find<ApiService>();
 
   Wenku8Node get wenku8Node => LocalStorageService.instance.getWenku8Node();
 
-  final _ApiClient _client = _ApiClient();
+  late final Wenku8Client client = Wenku8Client(baseUrl: () => wenku8Node.node, charset: () => charsetType, headers: kUserAgent);
 
-  Dio get dio => _client.dio;
+  Wenku8Urls get _urls => Wenku8Urls(wenku8Node.node, charsetType);
 
-  void initCookie() => _client.initCookie();
+  Dio get dio => client.dio;
 
-  void deleteCookie() => _client.deleteCookie();
+  Future<void> initCookie() async {
+    final localCookie = LocalStorageService.instance.getCookie();
+    if (localCookie == null) return;
+    await client.restoreCookie(localCookie, Wenku8Node.values.map((e) => e.node));
+  }
+
+  Future<void> deleteCookie() => client.clearCookie();
 
   Language get _language => LocalStorageService.instance.getLanguage();
 
   CharsetType get charsetType {
     if (_language == Language.followSystem) {
-      if (Get.deviceLocale == Locale("zh", "CN")) {
-        return CharsetType.gbk;
-      } else if (Get.deviceLocale == Locale("zh", "TW")) {
-        return CharsetType.big5Hkscs;
-      } else {
-        return CharsetType.gbk;
-      }
+      return Get.deviceLocale == Locale("zh", "TW") ? CharsetType.big5Hkscs : CharsetType.gbk;
     }
     return switch (_language) {
-      Language.simplifiedChinese => CharsetType.gbk,
       Language.traditionalChinese => CharsetType.big5Hkscs,
       _ => CharsetType.gbk,
     };
   }
 
-  /// 根据排名获取小说列表
-  /// - [ranking] 排行榜种类
-  /// - [index] 第几页
-  Future<Resource> getNovelByRanking({required String ranking, required int index}) {
-    final String url = "${wenku8Node.node}/modules/article/toplist.php?sort=$ranking&page=$index";
-    return _client.get(url, charsetType: charsetType);
+  Future<Resource> _get(String url) async {
+    try {
+      Log.d("$url ${charsetType.name}");
+      return Success(await client.getPage(url));
+    } catch (e) {
+      Log.e(e.toString());
+      return Error(e.toString());
+    }
   }
 
-  /// 根据分类获取小说列表
-  /// - [category] 小说的分类，即tag
-  /// - [sort] 按什么排序
-  /// - [index] 第几页
-  Future<Resource> getNovelByCategory({required String category, required String sort, required int index}) {
-    switch (charsetType) {
-      case CharsetType.gbk:
-        {
-          category = GbkCodec().encode(category).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join().trim();
-        }
-      case CharsetType.big5Hkscs:
-        {
-          category = Big5Codec().encode(category).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join().trim();
-        }
+  Future<Resource> _post(String url, Object? data) async {
+    try {
+      return Success(await client.postForm(url, data));
+    } catch (e) {
+      Log.e(e.toString());
+      return Error(e.toString());
     }
-    String url = "${wenku8Node.node}/modules/article/tags.php?t=$category&v=$sort&page=$index";
-    return _client.get(url, charsetType: charsetType);
   }
+
+  /// 根据排名获取小说列表
+  Future<Resource> getNovelByRanking({required String ranking, required int index}) => _get(_urls.ranking(ranking, index));
+
+  /// 根据分类（tag）获取小说列表
+  Future<Resource> getNovelByCategory({required String category, required String sort, required int index}) => _get(_urls.category(category, sort, index));
 
   /// 获取小说信息
-  /// - [aid] 小说的id
-  Future<Resource> getNovelDetail({required String aid}) {
-    final String url = "${wenku8Node.node}/modules/article/articleinfo.php?id=$aid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getNovelDetail({required String aid}) => _get(_urls.novelDetail(aid));
 
   /// 获取小说的章节目录
-  /// - [aid] 小说的id
-  Future<Resource> getCatalogue({required String aid}) {
-    final String url = "${wenku8Node.node}/modules/article/reader.php?aid=$aid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getCatalogue({required String aid}) => _get(_urls.catalogue(aid));
 
   /// 加入书库
-  /// - [aid] 小说的id
-  Future<Resource> addNovel({required String aid}) {
-    final String url = "${wenku8Node.node}/modules/article/addbookcase.php?bid=$aid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> addNovel({required String aid}) => _get(_urls.addToBookshelf(aid));
 
-  /// 移出书库
-  /// - [delid] 该书在书架中的id，即bid
-  Future<Resource> removeNovel({required String delid}) {
-    final String url = "${wenku8Node.node}/modules/article/bookcase.php?delid=$delid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  /// 移出书库，[delid] 为该书在书架中的 bid
+  Future<Resource> removeNovel({required String delid}) => _get(_urls.removeFromBookshelf(delid));
 
-  /// 从列表移出书库
-  /// - [list] 要删除的书籍列表
-  /// - [classId] 要将这些书从哪个书架中删除
-  Future<Resource> removeNovelFromList({required List<String> list, required int classId}) {
-    final String url = "${wenku8Node.node}/modules/article/bookcase.php";
-    final Map<String, dynamic> params = {"checkid[]": list, "classlist": classId, "checkall": "checkall", "newclassid": -1, "classid": classId};
-    return _client.postForm(url, data: params, charsetType: charsetType);
-  }
+  /// 从书架 [classId] 批量移出书籍
+  Future<Resource> removeNovelFromList({required List<String> list, required int classId}) =>
+      _post(_urls.bookshelfAction(), {"checkid[]": list, "classlist": classId, "checkall": "checkall", "newclassid": -1, "classid": classId});
 
-  /// 移动到其它书架
-  /// - [list] 要移动的书籍列表
-  /// - [classId] 要将这些书从哪个书架中移出
-  /// - [newClassId] 要将这些书移动到那个书架中
-  Future<Resource> moveNovelToOther({required List<String> list, required int classId, required int newClassId}) {
-    final String url = "${wenku8Node.node}/modules/article/bookcase.php";
-    final Map<String, dynamic> params = {"checkid[]": list, "classlist": classId, "checkall": "checkall", "newclassid": newClassId, "classid": classId};
-    return _client.postForm(url, data: params, charsetType: charsetType);
-  }
+  /// 把书籍从书架 [classId] 移动到 [newClassId]
+  Future<Resource> moveNovelToOther({required List<String> list, required int classId, required int newClassId}) =>
+      _post(_urls.bookshelfAction(), {"checkid[]": list, "classlist": classId, "checkall": "checkall", "newclassid": newClassId, "classid": classId});
 
   /// 获取书架
-  /// - [classId] 要获取的书架编号
-  Future<Resource> getBookshelf({required int classId}) {
-    final String url = "${wenku8Node.node}/modules/article/bookcase.php?classid=$classId";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getBookshelf({required int classId}) => _get(_urls.bookshelf(classId));
 
   /// 获取其它用户收藏的书籍
-  /// - [uid] 该用户的id
-  Future<Resource> getBookshelfFromUser({required String uid}) {
-    final String url = "${wenku8Node.node}/userpage.php?uid=$uid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getBookshelfFromUser({required String uid}) => _get(_urls.userBookshelf(uid));
 
   /// 获取评论区
-  /// - [aid] 该评论区所属的书籍的id
-  /// - [index] 第几页
-  Future<Resource> getComment({required String aid, required int index}) {
-    final String url = "${wenku8Node.node}/modules/article/reviews.php?aid=$aid&page=$index";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getComment({required String aid, required int index}) => _get(_urls.comments(aid, index));
 
   /// 获取回复
-  /// - [rid] 该回复的id
-  /// - [index] 第几页
-  Future<Resource> getReply({required String rid, required int index}) {
-    final String url = "${wenku8Node.node}/modules/article/reviewshow.php?rid=$rid&page=$index";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getReply({required String rid, required int index}) => _get(_urls.replies(rid, index));
 
   /// 获取推荐页
-  Future<Resource> getRecommend() {
-    final String url = "${wenku8Node.node}/index.php";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getRecommend() => _get(_urls.home());
 
   /// 为小说投票
-  /// - [aid] 被投票的小说的id
-  Future<Resource> novelVote({required String aid}) {
-    final String url = "${wenku8Node.node}/modules/article/uservote.php?id=$aid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> novelVote({required String aid}) => _get(_urls.vote(aid));
 
   /// 根据标题搜索小说
-  /// - [title] 标题关键字
-  /// - [index] 第几页
-  Future<Resource> searchNovelByTitle({required String title, required int index}) {
-    switch (charsetType) {
-      //url编码
-      case CharsetType.gbk:
-        title = GbkEncoder().convert(title).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-      case CharsetType.big5Hkscs:
-        title = Big5Encoder().convert(title).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-    }
-    final String url = "${wenku8Node.node}/modules/article/search.php?searchtype=articlename&searchkey=$title&page=$index";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> searchNovelByTitle({required String title, required int index}) => _get(_urls.searchByTitle(title, index));
 
   /// 根据作者搜索小说
-  /// - [author] 作者关键字
-  /// - [index] 第几页
-  Future<Resource> searchNovelByAuthor({required String author, required int index}) {
-    switch (charsetType) {
-      //url编码
-      case CharsetType.gbk:
-        author = GbkEncoder().convert(author).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-      case CharsetType.big5Hkscs:
-        author = Big5Encoder().convert(author).map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-    }
-    final String url = "${wenku8Node.node}/modules/article/search.php?searchtype=author&searchkey=$author&page=$index";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> searchNovelByAuthor({required String author, required int index}) => _get(_urls.searchByAuthor(author, index));
 
   /// 获取用户信息
-  Future<Resource> getUserInfo() {
-    final String url = "${wenku8Node.node}/userdetail.php";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getUserInfo() => _get(_urls.userInfo());
 
   /// 获取已完结小说的列表
-  /// - [index] 第几页
-  Future<Resource> getCompletionNovel({required int index}) {
-    final String url = "${wenku8Node.node}/modules/article/articlelist.php?fullflag=1&page=$index";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getCompletionNovel({required int index}) => _get(_urls.completedNovels(index));
 
   /// 发表书评
-  /// - [aid] 书号
-  /// - [title] 书评的标题
-  /// - [content] 书评的内容
   Future<Resource> sendComment({required String aid, required String title, required String content}) {
-    final String url = "${wenku8Node.node}/modules/article/reviews.php?aid=$aid";
-
-    String submit;
-    switch (charsetType) {
-      case CharsetType.gbk:
-        submit = GbkEncoder().convert("发表书评").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        title = title.gbkUrlEncodingIfNotAscii();
-        content = content.gbkUrlEncodingIfNotAscii();
-      case CharsetType.big5Hkscs:
-        submit = Big5Encoder().convert("發表書評").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        title = title.big5UrlEncodingIfNotAscii();
-        content = content.big5UrlEncodingIfNotAscii();
-    }
-    //加上url编码的空格，即"+"
-    submit = "+$submit+";
-
-    final String params = "ptitle=$title&pcontent=$content&Submit=$submit";
-    return _client.postForm(url, data: params, charsetType: charsetType);
+    final charset = charsetType;
+    final params =
+        "ptitle=${Wenku8Charset.percentEncodeNonAscii(title, charset)}"
+        "&pcontent=${Wenku8Charset.percentEncodeNonAscii(content, charset)}"
+        "&Submit=${_urls.submitButtonValue()}";
+    return _post(_urls.sendComment(aid), params);
   }
 
   /// 发表回复
-  /// - [aid] 书号
-  /// - [rid] 要回复的书评id
-  /// - [content] 回复的内容
   Future<Resource> sendReply({required String aid, required String rid, required String content}) {
-    final String url = "${wenku8Node.node}/modules/article/reviewshow.php?rid=$rid&aid=$aid";
-
-    String submit;
-    switch (charsetType) {
-      case CharsetType.gbk:
-        submit = GbkEncoder().convert("发表书评").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        content = content.gbkUrlEncodingIfNotAscii();
-      case CharsetType.big5Hkscs:
-        submit = Big5Encoder().convert("發表書評").map((b) => '%${b.toRadixString(16).padLeft(2, '0').toUpperCase()}').join();
-        content = content.big5UrlEncodingIfNotAscii();
-    }
-    //加上url编码的空格，即"+"
-    submit = "+$submit+";
-
-    final String params = "pcontent=$content&Submit=$submit";
-
-    return _client.postForm(url, data: params, charsetType: charsetType);
+    final params = "pcontent=${Wenku8Charset.percentEncodeNonAscii(content, charsetType)}&Submit=${_urls.submitButtonValue()}";
+    return _post(_urls.sendReply(aid, rid), params);
   }
 
   /// 获取小说章节内容
-  /// - [aid] 小说id
-  /// - [cid] 章节id
-  Future<Resource> getNovelContent({required String aid, required String cid}) {
-    final String url = "${wenku8Node.node}/modules/article/reader.php?aid=$aid&cid=$cid";
-    return _client.get(url, charsetType: charsetType);
-  }
+  Future<Resource> getNovelContent({required String aid, required String cid}) => _get(_urls.chapterContent(aid, cid));
 
   /// 获取Github上面的最新版本
-  Future<Resource> fetchLatestRelease() {
-    return _client.getCommonData(kLatestUrl);
-  }
-}
-
-class _ApiClient {
-  final ckjar.CookieJar _cookieJar = ckjar.CookieJar();
-  late final Dio dio =
-      Dio(BaseOptions(headers: kUserAgent, responseType: ResponseType.bytes, followRedirects: false, validateStatus: (status) => status != null))
-        ..interceptors.add(_CloudflareInterceptor())
-        ..interceptors.add(CookieManager(_cookieJar));
-
-  void initCookie() {
-    final localCookie = LocalStorageService.instance.getCookie();
-    if (localCookie == null) return;
-
-    final cookies = localCookie.split(';').map((e) => e.trim()).where((e) => e.contains('=')).map((e) {
-      final kv = e.split('=');
-      return ckjar.Cookie(kv[0], kv.sublist(1).join('='));
-    }).toList();
-
-    _cookieJar.saveFromResponse(Uri.parse(Wenku8Node.wwwWenku8Cc.node), cookies);
-    _cookieJar.saveFromResponse(Uri.parse(Wenku8Node.wwwWenku8Net.node), cookies);
-  }
-
-  void deleteCookie() => _cookieJar.deleteAll();
-
-  Future<Resource> getCommonData(String url) async {
+  Future<Resource> fetchLatestRelease() async {
     try {
-      final response = await Dio(BaseOptions(headers: kUserAgent)).get(url);
+      final response = await Dio(BaseOptions(headers: kUserAgent)).get(kLatestUrl);
       return Success(response.data);
     } catch (e) {
       return Error(e.toString());
     }
-  }
-
-  Future<Resource> get(String url, {required CharsetType charsetType}) async {
-    try {
-      if (!url.contains("?")) url += "?";
-      switch (charsetType) {
-        case CharsetType.gbk:
-          url += "&charset=gbk";
-        case CharsetType.big5Hkscs:
-          url += "&charset=big5";
-      }
-
-      Log.d("$url ${charsetType.name}");
-      final response = await dio.get(url);
-      final raw = await _checkRedirects(response) as Uint8List;
-      late String decodedHtml;
-      switch (charsetType) {
-        case CharsetType.gbk:
-          decodedHtml = GbkDecoder().convert(raw);
-        case CharsetType.big5Hkscs:
-          decodedHtml = Big5Decoder().convert(raw);
-      }
-      return Success(decodedHtml);
-    } catch (e) {
-      Log.e(e.toString());
-      return Error(e.toString());
-    }
-  }
-
-  /// 手动处理重定向（dio 设置了 followRedirects: false）
-  /// - location 可能是相对路径（如 `userdetail.php`、`/login.php`），也可能是绝对地址（如 `https://www.wenku8.net/...`），
-  ///   所以要基于当前请求的地址进行解析，不能直接拼接到节点后面
-  /// - 最多跟随 [maxRedirects] 次，防止重定向死循环
-  Future<dynamic> _checkRedirects(Response response, {int maxRedirects = 5}) async {
-    var current = response;
-    for (var i = 0; i < maxRedirects; i++) {
-      final statusCode = current.statusCode;
-      if (statusCode == null || statusCode < 300 || statusCode >= 400) break;
-      final location = current.headers.value('location');
-      if (location == null || location.isEmpty) break;
-      final target = current.requestOptions.uri.resolve(location);
-      current = await dio.getUri(target);
-    }
-    return current.data;
-  }
-
-  Future<Resource> postForm(String url, {required Object? data, required CharsetType charsetType}) async {
-    try {
-      final response = await dio.post(
-        url,
-        data: data,
-        options: Options(contentType: Headers.formUrlEncodedContentType),
-      );
-      String decodedHtml;
-      switch (charsetType) {
-        case CharsetType.gbk:
-          decodedHtml = GbkCodec().decode(response.data as Uint8List);
-        case CharsetType.big5Hkscs:
-          decodedHtml = Big5Codec().decode(response.data as Uint8List);
-      }
-      return Success(decodedHtml);
-    } catch (e) {
-      Log.e(e.toString());
-      return Error(e.toString());
-    }
-  }
-}
-
-class _CloudflareInterceptor extends Interceptor {
-  @override
-  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) async {
-    final statusCode = response.statusCode;
-    if (statusCode == 403) {
-      handler.reject(Cloudflare403Exception(requestOptions: response.requestOptions));
-      return;
-    }
-
-    final cfMitigated = response.headers['cf-mitigated'];
-    if (cfMitigated == null || !cfMitigated.contains('challenge')) {
-      handler.next(response);
-      return;
-    }
-    handler.reject(CloudflareChallengeException(requestOptions: response.requestOptions));
   }
 }
