@@ -28,7 +28,7 @@ jobs:
         run: flutter pub get
 
       - name: Build macOS app
-        run: flutter build macos --release
+        run: flutter build macos --release -t lib/next/main.dart
 
       - name: Zip app
         run: |
