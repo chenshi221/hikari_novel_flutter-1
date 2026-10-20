@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../cache.dart';
+import '../router.dart';
 import '../widgets.dart';
 import 'novel_page.dart';
 
@@ -38,9 +40,17 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        SizedBox(width: 54, height: 72, child: CoverImage(data.detail.imgUrl)),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(data.detail.title, style: Theme.of(context).textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     LinearProgressIndicator(value: all.isEmpty ? 0 : cached / all.length, minHeight: 4, borderRadius: BorderRadius.circular(2)),
                     const SizedBox(height: 6),
-                    Text('${data.detail.title} · 已缓存 $cached/${all.length} 章 · ${ChapterCache.sizeLabel(widget.aid)}${running ? ' · 下载中' : ''}${task?.error != null ? ' · ${task!.error}' : ''}'),
+                    Text('已缓存 $cached/${all.length} 章 · ${ChapterCache.sizeLabel(widget.aid)}${running ? ' · 下载中' : ''}${task?.error != null ? ' · ${task!.error}' : ''}'),
                   ],
                 ),
               ),
@@ -61,13 +71,12 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                         ),
                         children: [
                           for (final c in v.chapters)
-                            CheckboxListTile(
+                            ListTile(
                               dense: true,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              value: _picked.contains(c.cid),
-                              onChanged: (_) => setState(() => _picked.contains(c.cid) ? _picked.remove(c.cid) : _picked.add(c.cid)),
+                              leading: Checkbox(value: _picked.contains(c.cid), onChanged: (_) => setState(() => _picked.contains(c.cid) ? _picked.remove(c.cid) : _picked.add(c.cid))),
                               title: Text(c.title),
-                              secondary: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 18) : null,
+                              trailing: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 18) : null,
+                              onTap: () => context.push(Routes.reader(widget.aid, c.cid)),
                             ),
                         ],
                       ),
@@ -97,7 +106,7 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                         style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
                         onPressed: running
                             ? () => ref.read(downloadProvider.notifier).cancel(widget.aid)
-                            : (_picked.isEmpty ? null : () => ref.read(downloadProvider.notifier).start(widget.aid, data.detail.title, all.where((c) => _picked.contains(c.cid)).toList(), total: all.length)),
+                            : (_picked.isEmpty ? null : () => ref.read(downloadProvider.notifier).start(widget.aid, data.detail.title, all.where((c) => _picked.contains(c.cid)).toList(), total: all.length, img: data.detail.imgUrl, firstCid: all.first.cid)),
                         child: Text(running ? '暂停' : '下载选中'),
                       ),
                     ],

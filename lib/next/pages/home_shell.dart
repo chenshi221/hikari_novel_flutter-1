@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,17 +8,48 @@ import '../session.dart';
 import '../updates.dart';
 
 /// 主界面框架：窄屏底部导航，宽屏（平板、电脑、网页）左侧导航。
-class HomeShell extends ConsumerWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key, required this.shell});
 
   final StatefulNavigationShell shell;
+
+  @override
+  ConsumerState<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends ConsumerState<HomeShell> {
+  Timer? _timer;
+
+  StatefulNavigationShell get shell => widget.shell;
+
+  @override
+  void initState() {
+    super.initState();
+    // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
+    Future.microtask(_checkUpdates);
+    _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _checkUpdates() {
+    if (ref.read(sessionProvider) is SessionLoggedIn) ref.read(updateProvider.notifier).refresh();
+  }
 
   static const _items = [(Icons.explore_outlined, Icons.explore, '发现'), (Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.update_outlined, Icons.update, '更新'), (Icons.person_outline, Icons.person, '我的')];
 
   void _go(int index) => shell.goBranch(index, initialLocation: index == shell.currentIndex);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    ref.listen(sessionProvider, (prev, next) {
+      if (prev is! SessionLoggedIn && next is SessionLoggedIn && !next.offline) _checkUpdates();
+    });
+    ref.watch(updateProvider);
     final session = ref.watch(sessionProvider);
     final offline = session is SessionLoggedIn && session.offline;
     final unread = UpdateStore.unread();

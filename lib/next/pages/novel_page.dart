@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/cat_volume.dart';
 import '../cache.dart';
@@ -151,6 +152,13 @@ class _Body extends ConsumerWidget {
             Expanded(
               child: TextButton.icon(onPressed: () => context.push(Routes.comments(aid)), icon: const Icon(Icons.forum_outlined), label: const Text('书评')),
             ),
+            Expanded(
+              child: TextButton.icon(
+                onPressed: () => launchUrl(Uri.parse('${siteBase(ref.read(sessionStoreProvider))}/book/$aid.htm'), mode: LaunchMode.externalApplication),
+                icon: const Icon(Icons.open_in_browser),
+                label: const Text('网页'),
+              ),
+            ),
           ],
         ),
         _DownloadRow(aid: aid, title: d.title, data: data),
@@ -205,7 +213,7 @@ class _DownloadRow extends ConsumerWidget {
         if (running)
           TextButton(onPressed: () => ref.read(downloadProvider.notifier).cancel(aid), child: const Text('暂停'))
         else ...[
-          TextButton(onPressed: cached >= chapters.length ? null : () => ref.read(downloadProvider.notifier).start(aid, title, chapters), child: const Text('缓存全本')),
+          TextButton(onPressed: cached >= chapters.length ? null : () => ref.read(downloadProvider.notifier).start(aid, title, chapters, img: data.detail.imgUrl), child: const Text('缓存全本')),
           TextButton(onPressed: () => context.push(Routes.cacheBook(aid)), child: const Text('管理')),
         ],
       ],

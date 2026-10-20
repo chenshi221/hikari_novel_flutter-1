@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../cache.dart';
 import '../history.dart';
+import '../progress.dart';
 import '../router.dart';
 import '../widgets.dart';
 import 'updates_page.dart';
@@ -88,6 +89,7 @@ class CachePage extends ConsumerWidget {
                       final done = t?.done ?? ChapterCache.count(b.key);
                       final total = b.value.$2;
                       return ListTile(
+                        leading: SizedBox(width: 44, height: 59, child: CoverImage(b.value.$3)),
                         title: Text(b.value.$1),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,15 +100,24 @@ class CachePage extends ConsumerWidget {
                             Text('$done/$total 章 · ${ChapterCache.sizeLabel(b.key)}${t?.running ?? false ? ' · 下载中' : ''}'),
                           ],
                         ),
-                        onTap: () => context.push(Routes.cacheBook(b.key)),
+                        onTap: () {
+                          // 点进去直接阅读：有进度从进度处接着读，否则从第一章
+                          final cid = ReadingProgress.of(b.key)?.cid ?? b.value.$4;
+                          context.push(cid.isEmpty ? Routes.cacheBook(b.key) : Routes.reader(b.key, cid));
+                        },
+                        onLongPress: () => context.push(Routes.cacheBook(b.key)),
                         trailing: (t?.running ?? false)
                             ? IconButton(icon: const Icon(Icons.pause_circle_outline), onPressed: () => ref.read(downloadProvider.notifier).cancel(b.key))
-                            : IconButton(
-                                icon: const Icon(Icons.delete_outline),
-                                onPressed: () async {
-                                  await ChapterCache.remove(b.key);
-                                  ref.invalidate(downloadProvider);
+                            : PopupMenuButton<String>(
+                                onSelected: (v) async {
+                                  if (v == 'manage') {
+                                    context.push(Routes.cacheBook(b.key));
+                                  } else {
+                                    await ChapterCache.remove(b.key);
+                                    ref.invalidate(downloadProvider);
+                                  }
                                 },
+                                itemBuilder: (_) => const [PopupMenuItem(value: 'manage', child: Text('管理章节')), PopupMenuItem(value: 'delete', child: Text('删除缓存'))],
                               ),
                       );
                     },

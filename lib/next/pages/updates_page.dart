@@ -33,14 +33,6 @@ class _UpdatesPageState extends ConsumerState<UpdatesPage> {
   late final int _seen = UpdateStore.lastSeen;
 
   @override
-  void initState() {
-    super.initState();
-    // 3 小时没检查过就自动检查一次
-    final stale = DateTime.now().millisecondsSinceEpoch - UpdateStore.lastCheck > const Duration(hours: 3).inMilliseconds;
-    if (stale && ref.read(sessionProvider) is SessionLoggedIn) Future.microtask(() => ref.read(updateProvider.notifier).refresh());
-  }
-
-  @override
   void dispose() {
     UpdateStore.markSeen();
     super.dispose();

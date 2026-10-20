@@ -1,10 +1,41 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../env.dart';
 import '../router.dart';
 import '../session.dart';
+
+/// 自己选的头像：只保存在本机（wenku8 的头像要在网站上改，这里不改网站上的）。
+class _AvatarController extends Notifier<String?> {
+  @override
+  String? build() => Hive.box('session').get('avatar') as String?;
+
+  Future<void> pick() async {
+    final file = await FilePicker.pickFile(type: FileType.image);
+    final src = file?.path;
+    if (src == null) return;
+    final dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'avatar'));
+    if (await dir.exists()) await dir.delete(recursive: true);
+    await dir.create(recursive: true);
+    final dest = await File(src).copy(p.join(dir.path, 'avatar_${DateTime.now().millisecondsSinceEpoch}${p.extension(src)}'));
+    await Hive.box('session').put('avatar', dest.path);
+    state = dest.path;
+  }
+
+  Future<void> clear() async {
+    await Hive.box('session').delete('avatar');
+    state = null;
+  }
+}
+
+final avatarProvider = NotifierProvider<_AvatarController, String?>(_AvatarController.new);
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
@@ -24,44 +55,56 @@ class ProfilePage extends ConsumerWidget {
     if (ok == true) await ref.read(sessionProvider.notifier).logout();
   }
 
+  void _avatarMenu(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_outlined),
+              title: const Text('从相册选择'),
+              onTap: () {
+                Navigator.pop(context);
+                ref.read(avatarProvider.notifier).pick();
+              },
+            ),
+            if (ref.read(avatarProvider) != null)
+              ListTile(
+                leading: const Icon(Icons.restore),
+                title: const Text('恢复网站头像'),
+                onTap: () {
+                  Navigator.pop(context);
+                  ref.read(avatarProvider.notifier).clear();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(sessionProvider);
-    if (session is! SessionLoggedIn) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('我的')),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          children: [
-            Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.all(20),
-                leading: const CircleAvatar(radius: 30, child: Icon(Icons.person_outline)),
-                title: const Text('未登录'),
-                subtitle: const Text('点击登录'),
-                onTap: () => context.push(Routes.login),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Card(child: ListTile(leading: const Icon(Icons.bar_chart_outlined), title: const Text('阅读统计'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.stats))),
-          Card(child: ListTile(leading: const Icon(Icons.history), title: const Text('阅读历史'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.history))),
-          Card(child: ListTile(leading: const Icon(Icons.download_outlined), title: const Text('离线缓存'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.cache))),
-          Card(child: ListTile(leading: const Icon(Icons.settings_outlined), title: const Text('设置'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.settings))),
-          ],
-        ),
-      );
-    }
-    final user = session.user;
+    final custom = ref.watch(avatarProvider);
     final theme = Theme.of(context);
+    final user = session is SessionLoggedIn ? session.user : null;
 
-    final rows = [
-      ('等级', user.userLevel),
-      ('积分', user.point),
-      ('经验', user.experience),
-      ('贡献', user.contribution),
-      ('注册日期', user.registerDate),
-      ('书架上限', user.maxBookshelfNum),
-    ];
+    Widget entry(IconData icon, String title, String route) => Padding(padding: const EdgeInsets.only(bottom: 8), child: Card(
+      child: ListTile(leading: Icon(icon), title: Text(title), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(route)),
+    ));
+
+    final name = user?.username ?? '未登录';
+    final avatar = CircleAvatar(
+      radius: 30,
+      backgroundColor: theme.colorScheme.surfaceContainer,
+      foregroundImage: custom != null && !isWebPreview
+          ? FileImage(File(custom))
+          : (user == null || user.avatar.isEmpty ? null : NetworkImage(displayImageUrl(user.avatar.replaceFirst('http://', 'https://')))),
+      child: Text(name.characters.firstOrNull ?? '?', style: theme.textTheme.titleLarge),
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
@@ -69,51 +112,21 @@ class ProfilePage extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 30,
-                    backgroundColor: theme.colorScheme.surfaceContainer,
-                    foregroundImage: user.avatar.isEmpty ? null : NetworkImage(displayImageUrl(user.avatar.replaceFirst('http://', 'https://'))),
-                    child: Text(user.username.characters.firstOrNull ?? '?', style: theme.textTheme.titleLarge),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(user.username, style: theme.textTheme.headlineSmall),
-                        const SizedBox(height: 4),
-                        Text('UID ${user.uid}', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+            child: ListTile(
+              contentPadding: const EdgeInsets.all(20),
+              leading: isWebPreview || user == null ? avatar : GestureDetector(onTap: () => _avatarMenu(context, ref), child: avatar),
+              title: Text(name, style: theme.textTheme.headlineSmall),
+              subtitle: Text(user == null ? '点击登录' : (session is SessionLoggedIn && session.offline ? 'UID ${user.uid} · 离线' : 'UID ${user.uid}')),
+              onTap: user == null ? () => context.push(Routes.login) : null,
             ),
           ),
           const SizedBox(height: 16),
-          Card(
-            child: Column(
-              children: [
-                for (final (i, (label, value)) in rows.indexed) ...[
-                  if (i > 0) const Divider(indent: 16, endIndent: 16),
-                  ListTile(
-                    title: Text(label),
-                    trailing: Text(value.isEmpty ? '-' : value, style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          Card(child: ListTile(leading: const Icon(Icons.history), title: const Text('阅读历史'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.history))),
-          Card(child: ListTile(leading: const Icon(Icons.download_outlined), title: const Text('离线缓存'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.cache))),
-          Card(child: ListTile(leading: const Icon(Icons.settings_outlined), title: const Text('设置'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.settings))),
-          const SizedBox(height: 16),
-          OutlinedButton(onPressed: () => _confirmLogout(context, ref), child: const Text('退出登录')),
+          entry(Icons.bar_chart_outlined, '阅读统计', Routes.stats),
+          entry(Icons.history, '阅读历史', Routes.history),
+          entry(Icons.bookmark_border, '书签', Routes.bookmarks),
+          entry(Icons.download_outlined, '离线缓存', Routes.cache),
+          entry(Icons.settings_outlined, '设置', Routes.settings),
+          if (user != null) ...[const SizedBox(height: 24), OutlinedButton(onPressed: () => _confirmLogout(context, ref), child: const Text('退出登录'))],
         ],
       ),
     );

@@ -27,12 +27,17 @@ class ChapterCache {
 
   static int count(String aid) => _box.keys.where((k) => k is String && k.startsWith('$aid:')).length;
 
-  static Future<void> setMeta(String aid, String title, int total) => _box.put('meta:$aid', {'title': title, 'total': total});
+  static Future<void> setMeta(String aid, String title, int total, String img, String firstCid) => _box.put('meta:$aid', {'title': title, 'total': total, 'img': img, 'first': firstCid});
 
-  /// 有缓存的书：aid → (书名, 总章数)
-  static Map<String, (String, int)> books() => {
+  /// 有缓存的书：aid → (书名, 总章数, 封面地址, 第一章 cid)
+  static Map<String, (String, int, String, String)> books() => {
     for (final k in _box.keys.whereType<String>().where((k) => k.startsWith('meta:')))
-      k.substring(5): ((_box.get(k) as Map)['title'] as String, (_box.get(k) as Map)['total'] as int),
+      k.substring(5): (
+        (_box.get(k) as Map)['title'] as String,
+        (_box.get(k) as Map)['total'] as int,
+        ((_box.get(k) as Map)['img'] as String?) ?? '',
+        ((_box.get(k) as Map)['first'] as String?) ?? '',
+      ),
   };
 
   static Future<void> remove(String aid) => _box.deleteAll(_box.keys.where((k) => k is String && (k.startsWith('$aid:') || k == 'meta:$aid')));
@@ -81,14 +86,14 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
   void cancel(String aid) => _cancelled.add(aid);
 
   /// 下载 [chapters] 里还没缓存的章节；[total] 是全书章数，用来显示整本书的进度。
-  Future<void> start(String aid, String title, List<CatChapter> chapters, {int? total}) async {
+  Future<void> start(String aid, String title, List<CatChapter> chapters, {int? total, String img = '', String firstCid = ''}) async {
     if (state[aid]?.running ?? false) return;
     final api = ref.read(apiProvider);
     final all = total ?? chapters.length;
     _cancelled.remove(aid);
     void emit({bool running = true, String? error}) => state = {...state, aid: DownloadState(done: ChapterCache.count(aid), total: all, running: running, error: error)};
     emit();
-    await ChapterCache.setMeta(aid, title, all);
+    await ChapterCache.setMeta(aid, title, all, img, firstCid.isEmpty && chapters.isNotEmpty ? chapters.first.cid : firstCid);
     try {
       for (final c in chapters) {
         if (_cancelled.contains(aid)) break;

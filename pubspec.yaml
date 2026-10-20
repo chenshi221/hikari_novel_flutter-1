@@ -3,7 +3,7 @@ description: "An app for reading wenku8, refactor with flutter"
 
 publish_to: 'none'
 
-version: 0.6.0-beta.1+14
+version: 0.7.0-beta.1+15
 
 environment:
   sdk: ^3.12.2
@@ -135,6 +135,14 @@ flutter:
 
   assets:
     - assets/images/
+
+  fonts:
+    - family: LXGWWenKai
+      fonts:
+        - asset: assets/fonts/LXGWWenKaiLite.ttf
+    - family: NotoSerifSCBundled
+      fonts:
+        - asset: assets/fonts/NotoSerifSC.otf
 
 # dart run flutter_native_splash:create
 flutter_native_splash:

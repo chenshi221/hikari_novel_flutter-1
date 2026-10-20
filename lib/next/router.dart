@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'pages/bookmarks_page.dart';
 import 'pages/bookshelf_page.dart';
 import 'pages/cache_book_page.dart';
 import 'pages/comments_page.dart';
@@ -29,6 +30,7 @@ class Routes {
   static const bookshelf = '/bookshelf';
   static const updates = '/updates';
   static const stats = '/stats';
+  static const bookmarks = '/bookmarks';
   static const rules = '/rules';
   static const profile = '/profile';
   static const search = '/search';
@@ -63,6 +65,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.splash, builder: (_, _) => const SplashPage()),
       GoRoute(path: Routes.login, builder: (_, _) => const LoginPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
+      GoRoute(path: Routes.bookmarks, builder: (_, _) => const BookmarksPage()),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: '/cache/:aid', builder: (_, state) => CacheBookPage(aid: state.pathParameters['aid']!)),

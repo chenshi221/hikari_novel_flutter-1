@@ -89,7 +89,22 @@ class Wenku8Parser {
 
       if (title.isNotEmpty) result.add(NovelCover(title, img, aid));
     }
-    return result;
+    return result.isNotEmpty ? result : _novelListFallback(contentElement, host);
+  }
+
+  /// 结构和预期不一致时的兜底：收集页面里所有指向书籍详情的链接（`/book/123.htm` 或 `articleinfo.php?id=123`），按书号去重。
+  static List<NovelCover> _novelListFallback(Element content, String host) {
+    final seen = <String>{};
+    final out = <NovelCover>[];
+    for (final a in content.querySelectorAll('a')) {
+      final href = a.attributes['href'] ?? '';
+      final aid = RegExp(r'/book/(\d+)\.htm').firstMatch(href)?.group(1) ?? RegExp(r'articleinfo\.php\?id=(\d+)').firstMatch(href)?.group(1);
+      if (aid == null) continue;
+      final title = (a.attributes['title'] ?? a.text).trim();
+      if (title.isEmpty || !seen.add(aid)) continue;
+      out.add(NovelCover(title, null, aid));
+    }
+    return out;
   }
 
   /// 其他用户公开的书架（userpage.php）。

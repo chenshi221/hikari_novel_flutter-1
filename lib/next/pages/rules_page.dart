@@ -22,42 +22,8 @@ class _RulesPageState extends ConsumerState<RulesPage> {
   }
 
   Future<void> _edit(int? index) async {
-    final current = index == null ? const ReplaceRule(pattern: '', replacement: '') : _rules[index];
-    final pattern = TextEditingController(text: current.pattern);
-    final replacement = TextEditingController(text: current.replacement);
-    String? error;
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setLocal) => AlertDialog(
-          title: Text(index == null ? '添加规则' : '编辑规则'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配（正则）', errorText: error)),
-              const SizedBox(height: 12),
-              TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组')),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-            TextButton(
-              onPressed: () {
-                final e = pattern.text.isEmpty ? '请输入正则' : ReplaceRule.validate(pattern.text);
-                if (e != null) {
-                  setLocal(() => error = e);
-                } else {
-                  Navigator.pop(context, true);
-                }
-              },
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved != true) return;
-    final rule = current.copyWith(pattern: pattern.text, replacement: replacement.text);
+    final rule = await showRuleDialog(context, initial: index == null ? null : _rules[index]);
+    if (rule == null) return;
     final next = [..._rules];
     final at = index;
     if (at == null) {
@@ -93,4 +59,43 @@ class _RulesPageState extends ConsumerState<RulesPage> {
             ),
     );
   }
+}
+
+/// 添加 / 编辑一条替换规则的对话框；返回 null 表示取消。阅读器里选中文字后也用它。
+Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}) async {
+  final pattern = TextEditingController(text: initial?.pattern ?? '');
+  final replacement = TextEditingController(text: initial?.replacement ?? '');
+  String? error;
+  final saved = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setLocal) => AlertDialog(
+        title: Text(initial == null ? '添加规则' : '编辑规则'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配（正则）', errorText: error)),
+            const SizedBox(height: 12),
+            TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组')),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () {
+              final e = pattern.text.isEmpty ? '请输入正则' : ReplaceRule.validate(pattern.text);
+              if (e != null) {
+                setLocal(() => error = e);
+              } else {
+                Navigator.pop(context, true);
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (saved != true) return null;
+  return (initial ?? const ReplaceRule(pattern: '', replacement: '')).copyWith(pattern: pattern.text, replacement: replacement.text);
 }

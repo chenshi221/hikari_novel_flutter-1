@@ -1,12 +1,12 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/novel_cover.dart';
 import '../data/wenku8/wenku8_parser.dart';
-import 'data.dart' show PageResult;
+import 'package:flutter/services.dart';
+
+import 'data.dart' show PageResult, lastFailedHtml;
 import 'env.dart';
 import 'router.dart';
 import 'session.dart';
@@ -70,6 +70,16 @@ class StatePanel extends ConsumerWidget {
           const SizedBox(height: 24),
           Center(child: OutlinedButton(onPressed: onRetry, child: const Text('重试'))),
         ],
+        if (onRetry != null && lastFailedHtml != null)
+          Center(
+            child: TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: lastFailedHtml!));
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制页面源码，可以粘贴给开发者排查')));
+              },
+              child: const Text('复制页面源码'),
+            ),
+          ),
         if (onRetry != null && guest) ...[
           const SizedBox(height: 12),
           Center(

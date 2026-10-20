@@ -18,6 +18,9 @@ import 'cache.dart';
 import 'session.dart';
 
 /// 列表的一页：[maxPage] 为 0 表示不知道总页数。
+/// 最近一次解析失败的搜索页原文，搜索页的"复制页面源码"用它，方便排查网站结构变化。
+String? lastFailedHtml;
+
 class PageResult {
   const PageResult(this.items, this.maxPage);
 
@@ -78,6 +81,7 @@ class Api {
       // 没解析出书：把页面标题和正文开头带出来，方便判断是没有结果、要登录还是被拦截
       final title = doc.querySelector('title')?.text.trim() ?? '';
       final text = (doc.getElementById('content') ?? doc.body)?.text.replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
+      lastFailedHtml = html;
       throw Wenku8UnexpectedPageException('没有搜到结果。页面：$title ${text.length > 120 ? text.substring(0, 120) : text}');
     }
     return result;
@@ -89,6 +93,9 @@ class Api {
     final detail = Wenku8Parser.novelDetail(await _page(_urls.novelDetail(aid), offline: true));
     return NovelPage(detail, Wenku8Parser.catalogue(await _page(_urls.catalogue(aid), offline: true)));
   }
+
+  /// 只取目录（检查更新用，比 [novel] 少一次请求）。
+  Future<List<CatVolume>> catalogue(String aid) async => Wenku8Parser.catalogue(await _page(_urls.catalogue(aid), offline: true));
 
   Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid)));
 

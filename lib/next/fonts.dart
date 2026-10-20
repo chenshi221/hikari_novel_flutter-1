@@ -48,10 +48,15 @@ class FontStore {
     return true;
   }
 
-  /// 0 系统默认 1 衬线 2 自选；没有自选字体时按系统默认。
+  /// 字体选项：编号 → 显示名。0 系统默认 1 系统衬线 2 自选文件 3 霞鹜文楷 4 思源宋体。
+  static const names = {0: '系统默认', 1: '系统衬线', 3: '霞鹜文楷', 4: '思源宋体', 2: '自选字体'};
+
+  /// 没有自选字体时按系统默认。内置字体只含常用字，缺的字回退到系统字体。
   static ({String? family, List<String>? fallback}) resolve(int font) => switch (font) {
     1 => (family: null, fallback: kSerifFallback),
     2 when customFamily != null => (family: customFamily, fallback: null),
+    3 => (family: 'LXGWWenKai', fallback: kSerifFallback),
+    4 => (family: 'NotoSerifSCBundled', fallback: kSerifFallback),
     _ => (family: null, fallback: null),
   };
 }

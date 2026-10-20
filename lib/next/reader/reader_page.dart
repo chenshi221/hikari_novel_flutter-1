@@ -10,10 +10,12 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../models/cat_chapter.dart';
 import '../../models/cat_volume.dart';
 import '../../models/content.dart';
+import '../bookmarks.dart';
 import '../cache.dart';
 import '../env.dart';
 import '../fonts.dart';
 import '../history.dart';
+import '../pages/rules_page.dart' show showRuleDialog;
 import '../rules.dart';
 import '../stats.dart';
 import '../data.dart';
@@ -84,6 +86,53 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   late String _cid = widget.cid;
   bool _bar = false;
+  int _epoch = 0; // 同一章内跳转（书签）时递增，让正文重新定位
+  int _offset = 0;
+  String? _selected;
+  double? _slide;
+
+  /// 选中文字后的菜单：在系统菜单（复制、全选）后面加"替换"和"书签"。
+  Widget _selectionMenu(BuildContext context, SelectableRegionState state) => AdaptiveTextSelectionToolbar.buttonItems(
+    anchors: state.contextMenuAnchors,
+    buttonItems: [
+      ...state.contextMenuButtonItems,
+      ContextMenuButtonItem(
+        label: '替换/屏蔽',
+        onPressed: () async {
+          final text = _selected ?? '';
+          state.hideToolbar();
+          final rule = await showRuleDialog(context, initial: ReplaceRule(pattern: RegExp.escape(text), replacement: ''));
+          if (rule == null) return;
+          await ReplaceRules.save([...ReplaceRules.all(), rule]);
+          ref.invalidate(chapterProvider);
+        },
+      ),
+      ContextMenuButtonItem(
+        label: '加书签',
+        onPressed: () {
+          final text = _selected ?? '';
+          state.hideToolbar();
+          _addBookmark(excerpt: text.length > 40 ? text.substring(0, 40) : text);
+        },
+      ),
+    ],
+  );
+
+  Widget _selectable(Widget child) => SelectionArea(onSelectionChanged: (c) => _selected = c?.plainText, contextMenuBuilder: _selectionMenu, child: child);
+
+  String? _bookTitle;
+  String _chapterTitle = '';
+
+  Future<void> _addBookmark({String? excerpt}) async {
+    final text = ref.read(chapterProvider((widget.aid, _cid))).value?.text ?? '';
+    final from = _offset.clamp(0, text.length);
+    final auto = text.substring(from, (from + 40).clamp(0, text.length)).replaceAll(RegExp(r'[\s　]+'), ' ').trim();
+    final added = await Bookmarks.toggle(widget.aid, _bookTitle ?? '', _cid, _chapterTitle, _offset, excerpt ?? auto);
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(added ? '已加书签' : '已取消书签'), duration: const Duration(seconds: 1)));
+    }
+  }
 
   // 朗读：按段落依次朗读，读完一章自动翻到下一章继续
   final _tts = FlutterTts();
@@ -150,14 +199,19 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     SystemChrome.setEnabledSystemUIMode(_bar ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
   }
 
-  void _go(String cid) {
-    if (cid == _cid) return;
-    ReadingProgress.save(widget.aid, cid, 0);
+  /// 跳到某章的某个位置。[offset] 默认章首；往前翻章时传 [_toEnd]，落在上一章的最后一页。
+  void _go(String cid, {int offset = 0}) {
+    if (cid == _cid && offset == 0) return;
+    ReadingProgress.save(widget.aid, cid, offset);
     setState(() {
+      if (cid != _cid) _offset = offset;
       _cid = cid;
+      _epoch++;
       _bar = false;
     });
   }
+
+  static const _toEnd = 1 << 30;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +229,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final title = index >= 0 ? chapters[index].title : '';
     final saved = ReadingProgress.of(widget.aid);
     final startOffset = saved?.cid == _cid ? saved!.offset : 0;
-    void save(int offset) => ReadingProgress.save(widget.aid, _cid, offset);
+    _bookTitle = novel?.detail.title;
+    _chapterTitle = title;
+    void save(int offset) {
+      _offset = offset;
+      ReadingProgress.save(widget.aid, _cid, offset);
+    }
+
 
     return Scaffold(
       backgroundColor: palette.bg,
@@ -197,8 +257,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 scheduleMicrotask(() => _startTts(c));
               }
               final body = prefs.mode != 0
-                  ? _PagedBody(key: ValueKey((_cid, prefs.fontSize, prefs.lineHeight, prefs.mode, prefs.margin)), title: title, curl: prefs.mode == 2, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid), onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar)
-                  : _ScrollBody(key: ValueKey(_cid), content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar);
+                  ? _PagedBody(key: ValueKey((_cid, _epoch, prefs.fontSize, prefs.lineHeight, prefs.mode, prefs.margin, prefs.font)), wrap: _selectable, title: title, curl: prefs.mode == 2, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid, offset: _toEnd), onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar)
+                  : _ScrollBody(key: ValueKey((_cid, _epoch)), wrap: _selectable, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar);
               return body;
             },
           ),
@@ -228,23 +288,53 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 elevation: 2,
                 child: SafeArea(
                   top: false,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      TextButton(onPressed: prev == null ? null : () => _go(prev.cid), child: const Text('上一章')),
-                      TextButton(onPressed: () => _showCatalogue(novel?.catalogue ?? const [], _cid), child: const Text('目录')),
-                      TextButton(
-                        onPressed: () {
-                          if (_speaking) {
-                            _stopTts();
-                          } else {
-                            content.whenData(_startTts);
-                          }
-                        },
-                        child: Text(_speaking ? '停止朗读' : '朗读'),
+                      if (chapters.length > 1)
+                        Row(
+                          children: [
+                            const SizedBox(width: 16),
+                            Text('${index + 1}/${chapters.length}', style: Theme.of(context).textTheme.bodySmall),
+                            Expanded(
+                              child: Slider(
+                                min: 0,
+                                max: (chapters.length - 1).toDouble(),
+                                divisions: chapters.length - 1,
+                                value: (_slide ?? index).clamp(0, chapters.length - 1).toDouble(),
+                                onChanged: (v) => setState(() => _slide = v),
+                                onChangeEnd: (v) {
+                                  _slide = null;
+                                  _go(chapters[v.round()].cid);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          TextButton(onPressed: prev == null ? null : () => _go(prev.cid), child: const Text('上一章')),
+                          TextButton(onPressed: () => _showCatalogue(novel?.catalogue ?? const [], _cid), child: const Text('目录')),
+                          IconButton(
+                            tooltip: '书签',
+                            icon: Icon(Bookmarks.has(widget.aid, _cid, _offset) ? Icons.bookmark : Icons.bookmark_border),
+                            onPressed: _addBookmark,
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              if (_speaking) {
+                                _stopTts();
+                              } else {
+                                content.whenData(_startTts);
+                              }
+                            },
+                            child: Text(_speaking ? '停止' : '朗读'),
+                          ),
+                          TextButton(onPressed: _showSettings, child: const Text('设置')),
+                          TextButton(onPressed: next == null ? null : () => _go(next.cid), child: const Text('下一章')),
+                        ],
                       ),
-                      TextButton(onPressed: _showSettings, child: const Text('设置')),
-                      TextButton(onPressed: next == null ? null : () => _go(next.cid), child: const Text('下一章')),
                     ],
                   ),
                 ),
@@ -256,39 +346,73 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     );
   }
 
-  /// 目录按卷分层，当前章所在的卷默认展开。
+  /// 目录（按卷分层，当前章所在的卷默认展开）和本书的书签。
   void _showCatalogue(List<CatVolume> volumes, String current) {
     final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.75,
-        builder: (context, scroll) => ListView(
-          controller: scroll,
-          children: [
-            for (final v in volumes)
-              ExpansionTile(
-                initiallyExpanded: volumes.length == 1 || v.chapters.any((c) => c.cid == current),
-                title: Text(v.title, style: theme.textTheme.titleSmall),
-                subtitle: Text('${v.chapters.length} 章', style: theme.textTheme.bodySmall),
-                children: [
-                  for (final c in v.chapters)
-                    ListTile(
-                      dense: true,
-                      contentPadding: const EdgeInsets.only(left: 32, right: 16),
-                      selected: c.cid == current,
-                      leading: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 16) : null,
-                      title: Text(c.title),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _go(c.cid);
+      builder: (context) => DefaultTabController(
+        length: 2,
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          builder: (context, scroll) => Column(
+            children: [
+              const TabBar(tabs: [Tab(text: '目录'), Tab(text: '书签')]),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    ListView(
+                      controller: scroll,
+                      children: [
+                        for (final v in volumes)
+                          ExpansionTile(
+                            initiallyExpanded: volumes.length == 1 || v.chapters.any((c) => c.cid == current),
+                            title: Text(v.title, style: theme.textTheme.titleSmall),
+                            subtitle: Text('${v.chapters.length} 章', style: theme.textTheme.bodySmall),
+                            children: [
+                              for (final c in v.chapters)
+                                ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.only(left: 32, right: 16),
+                                  selected: c.cid == current,
+                                  leading: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 16) : null,
+                                  title: Text(c.title),
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    _go(c.cid);
+                                  },
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    Builder(
+                      builder: (context) {
+                        final marks = Bookmarks.all(widget.aid);
+                        return marks.isEmpty
+                            ? const Center(child: Text('还没有书签'))
+                            : ListView(
+                                children: [
+                                  for (final b in marks)
+                                    ListTile(
+                                      title: Text(b.excerpt.isEmpty ? b.chapter : b.excerpt, maxLines: 2, overflow: TextOverflow.ellipsis),
+                                      subtitle: Text(b.chapter, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      onTap: () {
+                                        Navigator.pop(context);
+                                        _go(b.cid, offset: b.offset == 0 ? 1 : b.offset);
+                                      },
+                                    ),
+                                ],
+                              );
                       },
                     ),
-                ],
+                  ],
+                ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -315,13 +439,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   Wrap(
                     spacing: 8,
                     children: [
-                      for (final (i, name) in ['默认字体', '衬线', '自选字体'].indexed)
+                      for (final e in FontStore.names.entries)
                         ChoiceChip(
-                          label: Text(name),
-                          selected: prefs.font == i,
+                          label: Text(e.value),
+                          selected: prefs.font == e.key,
                           onSelected: (_) async {
-                            if (i == 2 && FontStore.customFamily == null && !await FontStore.pick()) return;
-                            set(prefs.copyWith(font: i));
+                            if (e.key == 2 && FontStore.customFamily == null && !await FontStore.pick()) return;
+                            set(prefs.copyWith(font: e.key));
                           },
                         ),
                       if (!isWebPreview)
@@ -365,7 +489,9 @@ TextStyle _style(ReaderPrefs prefs, Color color) {
 }
 
 class _ScrollBody extends StatefulWidget {
-  const _ScrollBody({super.key, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onNext, required this.onToggleBar});
+  final Widget Function(Widget) wrap;
+
+  const _ScrollBody({super.key, required this.wrap, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onNext, required this.onToggleBar});
 
   final Content content;
   final ReaderPrefs prefs;
@@ -409,7 +535,7 @@ class _ScrollBodyState extends State<_ScrollBody> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onToggleBar,
-        child: SingleChildScrollView(
+        child: widget.wrap(SingleChildScrollView(
           controller: _controller,
           padding: EdgeInsets.fromLTRB(widget.prefs.margin, MediaQuery.paddingOf(context).top + 24, widget.prefs.margin, 48),
           child: Column(
@@ -421,17 +547,19 @@ class _ScrollBodyState extends State<_ScrollBody> {
               if (widget.onNext != null) Padding(padding: const EdgeInsets.only(top: 32), child: OutlinedButton(onPressed: widget.onNext, child: const Text('下一章'))),
             ],
           ),
-        ),
+        )),
       ),
     );
   }
 }
 
 class _PagedBody extends StatefulWidget {
+  final Widget Function(Widget) wrap;
+
   final String title;
   final bool curl;
 
-  const _PagedBody({super.key, required this.title, required this.curl, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
+  const _PagedBody({super.key, required this.wrap, required this.title, required this.curl, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
 
   final Content content;
   final ReaderPrefs prefs;
@@ -527,11 +655,13 @@ class _PagedBodyState extends State<_PagedBody> {
               }
               return false;
             },
-            child: PageView.builder(
-              controller: _controller,
-              itemCount: total,
-              onPageChanged: (i) => widget.onOffset(offsetOf(i)),
-              itemBuilder: (context, i) => pageAt(i),
+            child: widget.wrap(
+              PageView.builder(
+                controller: _controller,
+                itemCount: total,
+                onPageChanged: (i) => widget.onOffset(offsetOf(i)),
+                itemBuilder: (context, i) => pageAt(i),
+              ),
             ),
           ),
         );

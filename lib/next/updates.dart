@@ -81,19 +81,32 @@ class UpdateController extends Notifier<UpdateProgress> {
       final fresh = <Map>[];
       var done = 0;
       state = UpdateProgress(running: true, total: books.length);
-      for (final e in books.entries) {
-        final chapters = (await api.novel(e.key)).catalogue.expand((v) => v.chapters).toList();
-        final before = known[e.key];
-        if (before != null && chapters.length > before) {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          for (final c in chapters.skip(before)) {
-            fresh.add({'aid': e.key, 'title': e.value.title, 'img': e.value.img, 'chapter': c.title, 'cid': c.cid, 'time': now});
+      // 每批 4 本并行：比一本本查快，又不至于被网站限流；单本失败不影响其他
+      final entries = books.entries.toList();
+      for (var i = 0; i < entries.length; i += 4) {
+        final batch = entries.skip(i).take(4);
+        final results = await Future.wait(batch.map((e) async {
+          try {
+            return (await api.catalogue(e.key)).expand((v) => v.chapters).toList();
+          } catch (_) {
+            return null;
           }
-          at[e.key] = now;
+        }));
+        for (final (j, e) in batch.indexed) {
+          final chapters = results[j];
+          if (chapters == null) continue;
+          final before = known[e.key];
+          if (before != null && chapters.length > before) {
+            final now = DateTime.now().millisecondsSinceEpoch;
+            for (final c in chapters.skip(before)) {
+              fresh.add({'aid': e.key, 'title': e.value.title, 'img': e.value.img, 'chapter': c.title, 'cid': c.cid, 'time': now});
+            }
+            at[e.key] = now;
+          }
+          known[e.key] = chapters.length;
         }
-        known[e.key] = chapters.length;
-        state = UpdateProgress(running: true, done: ++done, total: books.length);
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+        done += batch.length;
+        state = UpdateProgress(running: true, done: done, total: books.length);
       }
       known.removeWhere((aid, _) => !books.containsKey(aid));
       await UpdateStore.save(known, [...fresh.reversed, ...feed], at: at);

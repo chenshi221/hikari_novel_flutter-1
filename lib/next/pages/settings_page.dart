@@ -50,7 +50,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             children: [
               for (final (i, p) in appPalettes.indexed)
                 ChoiceChip(
-                  avatar: CircleAvatar(backgroundColor: p.light, radius: 8),
+                  avatar: CircleAvatar(backgroundColor: p.accentLight, radius: 8),
                   label: Text(p.name),
                   selected: palette == i,
                   onSelected: (_) => ref.read(paletteProvider.notifier).set(i),
