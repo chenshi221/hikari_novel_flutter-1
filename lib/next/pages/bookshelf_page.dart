@@ -5,6 +5,7 @@ import '../../data/wenku8/wenku8_parser.dart';
 import '../../models/bookshelf.dart';
 import '../env.dart';
 import '../session.dart';
+import '../widgets.dart';
 
 /// wenku8 的书架编号 0~5，这里先只显示默认书架。
 final bookshelfProvider = FutureProvider.autoDispose<Bookshelf>((ref) async {
@@ -18,6 +19,9 @@ class BookshelfPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (ref.watch(sessionProvider) is! SessionLoggedIn) {
+      return Scaffold(appBar: AppBar(title: const Text('书架')), body: const LoginPrompt(title: '登录后查看书架'));
+    }
     final shelf = ref.watch(bookshelfProvider);
     final theme = Theme.of(context);
 

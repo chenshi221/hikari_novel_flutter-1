@@ -7,7 +7,7 @@ class HomeShell extends StatelessWidget {
 
   final StatefulNavigationShell shell;
 
-  static const _items = [(Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.person_outline, Icons.person, '我的')];
+  static const _items = [(Icons.explore_outlined, Icons.explore, '发现'), (Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.person_outline, Icons.person, '我的')];
 
   void _go(int index) => shell.goBranch(index, initialLocation: index == shell.currentIndex);
 

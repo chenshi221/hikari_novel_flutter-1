@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../models/common/wenku8_node.dart';
 import '../env.dart';
 import '../session.dart';
 import 'login_webview_page.dart';
 
-/// 登录页。未登录时整个 App 只能看到这一页。
+/// 登录页。游客在需要账号时按需打开，登录成功后自动返回上一页。
 ///
 /// - 原生 App：打开 wenku8 自己的登录网页（能处理验证、记住登录等），登录后读取 cookie
 /// - 网页预览：浏览器里没法嵌入别的网站，改为账号密码表单，由服务器上的转发程序提交
@@ -56,9 +57,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final session = ref.watch(sessionProvider);
+    ref.listen(sessionProvider, (_, next) {
+      if (next is SessionLoggedIn && context.canPop()) context.pop();
+    });
     final notice = _error ?? (session is SessionLoggedOut ? session.message : null);
 
     return Scaffold(
+      appBar: AppBar(),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -70,7 +75,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                 children: [
                   Image.asset('assets/images/logo_transparent.png', height: 72, alignment: Alignment.centerLeft),
                   const SizedBox(height: 28),
-                  Text('欢迎回来', style: theme.textTheme.displaySmall),
+                  Text('登录', style: theme.textTheme.displaySmall),
                   const SizedBox(height: 10),
                   Text('登录轻小说文库账号后继续阅读。', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 32),

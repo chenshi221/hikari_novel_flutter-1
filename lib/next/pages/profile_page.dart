@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../env.dart';
+import '../router.dart';
 import '../session.dart';
+import '../widgets.dart';
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
@@ -12,7 +15,7 @@ class ProfilePage extends ConsumerWidget {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('退出登录？'),
-        content: const Text('退出后需要重新登录才能使用。'),
+        content: const Text('退出后以游客身份浏览，书架等功能需要重新登录。'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
           TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('退出')),
@@ -25,7 +28,25 @@ class ProfilePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(sessionProvider);
-    if (session is! SessionLoggedIn) return const SizedBox.shrink();
+    if (session is! SessionLoggedIn) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('我的')),
+        body: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+          children: [
+            Card(
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(20),
+                leading: const CircleAvatar(radius: 30, child: Icon(Icons.person_outline)),
+                title: const Text('未登录'),
+                subtitle: const Text('点击登录'),
+                onTap: () => context.push(Routes.login),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final user = session.user;
     final theme = Theme.of(context);
 

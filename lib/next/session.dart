@@ -59,13 +59,6 @@ class SessionChecking extends SessionState {
   const SessionChecking();
 }
 
-/// 检查时出了网络等问题，不确定登录是否还有效
-class SessionCheckFailed extends SessionState {
-  const SessionCheckFailed(this.message);
-
-  final String message;
-}
-
 class SessionLoggedOut extends SessionState {
   const SessionLoggedOut({this.message});
 
@@ -79,7 +72,7 @@ class SessionLoggedIn extends SessionState {
   final UserInfo user;
 }
 
-/// 登录状态。路由根据它决定显示启动页、登录页还是主界面：没登录就进不了主界面。
+/// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
 class SessionController extends Notifier<SessionState> {
   @override
   SessionState build() {
@@ -93,7 +86,7 @@ class SessionController extends Notifier<SessionState> {
 
   Wenku8Urls get _urls => ref.read(wenku8UrlsProvider);
 
-  /// 启动时：有保存的登录信息就向网站确认一次，失效则回到登录页。
+  /// 启动时：有保存的登录信息就向网站确认一次。失效则清除；网络出错按游客处理，但保留 cookie，下次启动再检查。
   Future<void> restore() async {
     final cookie = _store.cookie;
     if (cookie == null) {
@@ -107,8 +100,8 @@ class SessionController extends Notifier<SessionState> {
     } on Wenku8UnexpectedPageException {
       await _clear();
       state = const SessionLoggedOut(message: '登录已过期，请重新登录');
-    } catch (e) {
-      state = SessionCheckFailed(e.toString());
+    } catch (_) {
+      state = const SessionLoggedOut();
     }
   }
 
