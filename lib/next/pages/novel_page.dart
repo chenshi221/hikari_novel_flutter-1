@@ -3,13 +3,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/cat_volume.dart';
+import '../cache.dart';
 import '../data.dart';
+import '../history.dart';
 import '../progress.dart';
 import '../router.dart';
 import '../session.dart';
 import '../widgets.dart';
 
-final novelProvider = FutureProvider.autoDispose.family<NovelPage, String>((ref, aid) => ref.watch(apiProvider).novel(aid));
+final novelProvider = FutureProvider.autoDispose.family<NovelPage, String>((ref, aid) async {
+  final page = await ref.watch(apiProvider).novel(aid);
+  await BrowsingHistory.add(aid, page.detail.title, page.detail.imgUrl);
+  return page;
+});
 
 /// 这本书在哪个书架里：返回 bid（移出书架要用），不在书架里为 null。游客直接返回 null。
 final shelfEntryProvider = FutureProvider.autoDispose.family<String?, String>((ref, aid) async {
@@ -152,6 +158,7 @@ class _Body extends ConsumerWidget {
             ),
           ],
         ),
+        _DownloadRow(aid: aid, title: d.title, data: data),
         const SizedBox(height: 8),
         Text('简介', style: theme.textTheme.titleMedium),
         const SizedBox(height: 6),
@@ -173,6 +180,37 @@ class _Body extends ConsumerWidget {
                 ),
             ],
           ),
+      ],
+    );
+  }
+}
+
+/// 缓存全本：显示已缓存章数，下载中显示进度并可取消。
+class _DownloadRow extends ConsumerWidget {
+  const _DownloadRow({required this.aid, required this.title, required this.data});
+
+  final String aid;
+  final String title;
+  final NovelPage data;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chapters = data.catalogue.expand((v) => v.chapters).toList();
+    final task = ref.watch(downloadProvider)[aid];
+    final cached = task?.done ?? ChapterCache.count(aid);
+    final running = task?.running ?? false;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            running ? '正在缓存 $cached/${chapters.length}' : (task?.error ?? '已缓存 $cached/${chapters.length} 章'),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+        ),
+        TextButton(
+          onPressed: running ? () => ref.read(downloadProvider.notifier).cancel(aid) : (cached >= chapters.length ? null : () => ref.read(downloadProvider.notifier).start(aid, title, chapters)),
+          child: Text(running ? '取消' : '缓存全本'),
+        ),
       ],
     );
   }

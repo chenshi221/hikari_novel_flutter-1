@@ -6,6 +6,7 @@ import 'pages/bookshelf_page.dart';
 import 'pages/comments_page.dart';
 import 'pages/discover_page.dart';
 import 'pages/home_shell.dart';
+import 'pages/library_pages.dart';
 import 'pages/login_page.dart';
 import 'pages/novel_page.dart';
 import 'pages/profile_page.dart';
@@ -25,6 +26,8 @@ class Routes {
   static const profile = '/profile';
   static const search = '/search';
   static const settings = '/settings';
+  static const history = '/history';
+  static const cache = '/cache';
 
   static String searchAuthor(String author) => '/search?author=${Uri.encodeQueryComponent(author)}';
   static String novel(String aid) => '/novel/$aid';
@@ -52,6 +55,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.splash, builder: (_, _) => const SplashPage()),
       GoRoute(path: Routes.login, builder: (_, _) => const LoginPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
+      GoRoute(path: Routes.history, builder: (_, _) => const HistoryPage()),
+      GoRoute(path: Routes.cache, builder: (_, _) => const CachePage()),
       GoRoute(path: Routes.settings, builder: (_, _) => const SettingsPage()),
       GoRoute(path: '/novel/:aid', builder: (_, state) => NovelPageView(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments', builder: (_, state) => CommentsPage(aid: state.pathParameters['aid']!)),

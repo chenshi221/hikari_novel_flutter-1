@@ -19,7 +19,7 @@ final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(Theme
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.paged = false});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5});
 
   final double fontSize;
   final double lineHeight;
@@ -27,11 +27,19 @@ class ReaderPrefs {
   /// 阅读背景：0 纸张 1 护眼 2 夜间 3 跟随应用
   final int theme;
 
-  /// false 上下滚动，true 左右翻页
-  final bool paged;
+  /// 翻页方式：0 上下滚动 1 左右滑动 2 仿真翻页
+  final int mode;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, bool? paged}) =>
-      ReaderPrefs(fontSize: fontSize ?? this.fontSize, lineHeight: lineHeight ?? this.lineHeight, theme: theme ?? this.theme, paged: paged ?? this.paged);
+  /// 朗读语速 0.1~1.0
+  final double ttsRate;
+
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate}) => ReaderPrefs(
+    fontSize: fontSize ?? this.fontSize,
+    lineHeight: lineHeight ?? this.lineHeight,
+    theme: theme ?? this.theme,
+    mode: mode ?? this.mode,
+    ttsRate: ttsRate ?? this.ttsRate,
+  );
 }
 
 class ReaderPrefsController extends Notifier<ReaderPrefs> {
@@ -40,11 +48,12 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     fontSize: (_box.get('r.fontSize') as num?)?.toDouble() ?? 19,
     lineHeight: (_box.get('r.lineHeight') as num?)?.toDouble() ?? 1.8,
     theme: (_box.get('r.theme') as int?) ?? 0,
-    paged: (_box.get('r.paged') as bool?) ?? false,
+    mode: (_box.get('r.mode') as int?) ?? 0,
+    ttsRate: (_box.get('r.ttsRate') as num?)?.toDouble() ?? 0.5,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.paged': next.paged});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate});
     state = next;
   }
 }

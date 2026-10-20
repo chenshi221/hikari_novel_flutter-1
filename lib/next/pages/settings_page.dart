@@ -38,15 +38,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onSelectionChanged: (s) => ref.read(themeModeProvider.notifier).set(s.first),
           ),
           section('阅读'),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('左右翻页'),
-            subtitle: const Text('关闭时为上下滚动'),
-            value: prefs.paged,
-            onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(paged: v)),
+          SegmentedButton<int>(
+            segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真'))],
+            selected: {prefs.mode},
+            onSelectionChanged: (s) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(mode: s.first)),
           ),
+          const SizedBox(height: 8),
           Text('字号 ${prefs.fontSize.round()}'),
           Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(fontSize: v))),
+          Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
+          Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(ttsRate: v))),
           if (!isWebPreview) ...[
             section('网络'),
             SegmentedButton<Wenku8Node>(

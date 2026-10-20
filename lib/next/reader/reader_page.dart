@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/cat_chapter.dart';
 import '../../models/content.dart';
+import '../cache.dart';
 import '../data.dart';
 import '../env.dart';
 import '../pages/novel_page.dart';
@@ -12,9 +16,10 @@ import '../progress.dart';
 import '../settings.dart';
 import '../widgets.dart';
 import 'paginator.dart';
+import 'paper_curl_pager.dart';
 
 /// 章节正文缓存在内存里，预加载下一章时也走这里。
-final chapterProvider = FutureProvider.family<Content, (String, String)>((ref, key) => ref.watch(apiProvider).chapter(key.$1, key.$2));
+final chapterProvider = FutureProvider.family<Content, (String, String)>((ref, key) async => ChapterCache.get(key.$1, key.$2) ?? await ref.watch(apiProvider).chapter(key.$1, key.$2));
 
 class _Palette {
   const _Palette(this.bg, this.fg);
@@ -45,14 +50,57 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   late String _cid = widget.cid;
   bool _bar = false;
 
+  // 朗读：按段落依次朗读，读完一章自动翻到下一章继续
+  final _tts = FlutterTts();
+  bool _speaking = false;
+  bool _resumeTts = false;
+  List<String> _paras = const [];
+  int _pi = 0;
+  CatChapter? _nextChapter;
+
+  Future<void> _startTts(Content c) async {
+    _paras = c.text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    _pi = 0;
+    if (_paras.isEmpty) return;
+    setState(() => _speaking = true);
+    await _tts.setLanguage('zh-CN');
+    await _tts.setSpeechRate(ref.read(readerPrefsProvider).ttsRate);
+    await _speakNext();
+  }
+
+  Future<void> _speakNext() async {
+    if (!_speaking) return;
+    if (_pi < _paras.length) {
+      await _tts.speak(_paras[_pi]);
+      return;
+    }
+    final next = _nextChapter;
+    if (next == null) {
+      await _stopTts();
+      return;
+    }
+    _resumeTts = true;
+    _go(next.cid);
+  }
+
+  Future<void> _stopTts() async {
+    await _tts.stop();
+    if (mounted) setState(() => _speaking = false);
+  }
+
   @override
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _tts.setCompletionHandler(() {
+      _pi++;
+      _speakNext();
+    });
   }
 
   @override
   void dispose() {
+    _tts.stop();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -75,6 +123,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final index = chapters.indexWhere((c) => c.cid == _cid);
     final prev = index > 0 ? chapters[index - 1] : null;
     final next = index >= 0 && index < chapters.length - 1 ? chapters[index + 1] : null;
+    _nextChapter = next;
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
     if (next != null) ref.listen(chapterProvider((widget.aid, _cid)), (_, s) => s.hasValue ? ref.read(chapterProvider((widget.aid, next.cid))) : null);
 
@@ -90,8 +139,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
             loading: () => Center(child: CircularProgressIndicator(color: palette.fg)),
             error: (e, _) => StatePanel(title: '章节加载失败', detail: e.toString(), onRetry: () => ref.invalidate(chapterProvider((widget.aid, _cid)))),
             data: (c) {
-              final body = prefs.paged
-                  ? _PagedBody(key: ValueKey((_cid, prefs.fontSize, prefs.lineHeight)), content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid), onNext: next == null ? null : () => _go(next.cid), onToggleBar: () => setState(() => _bar = !_bar))
+              if (_resumeTts) {
+                _resumeTts = false;
+                scheduleMicrotask(() => _startTts(c));
+              }
+              final body = prefs.mode != 0
+                  ? _PagedBody(key: ValueKey((_cid, prefs.fontSize, prefs.lineHeight, prefs.mode)), curl: prefs.mode == 2, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid), onNext: next == null ? null : () => _go(next.cid), onToggleBar: () => setState(() => _bar = !_bar))
                   : _ScrollBody(key: ValueKey(_cid), content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onNext: next == null ? null : () => _go(next.cid), onToggleBar: () => setState(() => _bar = !_bar));
               return body;
             },
@@ -127,6 +180,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                     children: [
                       TextButton(onPressed: prev == null ? null : () => _go(prev.cid), child: const Text('上一章')),
                       TextButton(onPressed: () => _showCatalogue(chapters, index), child: const Text('目录')),
+                      TextButton(
+                        onPressed: () {
+                          if (_speaking) {
+                            _stopTts();
+                          } else {
+                            content.whenData(_startTts);
+                          }
+                        },
+                        child: Text(_speaking ? '停止朗读' : '朗读'),
+                      ),
                       TextButton(onPressed: _showSettings, child: const Text('设置')),
                       TextButton(onPressed: next == null ? null : () => _go(next.cid), child: const Text('下一章')),
                     ],
@@ -188,7 +251,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                       for (final (i, name) in ['纸张', '护眼', '夜间', '跟随应用'].indexed) ChoiceChip(label: Text(name), selected: prefs.theme == i, onSelected: (_) => set(prefs.copyWith(theme: i))),
                     ],
                   ),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('左右翻页'), value: prefs.paged, onChanged: (v) => set(prefs.copyWith(paged: v))),
+                  const SizedBox(height: 8),
+                  SegmentedButton<int>(
+                    segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真'))],
+                    selected: {prefs.mode},
+                    onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
+                  ),
+                  Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
+                  Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
                 ],
               ),
             ),
@@ -265,7 +335,9 @@ class _ScrollBodyState extends State<_ScrollBody> {
 }
 
 class _PagedBody extends StatefulWidget {
-  const _PagedBody({super.key, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
+  final bool curl;
+
+  const _PagedBody({super.key, required this.curl, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
 
   final Content content;
   final ReaderPrefs prefs;
@@ -310,6 +382,34 @@ class _PagedBodyState extends State<_PagedBody> {
         _starts = paginate(c.text, style, size);
         _controller ??= PageController(initialPage: pageOfOffset(_starts, widget.startOffset));
         final total = _starts.length + c.images.length;
+        Widget pageAt(int i) {
+          if (i >= _starts.length) return Center(child: Image.network(displayImageUrl(c.images[i - _starts.length])));
+          final end = i + 1 < _starts.length ? _starts[i + 1] : c.text.length;
+          return Padding(
+            padding: padding,
+            child: Stack(
+              children: [
+                Text(c.text.substring(_starts[i], end), style: style),
+                Positioned(right: 0, bottom: -22, child: Text('${i + 1}/$total', style: TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5)))),
+              ],
+            ),
+          );
+        }
+
+        int offsetOf(int i) => i < _starts.length ? _starts[i] : c.text.length;
+        if (widget.curl) {
+          final bg = Theme.of(context).scaffoldBackgroundColor;
+          return PaperCurlPager.builder(
+            pageCount: total,
+            initialIndex: pageOfOffset(_starts, widget.startOffset),
+            backgroundColor: bg,
+            pageBuilder: (_, i) => ColoredBox(color: bg, child: pageAt(i)),
+            onIndexChanged: (i) => widget.onOffset(offsetOf(i)),
+            onCenterTap: widget.onToggleBar,
+            onReachStart: widget.onPrev,
+            onReachEnd: widget.onNext,
+          );
+        }
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (d) {
@@ -325,20 +425,8 @@ class _PagedBodyState extends State<_PagedBody> {
           child: PageView.builder(
             controller: _controller,
             itemCount: total,
-            onPageChanged: (i) => widget.onOffset(i < _starts.length ? _starts[i] : c.text.length),
-            itemBuilder: (context, i) {
-              if (i >= _starts.length) return Center(child: Image.network(displayImageUrl(c.images[i - _starts.length])));
-              final end = i + 1 < _starts.length ? _starts[i + 1] : c.text.length;
-              return Padding(
-                padding: padding,
-                child: Stack(
-                  children: [
-                    Text(c.text.substring(_starts[i], end), style: style),
-                    Positioned(right: 0, bottom: -22, child: Text('${i + 1}/$total', style: TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5)))),
-                  ],
-                ),
-              );
-            },
+            onPageChanged: (i) => widget.onOffset(offsetOf(i)),
+            itemBuilder: (context, i) => pageAt(i),
           ),
         );
       },
