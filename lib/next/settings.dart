@@ -17,9 +17,22 @@ class ThemeModeController extends Notifier<ThemeMode> {
 
 final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(ThemeModeController.new);
 
+/// 配色方案编号（theme.dart 的 appPalettes）。
+class PaletteController extends Notifier<int> {
+  @override
+  int build() => (_box.get('palette') as int?) ?? 0;
+
+  void set(int index) {
+    _box.put('palette', index);
+    state = index;
+  }
+}
+
+final paletteProvider = NotifierProvider<PaletteController, int>(PaletteController.new);
+
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0});
 
   final double fontSize;
   final double lineHeight;
@@ -30,19 +43,23 @@ class ReaderPrefs {
   /// 翻页方式：0 上下滚动 1 左右滑动 2 仿真翻页
   final int mode;
 
+  /// 字体：0 系统默认 1 衬线 2 自选字体文件
+  final int font;
+
   /// 左右页边距
   final double margin;
 
   /// 朗读语速 0.1~1.0
   final double ttsRate;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin}) => ReaderPrefs(
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
     mode: mode ?? this.mode,
     ttsRate: ttsRate ?? this.ttsRate,
     margin: margin ?? this.margin,
+    font: font ?? this.font,
   );
 }
 
@@ -55,10 +72,11 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     mode: (_box.get('r.mode') as int?) ?? 0,
     ttsRate: (_box.get('r.ttsRate') as num?)?.toDouble() ?? 0.5,
     margin: (_box.get('r.margin') as num?)?.toDouble() ?? 22,
+    font: (_box.get('r.font') as int?) ?? 0,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font});
     state = next;
   }
 }

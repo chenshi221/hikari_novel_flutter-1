@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../cache.dart';
 import '../history.dart';
 import '../router.dart';
 import '../widgets.dart';
+import 'updates_page.dart';
 
-/// 浏览历史。
+/// 阅读历史：按日期分组，显示读到哪一章和时间，点一下接着读。
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -17,65 +19,97 @@ class HistoryPage extends StatefulWidget {
 class _HistoryPageState extends State<HistoryPage> {
   @override
   Widget build(BuildContext context) {
-    final items = BrowsingHistory.all();
+    final theme = Theme.of(context);
+    final items = ReadingHistory.all();
+    final rows = <Widget>[];
+    String? day;
+    for (final e in items) {
+      final label = dayLabel(e.time);
+      if (label != day) {
+        day = label;
+        rows.add(Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 4), child: Text(label, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary))));
+      }
+      rows.add(
+        Dismissible(
+          key: ValueKey(e.aid),
+          direction: DismissDirection.endToStart,
+          background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), child: const Icon(Icons.delete_outline)),
+          onDismissed: (_) async {
+            await ReadingHistory.remove(e.aid);
+            setState(() {});
+          },
+          child: ListTile(
+            leading: SizedBox(width: 40, height: 54, child: CoverImage(e.img)),
+            title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${e.chapter} · ${hhmm(e.time)}', maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: IconButton(icon: const Icon(Icons.info_outline), tooltip: '详情', onPressed: () => context.push(Routes.novel(e.aid))),
+            onTap: () => context.push(Routes.reader(e.aid, e.cid)),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('浏览历史'),
+        title: const Text('阅读历史'),
         actions: [
           if (items.isNotEmpty)
             TextButton(
               onPressed: () async {
-                await BrowsingHistory.clear();
+                await ReadingHistory.clear();
                 setState(() {});
               },
               child: const Text('清空'),
             ),
         ],
       ),
-      body: items.isEmpty
-          ? const StatePanel(title: '还没有浏览记录')
-          : ListView.builder(
-              itemCount: items.length,
-              itemBuilder: (context, i) => ListTile(
-                leading: SizedBox(width: 40, height: 54, child: CoverImage(items[i].img)),
-                title: Text(items[i].title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                onTap: () => context.push(Routes.novel(items[i].aid)),
-              ),
-            ),
+      body: items.isEmpty ? const StatePanel(title: '还没有阅读记录') : ListView(children: rows),
     );
   }
 }
 
-/// 离线缓存管理：看每本书缓存了多少章，可删除。
-class CachePage extends StatefulWidget {
+/// 离线缓存：每本书一个进度条，点进去按章节管理；这里可以整本删除。
+class CachePage extends ConsumerWidget {
   const CachePage({super.key});
 
   @override
-  State<CachePage> createState() => _CachePageState();
-}
-
-class _CachePageState extends State<CachePage> {
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tasks = ref.watch(downloadProvider);
     final books = ChapterCache.books().entries.toList();
     return Scaffold(
       appBar: AppBar(title: const Text('离线缓存')),
       body: books.isEmpty
-          ? const StatePanel(title: '还没有缓存', detail: '在书籍详情页点"缓存全本"。')
+          ? const StatePanel(title: '还没有缓存', detail: '在书籍详情页点"缓存"，可以整本或只缓存选中的章节。')
           : ListView(
               children: [
                 for (final b in books)
-                  ListTile(
-                    title: Text(b.value.$1),
-                    subtitle: Text('已缓存 ${ChapterCache.count(b.key)}/${b.value.$2} 章'),
-                    onTap: () => context.push(Routes.novel(b.key)),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: () async {
-                        await ChapterCache.remove(b.key);
-                        setState(() {});
-                      },
-                    ),
+                  Builder(
+                    builder: (context) {
+                      final t = tasks[b.key];
+                      final done = t?.done ?? ChapterCache.count(b.key);
+                      final total = b.value.$2;
+                      return ListTile(
+                        title: Text(b.value.$1),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 4),
+                            LinearProgressIndicator(value: total == 0 ? 0 : done / total, minHeight: 4, borderRadius: BorderRadius.circular(2)),
+                            const SizedBox(height: 4),
+                            Text('$done/$total 章 · ${ChapterCache.sizeLabel(b.key)}${t?.running ?? false ? ' · 下载中' : ''}'),
+                          ],
+                        ),
+                        onTap: () => context.push(Routes.cacheBook(b.key)),
+                        trailing: (t?.running ?? false)
+                            ? IconButton(icon: const Icon(Icons.pause_circle_outline), onPressed: () => ref.read(downloadProvider.notifier).cancel(b.key))
+                            : IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  await ChapterCache.remove(b.key);
+                                  ref.invalidate(downloadProvider);
+                                },
+                              ),
+                      );
+                    },
                   ),
               ],
             ),

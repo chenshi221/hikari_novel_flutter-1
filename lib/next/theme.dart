@@ -25,11 +25,29 @@ class AppColors {
 /// 标题用衬线体；没有安装时依次回退到系统宋体。
 const List<String> kSerifFallback = ['Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', 'serif'];
 
-ThemeData buildAppTheme(Brightness brightness) {
+/// 配色方案：只换强调色，底色保持同一套暖色。
+class AppPalette {
+  const AppPalette(this.name, this.light, this.dark);
+
+  final String name;
+  final Color light;
+  final Color dark;
+}
+
+const appPalettes = [
+  AppPalette('陶土', AppColors.terracotta, AppColors.terracottaLight),
+  AppPalette('靛蓝', Color(0xFF3D5A9B), Color(0xFF8FA8E0)),
+  AppPalette('森绿', Color(0xFF4A7C59), Color(0xFF8DBB9A)),
+  AppPalette('玫瑰', Color(0xFFB04A6B), Color(0xFFE08CA5)),
+  AppPalette('琥珀', Color(0xFFB07A1E), Color(0xFFE2B45E)),
+  AppPalette('石墨', Color(0xFF4B4A47), Color(0xFFC2C0B6)),
+];
+
+ThemeData buildAppTheme(Brightness brightness, [AppPalette palette = const AppPalette('陶土', AppColors.terracotta, AppColors.terracottaLight)]) {
   final dark = brightness == Brightness.dark;
   final scheme = ColorScheme(
     brightness: brightness,
-    primary: dark ? AppColors.terracottaLight : AppColors.terracotta,
+    primary: dark ? palette.dark : palette.light,
     onPrimary: Colors.white,
     secondary: dark ? AppColors.paperSoft : AppColors.inkSoft,
     onSecondary: dark ? AppColors.night : AppColors.cream,

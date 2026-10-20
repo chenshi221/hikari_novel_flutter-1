@@ -11,8 +11,14 @@ class ReadingProgress {
 
   static ReadingProgress? of(String aid) {
     final v = _box.get('progress:$aid');
-    return v is List && v.length == 2 ? ReadingProgress(v[0] as String, v[1] as int) : null;
+    return v is List && v.length >= 2 ? ReadingProgress(v[0] as String, v[1] as int) : null;
   }
 
-  static Future<void> save(String aid, String cid, int offset) => _box.put('progress:$aid', [cid, offset]);
+  /// 最近阅读时间（毫秒），没读过为 0。
+  static int lastRead(String aid) {
+    final v = _box.get('progress:$aid');
+    return v is List && v.length >= 3 ? v[2] as int : 0;
+  }
+
+  static Future<void> save(String aid, String cid, int offset) => _box.put('progress:$aid', [cid, offset, DateTime.now().millisecondsSinceEpoch]);
 }

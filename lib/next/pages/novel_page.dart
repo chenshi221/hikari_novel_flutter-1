@@ -5,17 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../models/cat_volume.dart';
 import '../cache.dart';
 import '../data.dart';
-import '../history.dart';
 import '../progress.dart';
 import '../router.dart';
 import '../session.dart';
 import '../widgets.dart';
 
-final novelProvider = FutureProvider.autoDispose.family<NovelPage, String>((ref, aid) async {
-  final page = await ref.watch(apiProvider).novel(aid);
-  await BrowsingHistory.add(aid, page.detail.title, page.detail.imgUrl);
-  return page;
-});
+final novelProvider = FutureProvider.autoDispose.family<NovelPage, String>((ref, aid) => ref.watch(apiProvider).novel(aid));
 
 /// 这本书在哪个书架里：返回 bid（移出书架要用），不在书架里为 null。游客直接返回 null。
 final shelfEntryProvider = FutureProvider.autoDispose.family<String?, String>((ref, aid) async {
@@ -207,10 +202,12 @@ class _DownloadRow extends ConsumerWidget {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ),
-        TextButton(
-          onPressed: running ? () => ref.read(downloadProvider.notifier).cancel(aid) : (cached >= chapters.length ? null : () => ref.read(downloadProvider.notifier).start(aid, title, chapters)),
-          child: Text(running ? '取消' : '缓存全本'),
-        ),
+        if (running)
+          TextButton(onPressed: () => ref.read(downloadProvider.notifier).cancel(aid), child: const Text('暂停'))
+        else ...[
+          TextButton(onPressed: cached >= chapters.length ? null : () => ref.read(downloadProvider.notifier).start(aid, title, chapters), child: const Text('缓存全本')),
+          TextButton(onPressed: () => context.push(Routes.cacheBook(aid)), child: const Text('管理')),
+        ],
       ],
     );
   }

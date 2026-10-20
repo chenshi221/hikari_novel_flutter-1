@@ -11,7 +11,10 @@ class ChapterCache {
 
   static late Box _box;
 
-  static Future<void> open() async => _box = await Hive.openBox('chapters');
+  static Future<void> open() async {
+    _box = await Hive.openBox('chapters');
+    PageStore._box = await Hive.openBox('pages');
+  }
 
   static Content? get(String aid, String cid) {
     final v = _box.get('$aid:$cid');
@@ -33,6 +36,30 @@ class ChapterCache {
   };
 
   static Future<void> remove(String aid) => _box.deleteAll(_box.keys.where((k) => k is String && (k.startsWith('$aid:') || k == 'meta:$aid')));
+
+  static Future<void> removeChapters(String aid, Iterable<String> cids) => _box.deleteAll([for (final c in cids) '$aid:$c']);
+
+  /// 估算占用：按每个字符 3 字节（UTF-8 中文）算。
+  static String sizeLabel(String aid) {
+    var chars = 0;
+    for (final k in _box.keys.where((k) => k is String && k.startsWith('$aid:'))) {
+      final v = _box.get(k);
+      if (v is Map) chars += (v['t'] as String).length;
+    }
+    final bytes = chars * 3;
+    return bytes > 1 << 20 ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB' : '${(bytes / 1024).round()} KB';
+  }
+}
+
+/// 网页原文的离线备份（详情、目录、书架、用户页）：联网成功时更新，断网时拿来顶替。
+class PageStore {
+  PageStore._();
+
+  static late Box _box;
+
+  static String? get(String url) => _box.get(url) as String?;
+
+  static Future<void> put(String url, String html) => _box.put(url, html);
 }
 
 class DownloadState {
@@ -53,20 +80,20 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
 
   void cancel(String aid) => _cancelled.add(aid);
 
-  Future<void> start(String aid, String title, List<CatChapter> chapters) async {
+  /// 下载 [chapters] 里还没缓存的章节；[total] 是全书章数，用来显示整本书的进度。
+  Future<void> start(String aid, String title, List<CatChapter> chapters, {int? total}) async {
     if (state[aid]?.running ?? false) return;
     final api = ref.read(apiProvider);
+    final all = total ?? chapters.length;
     _cancelled.remove(aid);
-    var done = chapters.where((c) => ChapterCache.has(aid, c.cid)).length;
-    void emit({bool running = true, String? error}) => state = {...state, aid: DownloadState(done: done, total: chapters.length, running: running, error: error)};
+    void emit({bool running = true, String? error}) => state = {...state, aid: DownloadState(done: ChapterCache.count(aid), total: all, running: running, error: error)};
     emit();
-    await ChapterCache.setMeta(aid, title, chapters.length);
+    await ChapterCache.setMeta(aid, title, all);
     try {
       for (final c in chapters) {
         if (_cancelled.contains(aid)) break;
         if (ChapterCache.has(aid, c.cid)) continue;
         await ChapterCache.put(aid, c.cid, await api.chapter(aid, c.cid));
-        done++;
         emit();
         await Future<void>.delayed(const Duration(milliseconds: 400));
       }

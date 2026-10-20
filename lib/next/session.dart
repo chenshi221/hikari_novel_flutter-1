@@ -34,6 +34,11 @@ class SessionStore {
 
   Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Net.index];
 
+  /// 最近一次成功取到的用户页 HTML，断网时用它显示登录状态。
+  String? get userHtml => _box.get('userHtml') as String?;
+
+  Future<void> setUserHtml(String html) => _box.put('userHtml', html);
+
   Future<void> setNode(Wenku8Node node) => _box.put('node', node.index);
 
   /// HTTP 代理（`127.0.0.1:7890`）。Dart 不会读系统代理，需要走代理的网络要在这里填。
@@ -107,9 +112,12 @@ class SessionLoggedOut extends SessionState {
 }
 
 class SessionLoggedIn extends SessionState {
-  const SessionLoggedIn(this.user);
+  const SessionLoggedIn(this.user, {this.offline = false});
 
   final UserInfo user;
+
+  /// 没连上网站，用的是上次保存的账号信息；已缓存的内容仍可阅读
+  final bool offline;
 }
 
 /// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
@@ -141,7 +149,9 @@ class SessionController extends Notifier<SessionState> {
       await _clear();
       state = const SessionLoggedOut(message: '登录已过期，请重新登录');
     } catch (_) {
-      state = const SessionLoggedOut();
+      // 联网失败不等于没登录：有 cookie 和上次保存的账号信息就按离线登录处理
+      final html = _store.userHtml;
+      state = html == null ? const SessionLoggedOut() : SessionLoggedIn(Wenku8Parser.userInfo(html), offline: true);
     }
   }
 
@@ -170,7 +180,12 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
-  Future<UserInfo> _fetchUser() async => Wenku8Parser.userInfo(await _client.getPage(_urls.userInfo()));
+  Future<UserInfo> _fetchUser() async {
+    final html = await _client.getPage(_urls.userInfo());
+    final user = Wenku8Parser.userInfo(html);
+    await _store.setUserHtml(html);
+    return user;
+  }
 
   Future<void> logout() async {
     if (isWebPreview) {

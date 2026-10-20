@@ -13,8 +13,8 @@ class NextApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'Hikari Novel',
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(Brightness.light),
-      darkTheme: buildAppTheme(Brightness.dark),
+      theme: buildAppTheme(Brightness.light, appPalettes[ref.watch(paletteProvider)]),
+      darkTheme: buildAppTheme(Brightness.dark, appPalettes[ref.watch(paletteProvider)]),
       themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
     );

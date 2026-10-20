@@ -5,10 +5,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../models/cat_chapter.dart';
+import '../../models/cat_volume.dart';
 import '../../models/content.dart';
 import '../cache.dart';
+import '../env.dart';
+import '../fonts.dart';
+import '../history.dart';
+import '../rules.dart';
+import '../stats.dart';
 import '../data.dart';
 import '../pages/novel_page.dart';
 import '../progress.dart';
@@ -23,7 +30,7 @@ String formatChapter(String raw) => raw.split('\n').map((l) => l.trim()).where((
 
 final chapterProvider = FutureProvider.family<Content, (String, String)>((ref, key) async {
   final c = ChapterCache.get(key.$1, key.$2) ?? await ref.watch(apiProvider).chapter(key.$1, key.$2);
-  return Content(text: formatChapter(c.text), images: c.images);
+  return Content(text: formatChapter(ReplaceRules.apply(c.text)), images: c.images);
 });
 
 class _Palette {
@@ -51,7 +58,30 @@ class ReaderPage extends ConsumerStatefulWidget {
   ConsumerState<ReaderPage> createState() => _ReaderPageState();
 }
 
-class _ReaderPageState extends ConsumerState<ReaderPage> {
+class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObserver {
+  // 阅读统计：只在界面可见时计时
+  final _watch = Stopwatch()..start();
+  String? _recorded;
+
+  void _flushStats() {
+    final seconds = _watch.elapsed.inSeconds;
+    if (seconds <= 0) return;
+    ReadingStats.addSeconds(widget.aid, seconds);
+    final running = _watch.isRunning;
+    _watch.reset();
+    if (running) _watch.start();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _watch.start();
+    } else {
+      _flushStats();
+      _watch.stop();
+    }
+  }
+
   late String _cid = widget.cid;
   bool _bar = false;
 
@@ -96,6 +126,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _tts.setCompletionHandler(() {
       _pi++;
@@ -106,6 +138,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   @override
   void dispose() {
     _tts.stop();
+    WidgetsBinding.instance.removeObserver(this);
+    _flushStats();
+    WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -150,6 +185,13 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
             loading: () => Center(child: CircularProgressIndicator(color: palette.fg)),
             error: (e, _) => StatePanel(title: '章节加载失败', detail: e.toString(), onRetry: () => ref.invalidate(chapterProvider((widget.aid, _cid)))),
             data: (c) {
+              if (_recorded != _cid && novel != null) {
+                _recorded = _cid;
+                scheduleMicrotask(() {
+                  ReadingHistory.record(widget.aid, novel.detail.title, novel.detail.imgUrl, _cid, title);
+                  ReadingStats.addChapter(widget.aid, _cid);
+                });
+              }
               if (_resumeTts) {
                 _resumeTts = false;
                 scheduleMicrotask(() => _startTts(c));
@@ -190,7 +232,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       TextButton(onPressed: prev == null ? null : () => _go(prev.cid), child: const Text('上一章')),
-                      TextButton(onPressed: () => _showCatalogue(chapters, index), child: const Text('目录')),
+                      TextButton(onPressed: () => _showCatalogue(novel?.catalogue ?? const [], _cid), child: const Text('目录')),
                       TextButton(
                         onPressed: () {
                           if (_speaking) {
@@ -214,25 +256,39 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     );
   }
 
-  void _showCatalogue(List<CatChapter> chapters, int current) {
+  /// 目录按卷分层，当前章所在的卷默认展开。
+  void _showCatalogue(List<CatVolume> volumes, String current) {
+    final theme = Theme.of(context);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) => DraggableScrollableSheet(
         expand: false,
-        initialChildSize: 0.7,
-        builder: (context, scroll) => ListView.builder(
+        initialChildSize: 0.75,
+        builder: (context, scroll) => ListView(
           controller: scroll,
-          itemCount: chapters.length,
-          itemBuilder: (context, i) => ListTile(
-            dense: true,
-            selected: i == current,
-            title: Text(chapters[i].title),
-            onTap: () {
-              Navigator.pop(context);
-              _go(chapters[i].cid);
-            },
-          ),
+          children: [
+            for (final v in volumes)
+              ExpansionTile(
+                initiallyExpanded: volumes.length == 1 || v.chapters.any((c) => c.cid == current),
+                title: Text(v.title, style: theme.textTheme.titleSmall),
+                subtitle: Text('${v.chapters.length} 章', style: theme.textTheme.bodySmall),
+                children: [
+                  for (final c in v.chapters)
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.only(left: 32, right: 16),
+                      selected: c.cid == current,
+                      leading: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 16) : null,
+                      title: Text(c.title),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _go(c.cid);
+                      },
+                    ),
+                ],
+              ),
+          ],
         ),
       ),
     );
@@ -259,6 +315,27 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                   Wrap(
                     spacing: 8,
                     children: [
+                      for (final (i, name) in ['默认字体', '衬线', '自选字体'].indexed)
+                        ChoiceChip(
+                          label: Text(name),
+                          selected: prefs.font == i,
+                          onSelected: (_) async {
+                            if (i == 2 && FontStore.customFamily == null && !await FontStore.pick()) return;
+                            set(prefs.copyWith(font: i));
+                          },
+                        ),
+                      if (!isWebPreview)
+                        ActionChip(
+                          label: const Text('选择字体文件…'),
+                          onPressed: () async {
+                            if (await FontStore.pick()) set(prefs.copyWith(font: 2));
+                          },
+                        ),
+                    ],
+                  ),
+                  Wrap(
+                    spacing: 8,
+                    children: [
                       for (final (i, name) in ['纸张', '护眼', '夜间', '跟随应用'].indexed) ChoiceChip(label: Text(name), selected: prefs.theme == i, onSelected: (_) => set(prefs.copyWith(theme: i))),
                     ],
                   ),
@@ -282,7 +359,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   }
 }
 
-TextStyle _style(ReaderPrefs prefs, Color color) => TextStyle(fontSize: prefs.fontSize, height: prefs.lineHeight, color: color);
+TextStyle _style(ReaderPrefs prefs, Color color) {
+  final f = FontStore.resolve(prefs.font);
+  return TextStyle(fontSize: prefs.fontSize, height: prefs.lineHeight, color: color, fontFamily: f.family, fontFamilyFallback: f.fallback);
+}
 
 class _ScrollBody extends StatefulWidget {
   const _ScrollBody({super.key, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onNext, required this.onToggleBar});

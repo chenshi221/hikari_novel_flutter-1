@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'pages/bookshelf_page.dart';
+import 'pages/cache_book_page.dart';
 import 'pages/comments_page.dart';
 import 'pages/discover_page.dart';
 import 'pages/home_shell.dart';
@@ -10,8 +11,11 @@ import 'pages/library_pages.dart';
 import 'pages/login_page.dart';
 import 'pages/novel_page.dart';
 import 'pages/profile_page.dart';
+import 'pages/rules_page.dart';
 import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/stats_page.dart';
+import 'pages/updates_page.dart';
 import 'pages/splash_page.dart';
 import 'reader/reader_page.dart';
 import 'session.dart';
@@ -23,6 +27,9 @@ class Routes {
   static const login = '/login';
   static const discover = '/discover';
   static const bookshelf = '/bookshelf';
+  static const updates = '/updates';
+  static const stats = '/stats';
+  static const rules = '/rules';
   static const profile = '/profile';
   static const search = '/search';
   static const settings = '/settings';
@@ -30,6 +37,7 @@ class Routes {
   static const cache = '/cache';
 
   static String searchAuthor(String author) => '/search?author=${Uri.encodeQueryComponent(author)}';
+  static String cacheBook(String aid) => '/cache/$aid';
   static String novel(String aid) => '/novel/$aid';
   static String comments(String aid) => '/novel/$aid/comments';
   static String replies(String aid, String rid) => '/novel/$aid/comments/$rid';
@@ -55,6 +63,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.splash, builder: (_, _) => const SplashPage()),
       GoRoute(path: Routes.login, builder: (_, _) => const LoginPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
+      GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
+      GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
+      GoRoute(path: '/cache/:aid', builder: (_, state) => CacheBookPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.history, builder: (_, _) => const HistoryPage()),
       GoRoute(path: Routes.cache, builder: (_, _) => const CachePage()),
       GoRoute(path: Routes.settings, builder: (_, _) => const SettingsPage()),
@@ -70,6 +81,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           StatefulShellBranch(
             routes: [GoRoute(path: Routes.bookshelf, builder: (_, _) => const BookshelfPage())],
+          ),
+          StatefulShellBranch(
+            routes: [GoRoute(path: Routes.updates, builder: (_, _) => const UpdatesPage())],
           ),
           StatefulShellBranch(
             routes: [GoRoute(path: Routes.profile, builder: (_, _) => const ProfilePage())],

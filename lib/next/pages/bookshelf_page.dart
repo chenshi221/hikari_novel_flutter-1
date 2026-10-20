@@ -1,29 +1,121 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../../models/bookshelf.dart';
 import '../catalog.dart';
 import '../data.dart';
+import '../progress.dart';
 import '../router.dart';
 import '../session.dart';
+import '../updates.dart';
 import '../widgets.dart';
 
 final bookshelfProvider = FutureProvider.autoDispose.family<Bookshelf, int>((ref, classId) => ref.watch(apiProvider).bookshelf(classId));
 
-/// 书架：wenku8 的 6 个分组，长按进入多选，可批量移出或移到别的分组。
-class BookshelfPage extends ConsumerWidget {
+enum ShelfSort {
+  site('默认'),
+  name('名称'),
+  lastRead('最近阅读'),
+  updated('最近更新'),
+  custom('自定义');
+
+  const ShelfSort(this.label);
+
+  final String label;
+}
+
+class _SortController extends Notifier<ShelfSort> {
+  @override
+  ShelfSort build() => ShelfSort.values[(Hive.box('session').get('shelfSort') as int?) ?? 0];
+
+  void set(ShelfSort v) {
+    Hive.box('session').put('shelfSort', v.index);
+    state = v;
+  }
+}
+
+final shelfSortProvider = NotifierProvider<_SortController, ShelfSort>(_SortController.new);
+
+class _QueryController extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void set(String v) => state = v;
+}
+
+final shelfQueryProvider = NotifierProvider<_QueryController, String>(_QueryController.new);
+
+List<BookshelfNovelInfo> _arrange(List<BookshelfNovelInfo> list, ShelfSort sort, String query, int classId) {
+  final out = query.isEmpty ? [...list] : list.where((b) => b.title.toLowerCase().contains(query.toLowerCase())).toList();
+  switch (sort) {
+    case ShelfSort.site:
+      break;
+    case ShelfSort.name:
+      out.sort((a, b) => a.title.compareTo(b.title));
+    case ShelfSort.lastRead:
+      out.sort((a, b) => ReadingProgress.lastRead(b.aid).compareTo(ReadingProgress.lastRead(a.aid)));
+    case ShelfSort.updated:
+      out.sort((a, b) => UpdateStore.updatedAt(b.aid).compareTo(UpdateStore.updatedAt(a.aid)));
+    case ShelfSort.custom:
+      final order = ((Hive.box('session').get('shelfOrder:$classId') as List?) ?? const []).cast<String>();
+      int rank(BookshelfNovelInfo b) {
+        final i = order.indexOf(b.aid);
+        return i < 0 ? order.length : i;
+      }
+
+      out.sort((a, b) => rank(a).compareTo(rank(b)));
+  }
+  return out;
+}
+
+/// 书架：wenku8 的 6 个分组，支持搜索、5 种排序，长按多选后可批量移出或移到别的分组。
+class BookshelfPage extends ConsumerStatefulWidget {
   const BookshelfPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<BookshelfPage> createState() => _BookshelfPageState();
+}
+
+class _BookshelfPageState extends ConsumerState<BookshelfPage> {
+  bool _searching = false;
+
+  @override
+  Widget build(BuildContext context) {
     if (ref.watch(sessionProvider) is! SessionLoggedIn) {
       return Scaffold(appBar: AppBar(title: const Text('书架')), body: const LoginPrompt(title: '登录后查看书架'));
     }
+    final sort = ref.watch(shelfSortProvider);
     return DefaultTabController(
       length: shelfNames.length,
       child: Scaffold(
-        appBar: AppBar(title: const Text('书架'), bottom: TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [for (final n in shelfNames) Tab(text: n)])),
+        appBar: AppBar(
+          title: _searching
+              ? TextField(
+                  autofocus: true,
+                  decoration: const InputDecoration(hintText: '在书架中搜索', border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none, filled: false),
+                  onChanged: ref.read(shelfQueryProvider.notifier).set,
+                )
+              : const Text('书架'),
+          actions: [
+            IconButton(
+              icon: Icon(_searching ? Icons.close : Icons.search),
+              onPressed: () {
+                setState(() => _searching = !_searching);
+                if (!_searching) ref.read(shelfQueryProvider.notifier).set('');
+              },
+            ),
+            PopupMenuButton<ShelfSort>(
+              icon: const Icon(Icons.sort),
+              tooltip: '排序',
+              initialValue: sort,
+              onSelected: ref.read(shelfSortProvider.notifier).set,
+              itemBuilder: (_) => [for (final s in ShelfSort.values) CheckedPopupMenuItem(value: s, checked: s == sort, child: Text(s.label))],
+            ),
+          ],
+          bottom: TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [for (final n in shelfNames) Tab(text: n)]),
+        ),
         body: TabBarView(children: [for (var i = 0; i < shelfNames.length; i++) _Shelf(classId: i)]),
       ),
     );
@@ -76,6 +168,8 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
   Widget build(BuildContext context) {
     super.build(context);
     final shelf = ref.watch(bookshelfProvider(widget.classId));
+    final sort = ref.watch(shelfSortProvider);
+    final query = ref.watch(shelfQueryProvider);
     final theme = Theme.of(context);
     return Column(
       children: [
@@ -98,34 +192,57 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
             child: shelf.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => StatePanel(title: '书架加载失败', detail: e.toString(), onRetry: () => ref.invalidate(bookshelfProvider(widget.classId))),
-              data: (data) => data.list.isEmpty
-                  ? const StatePanel(title: '这个书架还是空的', detail: '在书籍详情页点"加入书架"后会出现在默认书架。')
-                  : LayoutBuilder(
-                      builder: (context, c) => GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(c.maxWidth), mainAxisSpacing: 20, crossAxisSpacing: 14, childAspectRatio: 0.52),
-                        itemCount: data.list.length,
-                        itemBuilder: (context, i) {
-                          final book = data.list[i];
-                          final picked = _selected.contains(book.bid);
-                          void toggle() => setState(() => picked ? _selected.remove(book.bid) : _selected.add(book.bid));
-                          return GestureDetector(
-                            onLongPress: toggle,
-                            child: NovelCard(
-                              title: book.title,
-                              aid: book.aid,
-                              imageUrl: book.img,
-                              onTap: _selected.isEmpty ? () => context.push(Routes.novel(book.aid)) : toggle,
-                              badge: picked ? Icon(Icons.check_circle, color: theme.colorScheme.primary) : null,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
+              data: (data) {
+                final books = _arrange(data.list, sort, query, widget.classId);
+                if (data.list.isEmpty) return const StatePanel(title: '这个书架还是空的', detail: '在书籍详情页点"加入书架"后会出现在默认书架。');
+                if (books.isEmpty) return const StatePanel(title: '没有匹配的书');
+                if (sort == ShelfSort.custom && query.isEmpty) return _reorderable(books);
+                return LayoutBuilder(
+                  builder: (context, c) => GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(c.maxWidth), mainAxisSpacing: 20, crossAxisSpacing: 14, childAspectRatio: 0.52),
+                    itemCount: books.length,
+                    itemBuilder: (context, i) {
+                      final book = books[i];
+                      final picked = _selected.contains(book.bid);
+                      void toggle() => setState(() => picked ? _selected.remove(book.bid) : _selected.add(book.bid));
+                      return GestureDetector(
+                        onLongPress: toggle,
+                        child: NovelCard(
+                          title: book.title,
+                          aid: book.aid,
+                          imageUrl: book.img,
+                          onTap: _selected.isEmpty ? () => context.push(Routes.novel(book.aid)) : toggle,
+                          badge: picked ? Icon(Icons.check_circle, color: theme.colorScheme.primary) : null,
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
             ),
           ),
         ),
       ],
     );
   }
+
+  /// 自定义排序：列表形式，拖动右侧把手调整，顺序记在本机。
+  Widget _reorderable(List<BookshelfNovelInfo> books) => ReorderableListView.builder(
+    padding: const EdgeInsets.only(bottom: 24),
+    itemCount: books.length,
+    onReorderItem: (from, to) {
+      final list = [...books];
+      list.insert(to, list.removeAt(from));
+      Hive.box('session').put('shelfOrder:${widget.classId}', [for (final b in list) b.aid]);
+      setState(() {});
+    },
+    itemBuilder: (context, i) => ListTile(
+      key: ValueKey(books[i].bid),
+      leading: SizedBox(width: 40, height: 54, child: CoverImage(books[i].img)),
+      title: Text(books[i].title, maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle)),
+      onTap: () => context.push(Routes.novel(books[i].aid)),
+    ),
+  );
 }
