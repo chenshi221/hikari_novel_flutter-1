@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -79,6 +81,31 @@ class StatePanel extends ConsumerWidget {
   }
 }
 
+/// 原生 App 里 Image.network 不走代理，所以自己用 Dio 取图并缓存在内存里；网页预览走转发程序，直接用 Image.network。
+// shortcut: 只缓存在内存，没有上限也不落盘，封面很多时占内存，要时改成磁盘缓存
+final imageBytesProvider = FutureProvider.family<Uint8List, String>((ref, url) async {
+  final res = await ref.watch(imageDioProvider).get<List<int>>(url.replaceFirst('http://', 'https://'));
+  return Uint8List.fromList(res.data!);
+});
+
+class NetImage extends ConsumerWidget {
+  const NetImage(this.url, {super.key, this.fit = BoxFit.cover, this.error});
+
+  final String url;
+  final BoxFit fit;
+  final Widget? error;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fallback = error ?? const SizedBox.shrink();
+    if (url.isEmpty) return fallback;
+    if (isWebPreview) return Image.network(displayImageUrl(url), fit: fit, errorBuilder: (_, _, _) => fallback);
+    return ref
+        .watch(imageBytesProvider(url))
+        .when(data: (b) => Image.memory(b, fit: fit, errorBuilder: (_, _, _) => fallback), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+  }
+}
+
 class CoverImage extends StatelessWidget {
   const CoverImage(this.url, {super.key});
 
@@ -92,11 +119,7 @@ class CoverImage extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(color: scheme.surfaceContainer),
         child: SizedBox.expand(
-          child: Image.network(
-            displayImageUrl(url),
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => Icon(Icons.menu_book_outlined, color: scheme.onSurfaceVariant),
-          ),
+          child: NetImage(url, error: Icon(Icons.menu_book_outlined, color: scheme.onSurfaceVariant)),
         ),
       ),
     );

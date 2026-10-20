@@ -19,7 +19,7 @@ final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(Theme
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22});
 
   final double fontSize;
   final double lineHeight;
@@ -30,15 +30,19 @@ class ReaderPrefs {
   /// 翻页方式：0 上下滚动 1 左右滑动 2 仿真翻页
   final int mode;
 
+  /// 左右页边距
+  final double margin;
+
   /// 朗读语速 0.1~1.0
   final double ttsRate;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate}) => ReaderPrefs(
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
     mode: mode ?? this.mode,
     ttsRate: ttsRate ?? this.ttsRate,
+    margin: margin ?? this.margin,
   );
 }
 
@@ -50,10 +54,11 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     theme: (_box.get('r.theme') as int?) ?? 0,
     mode: (_box.get('r.mode') as int?) ?? 0,
     ttsRate: (_box.get('r.ttsRate') as num?)?.toDouble() ?? 0.5,
+    margin: (_box.get('r.margin') as num?)?.toDouble() ?? 22,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin});
     state = next;
   }
 }

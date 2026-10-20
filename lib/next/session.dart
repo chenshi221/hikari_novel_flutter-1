@@ -81,6 +81,13 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
   );
 });
 
+/// 图片专用的 Dio：和请求页面一样走所选代理，并带上浏览器 UA 和 Referer（图片服务器会检查）。
+final imageDioProvider = Provider<Dio>((ref) {
+  final store = ref.watch(sessionStoreProvider);
+  return Dio(BaseOptions(responseType: ResponseType.bytes, headers: {...kUserAgent, 'Referer': '${siteBase(store)}/'}))
+    ..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}');
+});
+
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(sessionStoreProvider)), CharsetType.gbk));
 
 sealed class SessionState {

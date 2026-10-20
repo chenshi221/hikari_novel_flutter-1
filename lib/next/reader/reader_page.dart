@@ -10,7 +10,6 @@ import '../../models/cat_chapter.dart';
 import '../../models/content.dart';
 import '../cache.dart';
 import '../data.dart';
-import '../env.dart';
 import '../pages/novel_page.dart';
 import '../progress.dart';
 import '../settings.dart';
@@ -19,7 +18,13 @@ import 'paginator.dart';
 import 'paper_curl_pager.dart';
 
 /// 章节正文缓存在内存里，预加载下一章时也走这里。
-final chapterProvider = FutureProvider.family<Content, (String, String)>((ref, key) async => ChapterCache.get(key.$1, key.$2) ?? await ref.watch(apiProvider).chapter(key.$1, key.$2));
+/// 每个非空行当一段：去掉网页里零散的空白，统一首行缩进两个全角空格。
+String formatChapter(String raw) => raw.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).map((l) => '　　$l').join('\n');
+
+final chapterProvider = FutureProvider.family<Content, (String, String)>((ref, key) async {
+  final c = ChapterCache.get(key.$1, key.$2) ?? await ref.watch(apiProvider).chapter(key.$1, key.$2);
+  return Content(text: formatChapter(c.text), images: c.images);
+});
 
 class _Palette {
   const _Palette(this.bg, this.fg);
@@ -91,7 +96,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _tts.setCompletionHandler(() {
       _pi++;
       _speakNext();
@@ -103,6 +108,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     _tts.stop();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  void _toggleBar() {
+    setState(() => _bar = !_bar);
+    SystemChrome.setEnabledSystemUIMode(_bar ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
   }
 
   void _go(String cid) {
@@ -127,6 +137,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
     if (next != null) ref.listen(chapterProvider((widget.aid, _cid)), (_, s) => s.hasValue ? ref.read(chapterProvider((widget.aid, next.cid))) : null);
 
+    final title = index >= 0 ? chapters[index].title : '';
     final saved = ReadingProgress.of(widget.aid);
     final startOffset = saved?.cid == _cid ? saved!.offset : 0;
     void save(int offset) => ReadingProgress.save(widget.aid, _cid, offset);
@@ -144,8 +155,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                 scheduleMicrotask(() => _startTts(c));
               }
               final body = prefs.mode != 0
-                  ? _PagedBody(key: ValueKey((_cid, prefs.fontSize, prefs.lineHeight, prefs.mode)), curl: prefs.mode == 2, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid), onNext: next == null ? null : () => _go(next.cid), onToggleBar: () => setState(() => _bar = !_bar))
-                  : _ScrollBody(key: ValueKey(_cid), content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onNext: next == null ? null : () => _go(next.cid), onToggleBar: () => setState(() => _bar = !_bar));
+                  ? _PagedBody(key: ValueKey((_cid, prefs.fontSize, prefs.lineHeight, prefs.mode, prefs.margin)), title: title, curl: prefs.mode == 2, content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onPrev: prev == null ? null : () => _go(prev.cid), onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar)
+                  : _ScrollBody(key: ValueKey(_cid), content: c, prefs: prefs, color: palette.fg, startOffset: startOffset, onOffset: save, onNext: next == null ? null : () => _go(next.cid), onToggleBar: _toggleBar);
               return body;
             },
           ),
@@ -257,6 +268,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                     selected: {prefs.mode},
                     onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
                   ),
+                  Text('页边距 ${prefs.margin.round()}'),
+                  Slider(min: 8, max: 48, divisions: 20, value: prefs.margin, onChanged: (v) => set(prefs.copyWith(margin: v))),
                   Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
                   Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
                 ],
@@ -318,13 +331,13 @@ class _ScrollBodyState extends State<_ScrollBody> {
         onTap: widget.onToggleBar,
         child: SingleChildScrollView(
           controller: _controller,
-          padding: EdgeInsets.fromLTRB(22, MediaQuery.paddingOf(context).top + 24, 22, 48),
+          padding: EdgeInsets.fromLTRB(widget.prefs.margin, MediaQuery.paddingOf(context).top + 24, widget.prefs.margin, 48),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(c.text, style: _style(widget.prefs, widget.color)),
+              Text(c.text, textScaler: TextScaler.noScaling, style: _style(widget.prefs, widget.color)),
               for (final url in c.images)
-                Padding(padding: const EdgeInsets.only(top: 16), child: Image.network(displayImageUrl(url))),
+                Padding(padding: const EdgeInsets.only(top: 16), child: NetImage(url, fit: BoxFit.contain)),
               if (widget.onNext != null) Padding(padding: const EdgeInsets.only(top: 32), child: OutlinedButton(onPressed: widget.onNext, child: const Text('下一章'))),
             ],
           ),
@@ -335,9 +348,10 @@ class _ScrollBodyState extends State<_ScrollBody> {
 }
 
 class _PagedBody extends StatefulWidget {
+  final String title;
   final bool curl;
 
-  const _PagedBody({super.key, required this.curl, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
+  const _PagedBody({super.key, required this.title, required this.curl, required this.content, required this.prefs, required this.color, required this.startOffset, required this.onOffset, required this.onPrev, required this.onNext, required this.onToggleBar});
 
   final Content content;
   final ReaderPrefs prefs;
@@ -355,6 +369,7 @@ class _PagedBody extends StatefulWidget {
 class _PagedBodyState extends State<_PagedBody> {
   PageController? _controller;
   List<int> _starts = const [0];
+  double _overscroll = 0;
 
   @override
   void dispose() {
@@ -374,7 +389,7 @@ class _PagedBodyState extends State<_PagedBody> {
   @override
   Widget build(BuildContext context) {
     final c = widget.content;
-    final padding = EdgeInsets.fromLTRB(22, MediaQuery.paddingOf(context).top + 20, 22, MediaQuery.paddingOf(context).bottom + 28);
+    final padding = EdgeInsets.fromLTRB(widget.prefs.margin, MediaQuery.paddingOf(context).top + 36, widget.prefs.margin, MediaQuery.paddingOf(context).bottom + 36);
     return LayoutBuilder(
       builder: (context, box) {
         final size = Size(box.maxWidth - padding.horizontal, box.maxHeight - padding.vertical);
@@ -383,16 +398,15 @@ class _PagedBodyState extends State<_PagedBody> {
         _controller ??= PageController(initialPage: pageOfOffset(_starts, widget.startOffset));
         final total = _starts.length + c.images.length;
         Widget pageAt(int i) {
-          if (i >= _starts.length) return Center(child: Image.network(displayImageUrl(c.images[i - _starts.length])));
+          if (i >= _starts.length) return Center(child: NetImage(c.images[i - _starts.length], fit: BoxFit.contain));
           final end = i + 1 < _starts.length ? _starts[i + 1] : c.text.length;
-          return Padding(
-            padding: padding,
-            child: Stack(
-              children: [
-                Text(c.text.substring(_starts[i], end), style: style),
-                Positioned(right: 0, bottom: -22, child: Text('${i + 1}/$total', style: TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5)))),
-              ],
-            ),
+          final faint = TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5));
+          return Stack(
+            children: [
+              Padding(padding: padding, child: Text(c.text.substring(_starts[i], end), textScaler: TextScaler.noScaling, style: style)),
+              Positioned(top: MediaQuery.paddingOf(context).top + 10, left: widget.prefs.margin, right: widget.prefs.margin, child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
+              Positioned(bottom: MediaQuery.paddingOf(context).bottom + 10, right: widget.prefs.margin, child: Text('${i + 1}/$total', style: faint)),
+            ],
           );
         }
 
@@ -422,11 +436,23 @@ class _PagedBodyState extends State<_PagedBody> {
               widget.onToggleBar();
             }
           },
-          child: PageView.builder(
-            controller: _controller,
-            itemCount: total,
-            onPageChanged: (i) => widget.onOffset(offsetOf(i)),
-            itemBuilder: (context, i) => pageAt(i),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              // 在第一页往前滑、最后一页往后滑，松手后切到上一章 / 下一章
+              if (n is OverscrollNotification) _overscroll = n.overscroll;
+              if (n is ScrollEndNotification) {
+                if (_overscroll > 0) widget.onNext?.call();
+                if (_overscroll < 0) widget.onPrev?.call();
+                _overscroll = 0;
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _controller,
+              itemCount: total,
+              onPageChanged: (i) => widget.onOffset(offsetOf(i)),
+              itemBuilder: (context, i) => pageAt(i),
+            ),
           ),
         );
       },

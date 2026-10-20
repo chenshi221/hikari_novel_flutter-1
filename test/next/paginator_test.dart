@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hikari_novel_flutter/next/reader/paginator.dart';
+import 'package:hikari_novel_flutter/next/reader/reader_page.dart' show formatChapter;
 
 void main() {
   const style = TextStyle(fontSize: 16, height: 1.5);
@@ -31,4 +32,9 @@ void main() {
   });
 
   test('空文本只有一页', () => expect(paginate('', style, const Size(200, 300)), [0]));
+
+  test('章节格式化：每段两个全角空格缩进，去掉空行和多余空白', () {
+    expect(formatChapter('   第一段\n\n  第二段  \n\n'), '　　第一段\n　　第二段');
+    expect(formatChapter(''), '');
+  });
 }
