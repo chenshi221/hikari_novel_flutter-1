@@ -14,6 +14,9 @@ dependencies:
 
   # 框架
   get: ^4.6.6
+  # 新框架（lib/next）：状态管理与路由
+  flutter_riverpod: ^3.4.3
+  go_router: ^18.1.1
 
   # 网络
   dio: ^5.3.3

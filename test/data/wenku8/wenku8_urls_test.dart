@@ -24,4 +24,9 @@ void main() {
     expect(gbk.submitButtonValue(), '+%B7%A2%B1%ED%CA%E9%C6%C0+');
     expect(big5.submitButtonValue(), '+%B5%6F%AA%ED%AE%D1%B5%FB+');
   });
+
+  test('账号密码登录表单：用户名按页面编码，有效期默认很长', () {
+    expect(gbk.loginSubmit(), '$base/login.php?do=submit');
+    expect(gbk.loginForm('中a', 'p&ss'), 'username=%D6%D0%61&password=p%26ss&usecookie=315360000&action=login');
+  });
 }
