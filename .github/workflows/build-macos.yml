@@ -2,6 +2,10 @@ name: Build macOS (personal use)
 
 on:
   workflow_dispatch:
+  # 手动触发只对默认分支上的工作流有效；合并前先在改动这个文件时自动打一次包
+  push:
+    paths:
+      - .github/workflows/build-macos.yml
 
 jobs:
   macos:
