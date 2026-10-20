@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import '../env.dart';
 import '../router.dart';
 import '../session.dart';
-import '../widgets.dart';
 
 class ProfilePage extends ConsumerWidget {
   const ProfilePage({super.key});
