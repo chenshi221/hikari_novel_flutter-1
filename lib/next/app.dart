@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'router.dart';
+import 'settings.dart';
 import 'theme.dart';
 
 class NextApp extends ConsumerWidget {
@@ -14,6 +15,7 @@ class NextApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(Brightness.light),
       darkTheme: buildAppTheme(Brightness.dark),
+      themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
     );
   }

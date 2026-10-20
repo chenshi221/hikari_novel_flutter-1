@@ -42,6 +42,8 @@ class ProfilePage extends ConsumerWidget {
                 onTap: () => context.push(Routes.login),
               ),
             ),
+            const SizedBox(height: 16),
+            Card(child: ListTile(leading: const Icon(Icons.settings_outlined), title: const Text('设置'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.settings))),
           ],
         ),
       );
@@ -104,6 +106,8 @@ class ProfilePage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
+          Card(child: ListTile(leading: const Icon(Icons.settings_outlined), title: const Text('设置'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.settings))),
+          const SizedBox(height: 16),
           OutlinedButton(onPressed: () => _confirmLogout(context, ref), child: const Text('退出登录')),
         ],
       ),
