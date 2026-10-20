@@ -65,19 +65,20 @@ class Wenku8Client {
     return Wenku8Charset.decode(response.data as Uint8List, currentCharset);
   }
 
-  /// wenku8 会用 3xx 跳转（例如跳到登录页）。dio 关闭了自动跳转，这里手动跟一次，
+  /// wenku8 会用 3xx 跳转（例如跳到登录页）。dio 关闭了自动跳转，这里手动跟随，
   /// 好让解析层拿到最终页面并判断出"未登录"等情况。
-  Future<Uint8List> _followRedirect(Response response) async {
-    final status = response.statusCode;
-    if (status != null && status >= 300 && status < 400) {
-      final location = response.headers.value('location');
-      if (location != null) {
-        final target = Uri.parse("${baseUrl()}/").resolve(location);
-        final redirected = await dio.getUri(target);
-        return redirected.data as Uint8List;
-      }
+  /// - location 可能是相对路径（`userdetail.php`、`/login.php`）或绝对地址，基于当前请求地址解析
+  /// - 最多跟随 [maxRedirects] 次，防止重定向死循环
+  Future<Uint8List> _followRedirect(Response response, {int maxRedirects = 5}) async {
+    var current = response;
+    for (var i = 0; i < maxRedirects; i++) {
+      final status = current.statusCode;
+      if (status == null || status < 300 || status >= 400) break;
+      final location = current.headers.value('location');
+      if (location == null || location.isEmpty) break;
+      current = await dio.getUri(current.requestOptions.uri.resolve(location));
     }
-    return response.data as Uint8List;
+    return current.data as Uint8List;
   }
 }
 
