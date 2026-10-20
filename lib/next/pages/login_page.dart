@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../models/common/wenku8_node.dart';
 import '../env.dart';
+import '../router.dart';
 import '../session.dart';
 import 'login_webview_page.dart';
 
@@ -78,15 +79,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       await ref.read(sessionProvider.notifier).loginWithCookie(cookie);
     }
     await store.saveLogin(_remember ? username : null, _remember ? _password.text : null);
+    // 登录成功后回到主界面
+    if (mounted) context.go(Routes.discover);
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final session = ref.watch(sessionProvider);
-    ref.listen(sessionProvider, (_, next) {
-      if (next is SessionLoggedIn && context.canPop()) context.pop();
-    });
     final notice = _error ?? (session is SessionLoggedOut ? session.message : null);
 
     return Scaffold(
