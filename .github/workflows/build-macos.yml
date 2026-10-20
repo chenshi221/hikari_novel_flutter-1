@@ -20,6 +20,10 @@ jobs:
           channel: stable
           cache: true
 
+      # flutter_inappwebview_macos 的 Swift Package 版本最低系统设置过低，用 SPM 编译会报错，改用 CocoaPods
+      - name: Use CocoaPods instead of Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Install dependencies
         run: flutter pub get
 
