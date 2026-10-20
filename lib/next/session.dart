@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -31,6 +35,34 @@ class SessionStore {
   Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Net.index];
 
   Future<void> setNode(Wenku8Node node) => _box.put('node', node.index);
+
+  /// HTTP 代理（`127.0.0.1:7890`）。Dart 不会读系统代理，需要走代理的网络要在这里填。
+  String get proxy => (_box.get('proxy') as String?) ?? '';
+
+  Future<void> setProxy(String value) => _box.put('proxy', value.trim());
+
+  /// 登录有效期（秒）。wenku8 不接受"临时登录"。
+  int get keepSeconds => (_box.get('keepSeconds') as int?) ?? 2592000;
+
+  Future<void> setKeepSeconds(int value) => _box.put('keepSeconds', value);
+
+  /// 记住的账号密码，没记住时为 null。
+  // shortcut: 明文存在本地 Hive，要更安全时改用 flutter_secure_storage（钥匙串 / Keystore）
+  (String, String)? get savedLogin {
+    final u = _box.get('savedUser') as String?;
+    final p = _box.get('savedPass') as String?;
+    return u == null || p == null ? null : (u, p);
+  }
+
+  Future<void> saveLogin(String? user, String? pass) async {
+    if (user == null || pass == null) {
+      await _box.delete('savedUser');
+      await _box.delete('savedPass');
+    } else {
+      await _box.put('savedUser', user);
+      await _box.put('savedPass', pass);
+    }
+  }
 }
 
 final sessionStoreProvider = Provider<SessionStore>((ref) => throw UnimplementedError('在 main() 里通过 overrides 提供'));
@@ -45,6 +77,7 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : kUserAgent,
+    dio: kIsWeb ? null : (Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}')),
   );
 });
 
@@ -105,17 +138,11 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
-  /// 原生 App：在内嵌网页里登录后拿到的 cookie。
-  Future<void> loginWithCookie(String cookie) async {
+  /// 账号密码登录。网页预览由转发程序提交并保存 cookie；原生 App 从 cookie jar 导出 cookie 保存。
+  Future<void> loginWithPassword(String username, String password, int keepSeconds) async {
     await _client.clearCookie();
-    await _client.restoreCookie(cookie, Wenku8Node.values.map((e) => e.node));
-    await _confirm(cookie);
-  }
-
-  /// 网页预览：账号密码登录，由转发程序提交并保存 cookie。
-  Future<void> loginWithPassword(String username, String password) async {
-    await _client.postForm(_urls.loginSubmit(), _urls.loginForm(username, password));
-    await _confirm('preview');
+    await _client.postForm(_urls.loginSubmit(), _urls.loginForm(username, password, keepSeconds: keepSeconds));
+    await _confirm(isWebPreview ? 'preview' : await _client.exportCookie(siteBase(_store)));
   }
 
   Future<void> _confirm(String cookie) async {

@@ -5,12 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../models/common/wenku8_node.dart';
 import '../env.dart';
 import '../session.dart';
-import 'login_webview_page.dart';
 
 /// 登录页。游客在需要账号时按需打开，登录成功后自动返回上一页。
 ///
-/// - 原生 App：打开 wenku8 自己的登录网页（能处理验证、记住登录等），登录后读取 cookie
-/// - 网页预览：浏览器里没法嵌入别的网站，改为账号密码表单，由服务器上的转发程序提交
+/// 账号密码表单，可选登录有效期，可记住账号密码。原生 App 额外可选线路和 HTTP 代理；
+/// 网页预览由服务器上的转发程序提交。
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key});
 
@@ -21,11 +20,25 @@ class LoginPage extends ConsumerStatefulWidget {
 class _LoginPageState extends ConsumerState<LoginPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
+  late final _proxy = TextEditingController(text: ref.read(sessionStoreProvider).proxy);
+  late int _keepSeconds = ref.read(sessionStoreProvider).keepSeconds;
+  late bool _remember = ref.read(sessionStoreProvider).savedLogin != null;
   bool _busy = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    final saved = ref.read(sessionStoreProvider).savedLogin;
+    if (saved != null) {
+      _username.text = saved.$1;
+      _password.text = saved.$2;
+    }
+  }
+
+  @override
   void dispose() {
+    _proxy.dispose();
     _username.dispose();
     _password.dispose();
     super.dispose();
@@ -45,13 +58,15 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
   }
 
-  Future<void> _openWebLogin() async {
+  Future<void> _submit() => _run(() async {
     final store = ref.read(sessionStoreProvider);
-    final cookie = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => LoginWebViewPage(loginUrl: '${store.node.node}/login.php')));
-    if (cookie != null) await _run(() => ref.read(sessionProvider.notifier).loginWithCookie(cookie));
-  }
-
-  Future<void> _submitPassword() => _run(() => ref.read(sessionProvider.notifier).loginWithPassword(_username.text.trim(), _password.text));
+    final username = _username.text.trim();
+    if (username.isEmpty || _password.text.isEmpty) throw '请输入用户名和密码';
+    await store.setProxy(_proxy.text);
+    await store.setKeepSeconds(_keepSeconds);
+    await ref.read(sessionProvider.notifier).loginWithPassword(username, _password.text, _keepSeconds);
+    await store.saveLogin(_remember ? username : null, _remember ? _password.text : null);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -79,10 +94,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                   const SizedBox(height: 10),
                   Text('登录轻小说文库账号后继续阅读。', style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 32),
-                  if (isWebPreview) ..._passwordForm(theme) else ..._nativeLogin(theme),
+                  ..._form(theme),
                   if (notice != null) ...[const SizedBox(height: 16), _Notice(text: notice)],
-                  const SizedBox(height: 32),
-                  Text('登录有效期请选择"一天"及以上，"临时登录"无法保持登录状态。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                 ],
               ),
             ),
@@ -92,51 +105,76 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     );
   }
 
-  List<Widget> _nativeLogin(ThemeData theme) {
+  static const _keepOptions = [(86400, '一天'), (2592000, '一个月'), (315360000, '永久')];
+
+  List<Widget> _form(ThemeData theme) {
     final store = ref.read(sessionStoreProvider);
     return [
-      Text('线路', style: theme.textTheme.labelLarge),
-      const SizedBox(height: 8),
-      SegmentedButton<Wenku8Node>(
-        segments: const [
-          ButtonSegment(value: Wenku8Node.wwwWenku8Net, label: Text('wenku8.net')),
-          ButtonSegment(value: Wenku8Node.wwwWenku8Cc, label: Text('wenku8.cc')),
-        ],
-        selected: {store.node},
-        onSelectionChanged: _busy
-            ? null
-            : (s) async {
-                await store.setNode(s.first);
-                setState(() {});
-              },
+      TextField(
+        controller: _username,
+        enabled: !_busy,
+        decoration: const InputDecoration(labelText: '用户名'),
+        textInputAction: TextInputAction.next,
+        autofillHints: const [AutofillHints.username],
       ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _password,
+        enabled: !_busy,
+        obscureText: true,
+        decoration: const InputDecoration(labelText: '密码'),
+        autofillHints: const [AutofillHints.password],
+        onSubmitted: (_) => _submit(),
+      ),
+      const SizedBox(height: 20),
+      Text('保持登录', style: theme.textTheme.labelLarge),
+      const SizedBox(height: 8),
+      SegmentedButton<int>(
+        segments: [for (final (seconds, label) in _keepOptions) ButtonSegment(value: seconds, label: Text(label))],
+        selected: {_keepSeconds},
+        onSelectionChanged: _busy ? null : (s) => setState(() => _keepSeconds = s.first),
+      ),
+      CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        controlAffinity: ListTileControlAffinity.leading,
+        title: const Text('记住用户名和密码'),
+        value: _remember,
+        onChanged: _busy ? null : (v) => setState(() => _remember = v ?? false),
+      ),
+      if (!isWebPreview) ...[
+        const SizedBox(height: 8),
+        Text('线路', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8),
+        SegmentedButton<Wenku8Node>(
+          segments: const [
+            ButtonSegment(value: Wenku8Node.wwwWenku8Net, label: Text('wenku8.net')),
+            ButtonSegment(value: Wenku8Node.wwwWenku8Cc, label: Text('wenku8.cc')),
+          ],
+          selected: {store.node},
+          onSelectionChanged: _busy
+              ? null
+              : (s) async {
+                  await store.setNode(s.first);
+                  setState(() {});
+                },
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _proxy,
+          enabled: !_busy,
+          decoration: const InputDecoration(labelText: 'HTTP 代理（可选）', hintText: '127.0.0.1:7890'),
+        ),
+        const SizedBox(height: 4),
+        Text('连不上时填写。App 不会读取系统代理，需要在这里填。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      ],
       const SizedBox(height: 24),
-      FilledButton(onPressed: _busy ? null : _openWebLogin, child: _busy ? const _ButtonSpinner() : const Text('登录轻小说文库')),
+      FilledButton(onPressed: _busy ? null : _submit, child: _busy ? const _ButtonSpinner() : const Text('登录')),
+      if (isWebPreview) ...[
+        const SizedBox(height: 8),
+        Text('预览版：账号密码由你的服务器转交给轻小说文库，不会经过其他地方。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+      ],
     ];
   }
-
-  List<Widget> _passwordForm(ThemeData theme) => [
-    TextField(
-      controller: _username,
-      enabled: !_busy,
-      decoration: const InputDecoration(labelText: '用户名'),
-      textInputAction: TextInputAction.next,
-      autofillHints: const [AutofillHints.username],
-    ),
-    const SizedBox(height: 14),
-    TextField(
-      controller: _password,
-      enabled: !_busy,
-      obscureText: true,
-      decoration: const InputDecoration(labelText: '密码'),
-      autofillHints: const [AutofillHints.password],
-      onSubmitted: (_) => _submitPassword(),
-    ),
-    const SizedBox(height: 24),
-    FilledButton(onPressed: _busy ? null : _submitPassword, child: _busy ? const _ButtonSpinner() : const Text('登录')),
-    const SizedBox(height: 8),
-    Text('预览版：账号密码由你的服务器转交给轻小说文库，不会经过其他地方。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-  ];
 }
 
 class _ButtonSpinner extends StatelessWidget {

@@ -44,6 +44,9 @@ class Wenku8Client {
     }
   }
 
+  /// 把 cookie jar 里发给 [host] 的 cookie 导出成 `a=1;b=2`，用来保存登录状态。
+  Future<String> exportCookie(String host) async => (await _cookieJar.loadForRequest(Uri.parse(host))).map((c) => '${c.name}=${c.value}').join(';');
+
   Future<void> clearCookie() => _cookieJar.deleteAll();
 
   /// GET 一个页面并按当前编码解码成字符串。
