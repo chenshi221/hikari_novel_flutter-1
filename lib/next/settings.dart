@@ -32,7 +32,7 @@ final paletteProvider = NotifierProvider<PaletteController, int>(PaletteControll
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0});
 
   final double fontSize;
   final double lineHeight;
@@ -67,7 +67,10 @@ class ReaderPrefs {
   /// 宽屏（窗口宽度 ≥ 900）时左右翻页模式显示双页
   final bool dual;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual}) => ReaderPrefs(
+  /// 阅读亮度遮罩的不透明度 0~0.7，0 为不遮
+  final double dim;
+
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual, double? dim}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
@@ -80,6 +83,7 @@ class ReaderPrefs {
     ttsHighlight: ttsHighlight ?? this.ttsHighlight,
     ttsAutoNext: ttsAutoNext ?? this.ttsAutoNext,
     dual: dual ?? this.dual,
+    dim: dim ?? this.dim,
   );
 }
 
@@ -98,10 +102,11 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     ttsHighlight: (_box.get('r.ttsHighlight') as bool?) ?? true,
     ttsAutoNext: (_box.get('r.ttsAutoNext') as bool?) ?? true,
     dual: (_box.get('r.dual') as bool?) ?? true,
+    dim: (_box.get('r.dim') as num?)?.toDouble() ?? 0,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim});
     state = next;
   }
 }

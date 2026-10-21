@@ -81,8 +81,23 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             child: _keyword == null
                 ? ListView(
                     children: [
+                      if (_history.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text('搜索历史', style: Theme.of(context).textTheme.titleSmall)),
+                              TextButton(onPressed: () => setState(() => _box.delete('searchHistory')), child: const Text('清空')),
+                            ],
+                          ),
+                        ),
                       for (final h in _history)
-                        ListTile(leading: const Icon(Icons.history), title: Text(h), onTap: () => _search(h)),
+                        ListTile(
+                          leading: const Icon(Icons.history),
+                          title: Text(h),
+                          trailing: IconButton(tooltip: '删除', icon: const Icon(Icons.close), onPressed: () => setState(() => _box.put('searchHistory', _history.where((e) => e != h).toList()))),
+                          onTap: () => _search(h),
+                        ),
                     ],
                   )
                 : PagedNovelGrid(key: ValueKey((_keyword, _byAuthor)), sourceHtml: () => lastFailedHtml, fetch: (page) => api.search(_keyword!, byAuthor: _byAuthor, page: page)),
