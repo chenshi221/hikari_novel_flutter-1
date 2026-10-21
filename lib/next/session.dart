@@ -19,6 +19,7 @@ import '../models/custom_exception.dart';
 import '../models/user_info.dart';
 import 'cache.dart';
 import 'env.dart';
+import 'net_stub.dart' if (dart.library.io) 'net_io.dart';
 
 /// 本地保存的登录信息：cookie、选择的节点、代理、浏览器标识。密码放在系统安全存储里。
 class SessionStore {
@@ -43,7 +44,25 @@ class SessionStore {
   Future<void> setCfCookie(String host, String? value) => value == null || value.isEmpty ? _box.delete('cf:$host') : _box.put('cf:$host', value);
 
   /// WebView 的真实浏览器标识。Dio 用同一个，Cloudflare 才认得放行 cookie。
-  String get userAgent => (_box.get('ua') as String?) ?? kUserAgent['User-Agent']!;
+  /// 还没验证过（没有 WebView 的标识）时按本机平台给一个自洽的：手机上自称桌面 Chrome 会被 Cloudflare 当成可疑。
+  String get userAgent => (_box.get('ua') as String?) ?? _platformUserAgent();
+
+  static String _platformUserAgent() => switch (defaultTargetPlatform) {
+    TargetPlatform.android => 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Mobile Safari/537.36',
+    TargetPlatform.iOS => 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+    TargetPlatform.macOS => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+    _ => kUserAgent['User-Agent']!,
+  };
+
+  /// 用系统网络栈发请求（浏览器级 TLS 指纹）。没填代理时才生效：系统网络栈走不了自定义代理。
+  bool get nativeNet => (_box.get('nativeNet') as bool?) ?? true;
+
+  Future<void> setNativeNet(bool value) => _box.put('nativeNet', value);
+
+  HttpClientAdapter adapter() {
+    HttpClientAdapter io() => IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => proxy.isEmpty ? 'DIRECT' : 'PROXY $proxy');
+    return nativeNet && proxy.isEmpty ? (nativeAdapter(io) ?? io()) : io();
+  }
 
   Future<void> setUserAgent(String ua) => _box.put('ua', ua);
 
@@ -123,7 +142,7 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
     headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
-    dio: kIsWeb ? null : (Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}')),
+    dio: kIsWeb ? null : (Dio()..httpClientAdapter = store.adapter()),
   );
 });
 
@@ -132,7 +151,7 @@ final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
   final node = ref.watch(nodeProvider);
   return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
-    ..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}');
+    ..httpClientAdapter = store.adapter();
 });
 
 final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));
