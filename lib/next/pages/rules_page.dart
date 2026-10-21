@@ -53,8 +53,8 @@ class _RulesPageState extends ConsumerState<RulesPage> {
                     background: Container(color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15)),
                     onDismissed: (_) => _commit([..._rules]..removeAt(i)),
                     child: SwitchListTile(
-                      title: Text(r.kind == RuleKind.highlight ? r.label : r.pattern, style: r.kind == RuleKind.highlight ? TextStyle(color: Color(r.color), fontWeight: FontWeight.w600) : const TextStyle(fontFamily: 'monospace')),
-                      subtitle: Text(r.kind == RuleKind.highlight ? '高亮 · ${r.pattern}' : (r.replacement.isEmpty ? '替换 → （删除）' : '替换 → ${r.replacement}')),
+                      title: Text(r.kind != RuleKind.replace ? r.label : r.pattern, style: r.kind != RuleKind.replace ? TextStyle(color: Color(r.color), fontWeight: FontWeight.w600) : const TextStyle(fontFamily: 'monospace')),
+                      subtitle: Text(r.kind != RuleKind.replace ? '${r.kind == RuleKind.color ? '变色' : '高亮'}${r.aid.isNotEmpty ? '（单本书）' : ''} · ${r.pattern}' : (r.replacement.isEmpty ? '替换 → （删除）' : '替换 → ${r.replacement}')),
                       value: r.enabled,
                       onChanged: (v) => _commit([..._rules]..[i] = r.copyWith(enabled: v)),
                       secondary: IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _edit(i)),
@@ -84,7 +84,7 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
             mainAxisSize: MainAxisSize.min,
             children: [
               SegmentedButton<RuleKind>(
-                segments: const [ButtonSegment(value: RuleKind.replace, label: Text('替换')), ButtonSegment(value: RuleKind.highlight, label: Text('高亮'))],
+                segments: const [ButtonSegment(value: RuleKind.replace, label: Text('替换')), ButtonSegment(value: RuleKind.color, label: Text('变色')), ButtonSegment(value: RuleKind.highlight, label: Text('高亮'))],
                 selected: {kind},
                 onSelectionChanged: (s) => setLocal(() => kind = s.first),
               ),
@@ -94,8 +94,10 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
               if (kind == RuleKind.replace)
                 TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组'))
               else ...[
-                TextField(controller: name, decoration: const InputDecoration(labelText: '名字（备注按它归档）', helperText: '例如人物名，可留空')),
-                const SizedBox(height: 12),
+                if (kind == RuleKind.highlight) ...[
+                  TextField(controller: name, decoration: const InputDecoration(labelText: '名字（备注按它归档）', helperText: '例如人物名，可留空')),
+                  const SizedBox(height: 12),
+                ],
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,

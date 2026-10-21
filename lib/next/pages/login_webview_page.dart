@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -140,12 +141,25 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     }
   }
 
+  /// 登录出问题时复制：当前地址、cookie 名（不含值）、页面上的表单结构（不含已填的值）。
+  Future<void> _copyDiagnostics() async {
+    final c = _controller;
+    if (c == null) return;
+    final url = await c.getUrl();
+    final names = url == null ? <String>[] : (await _cookieManager.getCookies(url: url)).map((e) => e.name).toList();
+    final forms = await c.evaluateJavascript(source: "JSON.stringify([...document.forms].map(f => ({action: f.getAttribute('action'), fields: [...f.elements].map(e => e.name + ':' + e.type)})))");
+    final info = '地址：$url\ncookie 名：${names.join(',')}\nUA：$_ua\n表单：$forms\n状态：$_status';
+    await Clipboard.setData(ClipboardData(text: info));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制诊断信息')));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          if (_ready) IconButton(tooltip: '复制诊断信息', icon: const Icon(Icons.bug_report_outlined), onPressed: _copyDiagnostics),
           if (_ready)
             TextButton(
               onPressed: () async {

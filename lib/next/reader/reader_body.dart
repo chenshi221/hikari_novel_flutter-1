@@ -38,25 +38,39 @@ TextStyle readerStyle(ReaderPrefs prefs, Color color, {String? family, List<Stri
   leadingDistribution: TextLeadingDistribution.proportional,
 );
 
-/// 取出 [from, to) 这一段正文，高亮的地方染色（有备注的加虚线下划线）。颜色和下划线不改变字形宽度，不影响分页。
-InlineSpan buildSpan(Chapter c, int from, int to, TextStyle base, Set<String> noted) {
-  final children = <InlineSpan>[];
-  var pos = from;
+/// 取出 [from, to) 这一段正文，高亮的地方染色（有备注的加虚线下划线），[hl] 是朗读正在读的那一句。颜色、底色和下划线不改变字形宽度，不影响分页。
+InlineSpan buildSpan(Chapter c, int from, int to, TextStyle base, Set<String> noted, [(int, int)? hl, Color? hlColor]) {
+  final cuts = <int>{from, to};
   for (final m in c.marks) {
     if (m.end <= from) continue;
     if (m.start >= to) break;
-    final s = math.max(m.start, from), e = math.min(m.end, to);
-    if (s > pos) children.add(TextSpan(text: c.text.substring(pos, s)));
-    final color = Color(m.rule.color);
-    children.add(
-      TextSpan(
-        text: c.text.substring(s, e),
-        style: TextStyle(color: color, backgroundColor: color.withValues(alpha: 0.13), decoration: noted.contains(m.rule.id) ? TextDecoration.underline : null, decorationStyle: TextDecorationStyle.dotted, decorationColor: color),
-      ),
-    );
-    pos = e;
+    cuts..add(math.max(m.start, from))..add(math.min(m.end, to));
   }
-  if (pos < to) children.add(TextSpan(text: c.text.substring(pos, to)));
+  if (hl != null) {
+    for (final x in [hl.$1, hl.$2]) {
+      if (x > from && x < to) cuts.add(x);
+    }
+  }
+  final pts = cuts.toList()..sort();
+  final children = <InlineSpan>[];
+  var j = 0;
+  for (var i = 0; i + 1 < pts.length; i++) {
+    final a = pts[i], b = pts[i + 1];
+    while (j < c.marks.length && c.marks[j].end <= a) {
+      j++;
+    }
+    final m = j < c.marks.length && c.marks[j].start <= a ? c.marks[j] : null;
+    final reading = hl != null && a >= hl.$1 && b <= hl.$2;
+    TextStyle? style;
+    if (m != null) {
+      final color = Color(m.rule.color);
+      style = m.rule.kind == RuleKind.color
+          ? TextStyle(color: color)
+          : TextStyle(color: color, backgroundColor: color.withValues(alpha: 0.13), decoration: noted.contains(m.rule.id) ? TextDecoration.underline : null, decorationStyle: TextDecorationStyle.dotted, decorationColor: color);
+    }
+    if (reading) style = (style ?? const TextStyle()).copyWith(backgroundColor: (hlColor ?? Colors.amber).withValues(alpha: 0.35));
+    children.add(TextSpan(text: c.text.substring(a, b), style: style));
+  }
   return TextSpan(style: base, children: children);
 }
 
@@ -114,7 +128,7 @@ Mark? markAt(Chapter c, GlobalKey key, int base, Offset global) {
   if (!boxes.any((b) => b.toRect().inflate(2).contains(local))) return null;
   final idx = base + pos;
   for (final m in c.marks) {
-    if (idx >= m.start && idx < m.end) return m;
+    if (idx >= m.start && idx < m.end) return m.rule.kind == RuleKind.highlight ? m : null;
   }
   return null;
 }
@@ -134,6 +148,7 @@ class ScrollBody extends StatefulWidget {
     required this.wrap,
     required this.onTapZone,
     required this.onMark,
+    this.follow,
     required this.hasSelection,
   });
 
@@ -152,6 +167,9 @@ class ScrollBody extends StatefulWidget {
   /// 点在空白处（切换菜单栏）
   final VoidCallback onTapZone;
   final void Function(Mark) onMark;
+
+  /// 朗读正在读的位置（字符偏移）：不在当前屏幕内时自动翻页 / 滚动过去
+  final int? follow;
   final bool Function() hasSelection;
 
   @override
@@ -167,6 +185,20 @@ class _ScrollBodyState extends State<ScrollBody> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
+  }
+
+  @override
+  void didUpdateWidget(ScrollBody old) {
+    super.didUpdateWidget(old);
+    final f = widget.follow;
+    if (f == null || f == old.follow || !_controller.hasClients) return;
+    final ro = _textKey.currentContext?.findRenderObject();
+    if (ro is! RenderParagraph) return;
+    final y = _padTop + ro.getOffsetForCaret(TextPosition(offset: math.min(f, widget.chapter.text.length)), Rect.zero).dy;
+    final view = _controller.position;
+    if (y < view.pixels || y > view.pixels + view.viewportDimension - 120) {
+      _controller.animateTo((y - 80).clamp(0.0, view.maxScrollExtent), duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    }
   }
 
   @override
@@ -239,6 +271,7 @@ class PagedBody extends StatefulWidget {
     required this.margin,
     required this.title,
     required this.curl,
+    this.cover = false,
     required this.background,
     required this.color,
     required this.startOffset,
@@ -249,6 +282,7 @@ class PagedBody extends StatefulWidget {
     required this.wrap,
     required this.onTapZone,
     required this.onMark,
+    this.follow,
     required this.hasSelection,
   });
 
@@ -258,6 +292,7 @@ class PagedBody extends StatefulWidget {
   final double margin;
   final String title;
   final bool curl;
+  final bool cover;
   final Color background;
   final Color color;
   final int startOffset;
@@ -268,6 +303,9 @@ class PagedBody extends StatefulWidget {
   final Widget Function(Widget) wrap;
   final VoidCallback onTapZone;
   final void Function(Mark) onMark;
+
+  /// 朗读正在读的位置（字符偏移）：不在当前屏幕内时自动翻页 / 滚动过去
+  final int? follow;
   final bool Function() hasSelection;
 
   @override
@@ -288,6 +326,20 @@ class _PagedBodyState extends State<PagedBody> {
   void initState() {
     super.initState();
     _cur = widget.startOffset;
+  }
+
+  @override
+  void didUpdateWidget(PagedBody old) {
+    super.didUpdateWidget(old);
+    final f = widget.follow;
+    if (f == null || f == old.follow || _total == 0) return;
+    final p = _pageOf(f);
+    if (p == _page) return;
+    if (widget.curl) {
+      _curl.goTo(p);
+    } else {
+      _controller?.animateToPage(p, duration: const Duration(milliseconds: 220), curve: Curves.easeOut);
+    }
   }
 
   @override
@@ -380,6 +432,7 @@ class _PagedBodyState extends State<PagedBody> {
           pages = PageCurl(
             key: ValueKey(sig),
             controller: _curl,
+            cover: widget.cover,
             pageCount: _total,
             initialIndex: _page,
             background: widget.background,

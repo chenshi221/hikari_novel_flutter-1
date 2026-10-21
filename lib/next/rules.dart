@@ -1,15 +1,17 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
-enum RuleKind { replace, highlight }
+/// 替换：改写文字；高亮：底色 + 可写备注；变色：只改字的颜色（比如给不同人物分色），不带备注。
+enum RuleKind { replace, highlight, color }
 
 /// 高亮规则可选的颜色（ARGB）。
 const ruleColors = [0xFFE53935, 0xFFF4511E, 0xFFF9A825, 0xFF43A047, 0xFF00897B, 0xFF1E88E5, 0xFF5E35B1, 0xFFD81B60];
 
 /// 一条正则规则：
 /// - 替换：章节正文显示前套用，用来去广告、统一用字
-/// - 高亮：把匹配到的文字（比如人物名）染上颜色，点一下可以写备注
+/// - 高亮：给匹配到的文字加底色，点一下可以写备注
+/// - 变色：只把匹配到的文字（比如人物名）染上颜色
 class ReplaceRule {
-  const ReplaceRule({required this.pattern, required this.replacement, this.enabled = true, this.kind = RuleKind.replace, this.color = 0xFFE53935, this.name = '', this.id = ''});
+  const ReplaceRule({required this.pattern, required this.replacement, this.enabled = true, this.kind = RuleKind.replace, this.color = 0xFFE53935, this.name = '', this.id = '', this.aid = ''});
 
   final String pattern;
   final String replacement;
@@ -23,9 +25,12 @@ class ReplaceRule {
   /// 稳定的编号，备注靠它找到规则
   final String id;
 
+  /// 只对这本书生效的书号；留空表示所有书。阅读器里选中文字做的高亮只属于当前这本书。
+  final String aid;
+
   String get label => name.isEmpty ? pattern : name;
 
-  ReplaceRule copyWith({String? pattern, String? replacement, bool? enabled, RuleKind? kind, int? color, String? name, String? id}) => ReplaceRule(
+  ReplaceRule copyWith({String? pattern, String? replacement, bool? enabled, RuleKind? kind, int? color, String? name, String? id, String? aid}) => ReplaceRule(
     pattern: pattern ?? this.pattern,
     replacement: replacement ?? this.replacement,
     enabled: enabled ?? this.enabled,
@@ -33,6 +38,7 @@ class ReplaceRule {
     color: color ?? this.color,
     name: name ?? this.name,
     id: id ?? this.id,
+    aid: aid ?? this.aid,
   );
 
   /// 正则写错时返回错误说明，正确返回 null。
@@ -68,10 +74,11 @@ class ReplaceRules {
           pattern: e['p'] as String,
           replacement: e['r'] as String,
           enabled: e['e'] as bool,
-          kind: (e['k'] as int?) == 1 ? RuleKind.highlight : RuleKind.replace,
+          kind: RuleKind.values[(e['k'] as int?)?.clamp(0, 2) ?? 0],
           color: (e['c'] as int?) ?? ruleColors.first,
           name: (e['n'] as String?) ?? '',
           id: (e['id'] as String?) ?? 'r$i',
+          aid: (e['a'] as String?) ?? '',
         ),
       );
     }
@@ -79,7 +86,7 @@ class ReplaceRules {
   }
 
   static Future<void> save(List<ReplaceRule> rules) => _box.put('rules', [
-    for (final (i, r) in rules.indexed) {'p': r.pattern, 'r': r.replacement, 'e': r.enabled, 'k': r.kind.index, 'c': r.color, 'n': r.name, 'id': r.id.isEmpty ? 'r${DateTime.now().microsecondsSinceEpoch}$i' : r.id},
+    for (final (i, r) in rules.indexed) {'p': r.pattern, 'r': r.replacement, 'e': r.enabled, 'k': r.kind.index, 'c': r.color, 'n': r.name, 'a': r.aid, 'id': r.id.isEmpty ? 'r${DateTime.now().microsecondsSinceEpoch}$i' : r.id},
   ]);
 
   /// 依次套用启用的替换规则；替换串里可用 `$1` 引用分组。无效的规则直接跳过。
@@ -95,10 +102,10 @@ class ReplaceRules {
   }
 
   /// 在 [text] 里找出所有高亮：先写的规则优先，重叠的后者让位；结果按位置排序、互不重叠。
-  static List<Mark> marks(String text, [List<ReplaceRule>? rules]) {
+  static List<Mark> marks(String text, [List<ReplaceRule>? rules, String aid = '']) {
     final found = <Mark>[];
     for (final r in rules ?? all()) {
-      if (!r.enabled || r.kind != RuleKind.highlight || r.pattern.isEmpty) continue;
+      if (!r.enabled || r.kind == RuleKind.replace || r.pattern.isEmpty || (r.aid.isNotEmpty && r.aid != aid)) continue;
       try {
         for (final m in RegExp(r.pattern, multiLine: true).allMatches(text)) {
           if (m.end > m.start) found.add(Mark(m.start, m.end, r));

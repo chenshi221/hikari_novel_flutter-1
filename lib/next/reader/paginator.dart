@@ -28,3 +28,29 @@ int pageOfOffset(List<int> starts, int offset) {
   }
   return page;
 }
+
+/// 把正文切成句子：按 。！？… 和换行切，太短的并入下一句；返回每句的 [start, end)。
+List<(int, int)> splitSentences(String text) {
+  final out = <(int, int)>[];
+  int? start;
+  for (var i = 0; i < text.length; i++) {
+    final ch = text[i];
+    final blank = ch == '\n' || ch == ' ' || ch == '\u3000';
+    if (start == null) {
+      if (!blank) start = i;
+      continue;
+    }
+    final stop = ch == '\n' || '。！？!?…'.contains(ch);
+    if (!stop) continue;
+    var end = i + 1;
+    while (end < text.length && '”」』）"\''.contains(text[end])) {
+      end++;
+    }
+    if (ch != '\n' && end - start < 8 && end < text.length && text[end] != '\n') continue; // 太短，并入下一句
+    out.add((start, end));
+    i = end - 1;
+    start = null;
+  }
+  if (start != null && text.substring(start).trim().isNotEmpty) out.add((start, text.length));
+  return out;
+}

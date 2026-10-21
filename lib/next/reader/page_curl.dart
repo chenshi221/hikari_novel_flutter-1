@@ -7,10 +7,14 @@ import 'package:flutter/material.dart';
 class PageCurlController {
   VoidCallback? _next;
   VoidCallback? _prev;
+  ValueChanged<int>? _goTo;
 
   void next() => _next?.call();
 
   void prev() => _prev?.call();
+
+  /// 跳到第 [page] 页（相邻页带翻页动画）。
+  void goTo(int page) => _goTo?.call(page);
 }
 
 /// 仿真翻页：手指拖住页角，纸张沿一条折线折过去，露出背面和下一页。
@@ -24,12 +28,15 @@ class PageCurlController {
 ///
 /// 往回翻不卷页：上一页从左边水平滑进来，盖在当前页上（和常见阅读器一致）。
 class PageCurl extends StatefulWidget {
-  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
+  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, this.cover = false, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
 
   /// 仅用于 tool/curl_demo.dart 目测：把折叠状态固定在进度 [debugT]（方向 [debugDir]，折角在高度的 [debugCorner] 处）
   final double? debugT;
   final int debugDir;
   final double debugCorner;
+
+  /// 覆盖翻页：往后翻时当前页水平滑出、露出下一页，不卷页。
+  final bool cover;
 
   final int pageCount;
 
@@ -69,7 +76,8 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
     super.initState();
     widget.controller
       ?.._next = (() => _auto(1))
-      .._prev = (() => _auto(-1));
+      .._prev = (() => _auto(-1))
+      .._goTo = _jump;
   }
 
   @override
@@ -136,6 +144,16 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
     _animateTo(dir == 1 ? 1 : 0);
   }
 
+  void _jump(int page) {
+    _finishNow();
+    page = page.clamp(0, math.max(0, widget.pageCount - 1));
+    if (page == _index + 1) return _auto(1);
+    if (page == _index - 1) return _auto(-1);
+    if (page == _index) return;
+    setState(() => _index = page);
+    widget.onIndexChanged?.call(_index);
+  }
+
   void _onDragStart(DragStartDetails d) {
     _finishNow();
     _startX = d.localPosition.dx;
@@ -200,17 +218,19 @@ class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin
         Widget body;
         if (_dir == 0 || widget.pageCount == 0) {
           body = widget.pageCount == 0 ? ColoredBox(color: bg) : page(_index, true);
-        } else if (_dir == -1) {
+        } else if (_dir == -1 || widget.cover) {
+          // 往回翻：上一页从左边滑进来盖住当前页；覆盖模式往后翻：当前页向左滑出，露出下一页
           final dx = -_size.width * _t;
+          final (below, above) = _dir == -1 ? (_index, _index - 1) : (_index + 1, _index);
           body = Stack(
             fit: StackFit.expand,
             children: [
-              page(_index, false),
+              page(below, false),
               Transform.translate(
                 offset: Offset(dx, 0),
                 child: DecoratedBox(
                   decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.28), blurRadius: 14)]),
-                  child: page(_index - 1, false),
+                  child: page(above, false),
                 ),
               ),
             ],

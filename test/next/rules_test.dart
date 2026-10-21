@@ -31,4 +31,14 @@ void main() {
     final rules = [const ReplaceRule(pattern: '林云', replacement: 'X', kind: RuleKind.highlight, id: 'a')];
     expect(ReplaceRules.apply('林云', rules), '林云');
   });
+
+  test('变色规则参与着色但不是高亮；单本书的规则只在那本书生效', () {
+    final rules = [
+      const ReplaceRule(pattern: '林云', replacement: '', kind: RuleKind.color, id: 'a'),
+      const ReplaceRule(pattern: '云海', replacement: '', kind: RuleKind.highlight, id: 'b', aid: '1'),
+    ];
+    expect([for (final m in ReplaceRules.marks('林云云海', rules, '1')) (m.rule.id, m.rule.kind)], [('a', RuleKind.color), ('b', RuleKind.highlight)]);
+    expect([for (final m in ReplaceRules.marks('林云云海', rules, '2')) m.rule.id], ['a']);
+    expect(ReplaceRules.apply('林云', rules), '林云');
+  });
 }

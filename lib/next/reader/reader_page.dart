@@ -23,6 +23,7 @@ import '../rules.dart';
 import '../settings.dart';
 import '../stats.dart';
 import '../widgets.dart';
+import 'paginator.dart';
 import 'reader_body.dart';
 
 /// 每个非空行当一段：去掉网页里零散的空白，统一首行缩进两个全角空格。
@@ -36,7 +37,7 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
   ref.onDispose(timer.cancel);
   final raw = await ChapterCache.get(key.$1, key.$2) ?? await ref.read(apiProvider).chapter(key.$1, key.$2);
   final text = formatChapter(ReplaceRules.apply(raw.text));
-  return Chapter(text: text, images: raw.images, marks: ReplaceRules.marks(text));
+  return Chapter(text: text, images: raw.images, marks: ReplaceRules.marks(text, null, key.$1));
 });
 
 class _Palette {
@@ -103,12 +104,16 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   String? _bookTitle;
   String _chapterTitle = '';
 
-  // ---- 朗读：按段落依次朗读，读完一章自动翻到下一章继续 ----
+  // ---- 朗读：按句依次朗读，高亮正在读的句子并跟着翻页，读完一章自动读下一章 ----
   final _tts = FlutterTts();
   bool _speaking = false;
   bool _resumeTts = false;
-  List<String> _paras = const [];
-  int _pi = 0;
+  List<(int, int)> _segs = const []; // 每句在章节正文里的 [start, end)
+  String _ttsText = '';
+  int _si = 0;
+  DateTime _jumped = DateTime(0); // 手动跳句的时刻：刚被打断的那句的"读完"回调要忽略
+  DateTime? _sleepAt; // 定时关闭
+  bool _stopAtChapterEnd = false;
   CatChapter? _nextChapter;
 
   @override
@@ -119,7 +124,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     WakelockPlus.enable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _tts.setCompletionHandler(() {
-      _pi++;
+      if (DateTime.now().difference(_jumped).inMilliseconds < 400) return;
+      _si++;
       _speakNext();
     });
   }
@@ -134,44 +140,58 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     super.dispose();
   }
 
-  /// 从当前阅读位置所在的段落开始读。
+  /// 从当前阅读位置所在的句子开始读。
   Future<void> _startTts(Chapter c) async {
-    final paras = <String>[];
-    var startIndex = 0, pos = 0;
-    for (final line in c.text.split('\n')) {
-      final t = line.trim();
-      if (t.isNotEmpty) {
-        if (pos <= _offset) startIndex = paras.length;
-        paras.add(t);
-      }
-      pos += line.length + 1;
-    }
-    _paras = paras;
-    _pi = _resumeTts ? 0 : startIndex;
-    if (_paras.isEmpty) return;
+    _ttsText = c.text;
+    _segs = splitSentences(c.text);
+    if (_segs.isEmpty) return;
+    final at = _resumeTts ? 0 : _offset;
+    _si = _segs.indexWhere((e) => e.$2 > at);
+    if (_si < 0) _si = _segs.length - 1;
     setState(() => _speaking = true);
-    await _tts.setLanguage('zh-CN');
-    await _tts.setSpeechRate(ref.read(readerPrefsProvider).ttsRate);
+    await _applyTtsPrefs();
     await _speakNext();
+  }
+
+  Future<void> _applyTtsPrefs() async {
+    final prefs = ref.read(readerPrefsProvider);
+    await _tts.setLanguage('zh-CN');
+    await _tts.setSpeechRate(prefs.ttsRate);
+    await _tts.setPitch(prefs.ttsPitch);
+    if (prefs.ttsVoice.isNotEmpty) {
+      try {
+        await _tts.setVoice({'name': prefs.ttsVoice, 'locale': 'zh-CN'});
+      } catch (_) {}
+    }
   }
 
   Future<void> _speakNext() async {
     if (!_speaking) return;
-    if (_pi < _paras.length) {
-      await _tts.speak(_paras[_pi]);
+    if (_sleepAt != null && DateTime.now().isAfter(_sleepAt!)) return _stopTts();
+    if (_si < _segs.length) {
+      final (s, e) = _segs[_si];
+      if (mounted) setState(() {});
+      await _tts.speak(_ttsText.substring(s, e).trim());
       return;
     }
     final next = _nextChapter;
-    if (next == null) {
-      await _stopTts();
-      return;
-    }
+    if (next == null || _stopAtChapterEnd || !ref.read(readerPrefsProvider).ttsAutoNext) return _stopTts();
     _resumeTts = true;
     _go(next.cid, keepTts: true);
   }
 
+  /// 上一句 / 下一句。
+  void _skipSentence(int delta) {
+    if (!_speaking) return;
+    _si = (_si + delta).clamp(0, _segs.length - 1);
+    _jumped = DateTime.now();
+    _speakNext();
+  }
+
   Future<void> _stopTts() async {
     _resumeTts = false;
+    _sleepAt = null;
+    _stopAtChapterEnd = false;
     await _tts.stop();
     if (mounted) setState(() => _speaking = false);
   }
@@ -236,12 +256,19 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   /// 选中的文字变成正则：空白（含缩进、换行）都换成 `\s*`，这样跨段选中也能匹配原文。
   static String _patternOf(String selected) => selected.split(RegExp(r'[\s　]+')).where((e) => e.isNotEmpty).map(RegExp.escape).join(r'\s*');
 
+  /// 只保留我们需要的几项，不带系统自带的全选、分享、搜索、翻译。
   Widget _selectionMenu(BuildContext context, SelectableRegionState state) => AdaptiveTextSelectionToolbar.buttonItems(
     anchors: state.contextMenuAnchors,
     buttonItems: [
-      ...state.contextMenuButtonItems,
-      ContextMenuButtonItem(label: '替换/屏蔽', onPressed: () => _ruleFromSelection(state, RuleKind.replace)),
-      ContextMenuButtonItem(label: '高亮', onPressed: () => _ruleFromSelection(state, RuleKind.highlight)),
+      ContextMenuButtonItem(
+        label: '复制',
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: _selected ?? ''));
+          state.hideToolbar();
+        },
+      ),
+      ContextMenuButtonItem(label: '替换/屏蔽', onPressed: () => _replaceFromSelection(state)),
+      ContextMenuButtonItem(label: '高亮', onPressed: () => _highlightSelection(state)),
       ContextMenuButtonItem(
         label: '加书签',
         onPressed: () {
@@ -253,35 +280,82 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     ],
   );
 
-  Future<void> _ruleFromSelection(SelectableRegionState state, RuleKind kind) async {
+  Future<void> _replaceFromSelection(SelectableRegionState state) async {
     final text = (_selected ?? '').trim();
     state.hideToolbar();
     if (text.isEmpty) return;
-    final rule = await showRuleDialog(context, initial: ReplaceRule(pattern: _patternOf(text), replacement: '', kind: kind, name: kind == RuleKind.highlight && text.length <= 8 ? text : ''));
+    final rule = await showRuleDialog(context, initial: ReplaceRule(pattern: _patternOf(text), replacement: '', kind: RuleKind.replace));
     if (rule == null) return;
     await ReplaceRules.save([...ReplaceRules.all(), rule]);
     ref.invalidate(chapterProvider);
   }
 
+  /// 高亮选中的文字：同一本书里相同的文字只有一条高亮规则，所有出现的地方共用一份备注。随后直接打开备注框。
+  Future<void> _highlightSelection(SelectableRegionState state) async {
+    final text = (_selected ?? '').trim();
+    state.hideToolbar();
+    if (text.isEmpty) return;
+    final pattern = _patternOf(text);
+    final rules = ReplaceRules.all();
+    var rule = rules.where((r) => r.kind == RuleKind.highlight && r.pattern == pattern && (r.aid == widget.aid || r.aid.isEmpty)).firstOrNull;
+    if (rule == null) {
+      rule = ReplaceRule(pattern: pattern, replacement: '', kind: RuleKind.highlight, color: ruleColors[2], name: text.length <= 8 ? text : '', id: 'h${DateTime.now().microsecondsSinceEpoch}', aid: widget.aid);
+      await ReplaceRules.save([...rules, rule]);
+      ref.invalidate(chapterProvider);
+    }
+    if (mounted) await _editNote(rule);
+  }
+
   Widget _selectable(Widget child) => SelectionArea(onSelectionChanged: (c) => _selected = c?.plainText, contextMenuBuilder: _selectionMenu, child: child);
 
-  Future<void> _editNote(Mark m) async {
-    final controller = TextEditingController(text: RuleNotes.get(widget.aid, m.rule.id));
-    final saved = await showDialog<bool>(
+  /// 点高亮文字：显示并修改备注，也可以换颜色、取消高亮。
+  Future<void> _editNote(ReplaceRule rule) async {
+    final controller = TextEditingController(text: RuleNotes.get(widget.aid, rule.id));
+    var color = rule.color;
+    final result = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Row(children: [Container(width: 10, height: 10, decoration: BoxDecoration(color: Color(m.rule.color), shape: BoxShape.circle)), const SizedBox(width: 8), Expanded(child: Text(m.rule.label))]),
-        content: TextField(controller: controller, autofocus: true, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('保存')),
-        ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text(rule.label),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: controller, autofocus: true, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in ruleColors)
+                      GestureDetector(
+                        onTap: () => setLocal(() => color = c),
+                        child: Container(width: 28, height: 28, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface))),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            if (rule.aid.isNotEmpty) TextButton(onPressed: () => Navigator.pop(context, 'remove'), child: const Text('取消高亮')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(context, 'save'), child: const Text('保存')),
+          ],
+        ),
       ),
     );
-    if (saved == true) {
-      await RuleNotes.set(widget.aid, m.rule.id, controller.text);
-      if (mounted) setState(() {});
+    if (result == null) return;
+    final rules = ReplaceRules.all();
+    if (result == 'remove') {
+      await ReplaceRules.save([for (final r in rules) if (r.id != rule.id) r]);
+      await RuleNotes.set(widget.aid, rule.id, '');
+    } else {
+      await RuleNotes.set(widget.aid, rule.id, controller.text);
+      if (color != rule.color) await ReplaceRules.save([for (final r in rules) r.id == rule.id ? r.copyWith(color: color) : r]);
     }
+    ref.invalidate(chapterProvider);
+    if (mounted) setState(() {});
   }
 
   @override
@@ -335,9 +409,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               if (_resumeTts) {
                 scheduleMicrotask(() => _startTts(c));
               }
-              InlineSpan spanOf(int from, int to) => buildSpan(c, from, to, style, noted);
+              final reading = _speaking && prefs.ttsHighlight && _si < _segs.length && _ttsText == c.text ? _segs[_si] : null;
+              InlineSpan spanOf(int from, int to) => buildSpan(c, from, to, style, noted, reading, Theme.of(context).colorScheme.primary);
               final key = ValueKey((_cid, _epoch, prefs.mode, prefs.font, prefs.fontSize, prefs.lineHeight, prefs.margin, c.marks.length, c.text.length));
-              void onMark(Mark m) => _editNote(m);
+              void onMark(Mark m) => _editNote(m.rule);
               return prefs.mode == 0
                   ? ScrollBody(
                       key: key,
@@ -352,6 +427,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       wrap: _selectable,
                       onTapZone: _toggleBar,
                       onMark: onMark,
+                      follow: reading?.$1,
                       hasSelection: () => _hasSelection,
                     )
                   : PagedBody(
@@ -361,7 +437,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       style: style,
                       margin: prefs.margin,
                       title: title,
-                      curl: prefs.mode == 2,
+                      curl: prefs.mode >= 2,
+                      cover: prefs.mode == 3,
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
@@ -372,6 +449,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       wrap: _selectable,
                       onTapZone: _toggleBar,
                       onMark: onMark,
+                      follow: reading?.$1,
                       hasSelection: () => _hasSelection,
                     );
             },
@@ -441,6 +519,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                             },
                             child: Text(_speaking ? '停止' : '朗读'),
                           ),
+                          IconButton(tooltip: '朗读设置', icon: const Icon(Icons.tune), onPressed: _showTtsSettings),
                           TextButton(onPressed: _showSettings, child: const Text('设置')),
                           TextButton(onPressed: next == null ? null : () => _go(next.cid), child: const Text('下一章')),
                         ],
@@ -526,9 +605,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                     Builder(
                       builder: (context) {
                         final notes = RuleNotes.of(widget.aid);
-                        final rules = ReplaceRules.all().where((r) => r.kind == RuleKind.highlight && notes.containsKey(r.id)).toList();
+                        final rules = ReplaceRules.all().where((r) => r.kind == RuleKind.highlight && notes.containsKey(r.id) && (r.aid.isEmpty || r.aid == widget.aid)).toList();
                         return rules.isEmpty
-                            ? const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('还没有备注。\n给人物名设置"高亮"规则后，阅读时点一下它就能写备注。', textAlign: TextAlign.center)))
+                            ? const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('还没有备注。\n选中文字点"高亮"，之后点一下高亮的字就能写备注。', textAlign: TextAlign.center)))
                             : ListView(
                                 children: [
                                   for (final r in rules)
@@ -549,6 +628,94 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         ),
       ),
     );
+  }
+
+  void _showTtsSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => Consumer(
+        builder: (context, ref, _) {
+          final prefs = ref.watch(readerPrefsProvider);
+          void set(ReaderPrefs p) {
+            ref.read(readerPrefsProvider.notifier).update(p);
+            if (_speaking) _applyTtsPrefs();
+          }
+
+          // 定时关闭不在 prefs 里，用一次无变化的更新让这个面板重画
+          void sleep(DateTime? at, bool chapterEnd) {
+            _sleepAt = at;
+            _stopAtChapterEnd = chapterEnd;
+            ref.read(readerPrefsProvider.notifier).update(prefs.copyWith());
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_speaking)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        OutlinedButton.icon(onPressed: () => _skipSentence(-1), icon: const Icon(Icons.skip_previous), label: const Text('上一句')),
+                        OutlinedButton.icon(onPressed: () => _skipSentence(1), icon: const Icon(Icons.skip_next), label: const Text('下一句')),
+                      ],
+                    ),
+                  Text('语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
+                  Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
+                  Text('音调 ${prefs.ttsPitch.toStringAsFixed(1)}'),
+                  Slider(min: 0.5, max: 2.0, divisions: 15, value: prefs.ttsPitch, onChanged: (v) => set(prefs.copyWith(ttsPitch: v))),
+                  const Text('声音'),
+                  FutureBuilder<List<String>>(
+                    future: _zhVoices(),
+                    builder: (context, snap) {
+                      final names = snap.data ?? const <String>[];
+                      return Wrap(
+                        spacing: 8,
+                        children: [
+                          ChoiceChip(label: const Text('系统默认'), selected: prefs.ttsVoice.isEmpty, onSelected: (_) => set(prefs.copyWith(ttsVoice: ''))),
+                          for (final n in names) ChoiceChip(label: Text(n), selected: prefs.ttsVoice == n, onSelected: (_) => set(prefs.copyWith(ttsVoice: n))),
+                        ],
+                      );
+                    },
+                  ),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('高亮正在读的句子，并跟着翻页'), value: prefs.ttsHighlight, onChanged: (v) => set(prefs.copyWith(ttsHighlight: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('读完一章自动读下一章'), value: prefs.ttsAutoNext, onChanged: (v) => set(prefs.copyWith(ttsAutoNext: v))),
+                  const Text('定时关闭'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      ChoiceChip(label: const Text('关'), selected: _sleepAt == null && !_stopAtChapterEnd, onSelected: (_) => sleep(null, false)),
+                      for (final m in [15, 30, 60])
+                        ChoiceChip(label: Text('$m 分钟'), selected: false, onSelected: (_) => sleep(DateTime.now().add(Duration(minutes: m)), false)),
+                      ChoiceChip(label: const Text('读完本章'), selected: _stopAtChapterEnd, onSelected: (_) => sleep(null, true)),
+                    ],
+                  ),
+                  if (_sleepAt != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text('将在 ${_sleepAt!.hour.toString().padLeft(2, '0')}:${_sleepAt!.minute.toString().padLeft(2, '0')} 停止', style: Theme.of(context).textTheme.bodySmall)),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 系统里的中文语音名（引擎不支持列出时返回空）。
+  Future<List<String>> _zhVoices() async {
+    try {
+      final voices = await _tts.getVoices as List?;
+      return [
+        for (final v in voices ?? const [])
+          if (v is Map && '${v['locale']}'.toLowerCase().startsWith('zh')) '${v['name']}',
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   void _showSettings() {
@@ -603,13 +770,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   ),
                   const SizedBox(height: 8),
                   SegmentedButton<int>(
-                    segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真'))],
+                    segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真')), ButtonSegment(value: 3, label: Text('覆盖'))],
                     selected: {prefs.mode},
                     onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
                   ),
-                  const SizedBox(height: 8),
-                  Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
-                  Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
                 ],
               ),
             ),
