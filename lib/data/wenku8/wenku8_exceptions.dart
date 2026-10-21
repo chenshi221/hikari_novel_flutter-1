@@ -17,7 +17,7 @@ class Wenku8UnexpectedPageException extends Wenku8Exception {
 /// 服务端返回了 4xx/5xx（例如 Cloudflare 的 52x 源站超时、503 维护页）。内容不是我们要的页面，
 /// 调用方应当按"网络问题"处理：用离线备份，不要写缓存，也不要当成登录失效。
 class Wenku8HttpException extends Wenku8Exception {
-  const Wenku8HttpException(this.status) : super('网站暂时不可用（HTTP $status）');
+  const Wenku8HttpException(this.status) : super(status == 429 ? '请求太频繁了（HTTP 429），请等一会儿再试' : '网站暂时不可用（HTTP $status）');
 
   final int status;
 }

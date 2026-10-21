@@ -83,7 +83,7 @@ class Api {
 
   Future<PageResult> ranking(String sort, int page) async => _list(await _client.getPage(_urls.ranking(sort, page), charsetParam: false));
 
-  Future<PageResult> category(String tag, String sort, int page) async => _list(await _client.getPage(_urls.category(tag, sort, page)));
+  Future<PageResult> category(String tag, String sort, int page) async => _list(await _client.getPage(_urls.category(tag, sort, page), charsetParam: false));
 
   Future<PageResult> completed(int page) async => _list(await _client.getPage(_urls.completedNovels(page)));
 
