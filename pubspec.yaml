@@ -3,7 +3,7 @@ description: "An app for reading wenku8, refactor with flutter"
 
 publish_to: 'none'
 
-version: 0.10.0-beta.3+22
+version: 0.10.0-beta.4+23
 
 environment:
   sdk: ^3.12.2
@@ -22,6 +22,8 @@ dependencies:
   dio: ^5.3.3
   cookie_jar: ^4.0.8
   dio_cookie_manager: ^3.1.1
+  # 系统网络栈（安卓 Cronet / 苹果 NSURLSession），TLS 指纹和浏览器一致
+  native_dio_adapter: ^1.8.0
 
   # 浏览器
   flutter_inappwebview: ^6.2.0-beta.3

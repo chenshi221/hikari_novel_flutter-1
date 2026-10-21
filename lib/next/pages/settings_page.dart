@@ -87,6 +87,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'),
               onChanged: store.setProxy,
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('系统网络栈'),
+              subtitle: const Text('用系统自带的网络层发请求，TLS 指纹和浏览器一致，更不容易被 Cloudflare 拦截。填了代理时不生效；改动后重启 App 生效。'),
+              value: store.nativeNet,
+              onChanged: (v) async {
+                await store.setNativeNet(v);
+                setState(() {});
+              },
+            ),
           ],
           if (!isWebPreview) ...[
             const SizedBox(height: 8),

@@ -63,9 +63,14 @@ class Wenku8Client {
   Future<Map<String, String>> exportCookies(String host) async => {for (final c in await _cookieJar.loadForRequest(Uri.parse(host))) c.name: c.value};
 
   /// GET 一个页面并按当前编码解码成字符串。
-  Future<String> getPage(String url) async {
+  ///
+  /// [charsetParam] 为 false 且当前是 GBK（网站默认编码）时不追加 `charset` 参数：上游项目发现带这个参数的书架、榜单、
+  /// 详情、目录、正文请求会被 Cloudflare 的规则拦成 403；繁体（Big5）必须带参数，否则返回的还是 GBK 页面。
+  /// [referer] 给目录、正文请求带上来源页，和浏览器行为一致。
+  Future<String> getPage(String url, {bool charsetParam = true, String? referer}) async {
     final currentCharset = charset();
-    final response = await dio.get(Wenku8Charset.withCharsetParam(url, currentCharset));
+    final target = charsetParam || currentCharset != CharsetType.gbk ? Wenku8Charset.withCharsetParam(url, currentCharset) : url;
+    final response = await dio.get(target, options: referer == null ? null : Options(headers: {'Referer': referer}));
     final bytes = await _followRedirect(response);
     return Wenku8Charset.decode(bytes, currentCharset);
   }

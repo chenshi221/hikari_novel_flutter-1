@@ -51,11 +51,11 @@ class Api {
   /// - 联网且解析成功：返回结果并更新备份（解析失败的页面——登录页、错误页、结构变了——绝不写进备份）
   /// - 页面不对（[Wenku8UnexpectedPageException]）：直接抛出，不拿旧备份冒充
   /// - 网络问题（超时、断网、5xx、Cloudflare）：有备份就用备份
-  Future<T> _cached<T>(String url, T Function(String html) parse, {bool private = false}) async {
+  Future<T> _cached<T>(String url, T Function(String html) parse, {bool private = false, String? referer}) async {
     final key = private ? '$_scope|$url' : url;
     final String html;
     try {
-      html = await _client.getPage(url);
+      html = await _client.getPage(url, charsetParam: false, referer: referer);
     } on Wenku8UnexpectedPageException {
       rethrow;
     } catch (_) {
@@ -81,9 +81,9 @@ class Api {
 
   PageResult _list(String html) => PageResult(Wenku8Parser.novelList(html, baseUrl: _base), Wenku8Parser.maxPage(html));
 
-  Future<PageResult> ranking(String sort, int page) async => _list(await _client.getPage(_urls.ranking(sort, page)));
+  Future<PageResult> ranking(String sort, int page) async => _list(await _client.getPage(_urls.ranking(sort, page), charsetParam: false));
 
-  Future<PageResult> category(String tag, String sort, int page) async => _list(await _client.getPage(_urls.category(tag, sort, page)));
+  Future<PageResult> category(String tag, String sort, int page) async => _list(await _client.getPage(_urls.category(tag, sort, page), charsetParam: false));
 
   Future<PageResult> completed(int page) async => _list(await _client.getPage(_urls.completedNovels(page)));
 
@@ -134,9 +134,9 @@ class Api {
   }
 
   /// 只取目录（检查更新用，比 [novel] 少一次请求）。
-  Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue);
+  Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue, referer: '$_base/book/$aid.htm');
 
-  Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid)));
+  Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
 
   Future<Bookshelf> bookshelf(int classId) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true);
 

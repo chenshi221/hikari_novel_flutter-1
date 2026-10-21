@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_exceptions.dart';
 import 'package:hikari_novel_flutter/models/common/charset_type.dart';
 import 'package:hikari_novel_flutter/models/custom_exception.dart';
 
@@ -50,6 +51,28 @@ void main() {
     expect(html, '登录');
     expect(adapter.requested.map((u) => u.path), ['/a.php', '/b.php', '/c.php', '/login.php']);
     expect(adapter.requested.first.query, '&charset=gbk');
+  });
+
+  test('charsetParam: false 时 GBK 不带 charset 参数、繁体仍带；referer 会发出去', () async {
+    final adapter = _FakeAdapter({'/a.php': () => _page([0xB5, 0xC7])});
+    final headers = <Map<String, dynamic>>[];
+    final gbk = _client(adapter)..dio.interceptors.add(InterceptorsWrapper(onRequest: (o, h) {
+      headers.add(o.headers);
+      h.next(o);
+    }));
+    await gbk.getPage('https://www.wenku8.net/a.php?id=1', charsetParam: false, referer: 'https://www.wenku8.net/book/1.htm');
+    expect(adapter.requested.single.query, 'id=1');
+    expect(headers.single['Referer'], 'https://www.wenku8.net/book/1.htm');
+
+    final big5Adapter = _FakeAdapter({'/a.php': () => _page([0xA7, 0xDA])});
+    final big5 = Wenku8Client(baseUrl: () => 'https://www.wenku8.net', charset: () => CharsetType.big5Hkscs, headers: const {}, dio: Dio()..httpClientAdapter = big5Adapter);
+    await big5.getPage('https://www.wenku8.net/a.php?id=1', charsetParam: false);
+    expect(big5Adapter.requested.single.query, 'id=1&charset=big5');
+  });
+
+  test('HTTP 429 给出"请求太频繁"的提示', () {
+    expect(const Wenku8HttpException(429).message, contains('太频繁'));
+    expect(const Wenku8HttpException(522).message, contains('522'));
   });
 
   test('重定向死循环时最多跟随 5 次', () async {
