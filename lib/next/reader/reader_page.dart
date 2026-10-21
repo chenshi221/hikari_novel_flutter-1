@@ -141,8 +141,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final n = DateTime.now();
     var s = '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}';
     try {
-      if (!isWebPreview) s += '  电量 ${await Battery().batteryLevel}%';
-    } catch (_) {} // 没有电池的电脑 / 取不到就不显示电量
+      final level = isWebPreview ? -1 : await Battery().batteryLevel;
+      if (level >= 0) s += '  电量 $level%';
+    } catch (_) {} // 没有电池的电脑 / 模拟器（返回 -1）/ 取不到就不显示电量
     if (mounted) _status.value = s;
   }
 
@@ -571,6 +572,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 ),
               ),
             ),
+          // 亮度遮罩：盖住正文和页脚，不盖菜单栏，不挡点击
+          if (prefs.dim > 0) Positioned.fill(child: IgnorePointer(child: ColoredBox(color: Colors.black.withValues(alpha: prefs.dim)))),
           if (_bar) ...[
             Positioned(
               top: 0,
@@ -867,6 +870,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Text('亮度 ${((1 - prefs.dim) * 100).round()}%'),
+                  // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
+                  Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v))),
                   Text('字号 ${prefs.fontSize.round()}'),
                   Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v))),
                   Text('行距 ${prefs.lineHeight.toStringAsFixed(1)}'),
