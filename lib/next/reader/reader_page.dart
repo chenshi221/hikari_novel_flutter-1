@@ -35,7 +35,14 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
   final link = ref.keepAlive();
   final timer = Timer(const Duration(minutes: 3), link.close);
   ref.onDispose(timer.cancel);
-  final raw = await ChapterCache.get(key.$1, key.$2) ?? await ref.read(apiProvider).chapter(key.$1, key.$2);
+  var raw = await ChapterCache.get(key.$1, key.$2);
+  if (raw == null) {
+    raw = await ref.read(apiProvider).chapter(key.$1, key.$2);
+    // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读
+    try {
+      await ChapterCache.put(key.$1, key.$2, raw);
+    } catch (_) {}
+  }
   final text = formatChapter(ReplaceRules.apply(raw.text));
   return Chapter(text: text, images: raw.images, marks: ReplaceRules.marks(text, null, key.$1));
 });
@@ -81,11 +88,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (running) _watch.start();
   }
 
+  bool _background = false;
+
+  /// 朗读中退到后台 / 锁屏也算在读，计时不停；朗读停下时若还在后台再停表。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    _background = state != AppLifecycleState.resumed;
+    if (!_background) {
       _watch.start();
-    } else {
+    } else if (!_speaking) {
       _flushStats();
       _watch.stop();
     }
@@ -112,6 +123,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   String _ttsText = '';
   int _si = 0;
   DateTime _jumped = DateTime(0); // 手动跳句的时刻：刚被打断的那句的"读完"回调要忽略
+  DateTime _spokeAt = DateTime(0); // 最近一句开始朗读的时刻：这之后马上发生的翻页是跟读造成的，不是用户翻的
+  int _lastPageOffset = -1;
+  Timer? _turnTimer;
   DateTime? _sleepAt; // 定时关闭
   bool _stopAtChapterEnd = false;
   CatChapter? _nextChapter;
@@ -133,6 +147,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _turnTimer?.cancel();
     _tts.stop();
     WidgetsBinding.instance.removeObserver(this);
     _flushStats();
@@ -171,6 +186,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (_sleepAt != null && DateTime.now().isAfter(_sleepAt!)) return _stopTts();
     if (_si < _segs.length) {
       final (s, e) = _segs[_si];
+      _spokeAt = DateTime.now();
       if (mounted) setState(() {});
       await _tts.speak(_ttsText.substring(s, e).trim());
       return;
@@ -190,6 +206,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   Future<void> _stopTts() async {
+    _turnTimer?.cancel();
+    if (_background) {
+      _flushStats();
+      _watch.stop();
+    }
     _resumeTts = false;
     _sleepAt = null;
     _stopAtChapterEnd = false;
@@ -254,6 +275,22 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   void _saveOffset(int offset) {
     _offset = offset;
     ReadingProgress.save(widget.aid, _cid, offset);
+    // 朗读时用户自己翻页 / 滚动（不是跟读造成的）：停稳后从新位置的句子接着读
+    final turned = offset != _lastPageOffset;
+    _lastPageOffset = offset;
+    if (_speaking && turned && DateTime.now().difference(_spokeAt).inMilliseconds > 1200) {
+      _turnTimer?.cancel();
+      _turnTimer = Timer(const Duration(milliseconds: 600), () => _readFrom(offset));
+    }
+  }
+
+  void _readFrom(int offset) {
+    if (!_speaking || !mounted || ref.read(chapterProvider((widget.aid, _cid))).value?.text != _ttsText) return;
+    final i = _segs.indexWhere((e) => e.$2 > offset);
+    if (i < 0 || i == _si) return;
+    _si = i;
+    _jumped = DateTime.now();
+    _speakNext();
   }
 
   // ---- 书签 ----
@@ -396,12 +433,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final next = index >= 0 && index < chapters.length - 1 ? chapters[index + 1] : null;
     _nextChapter = next;
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
-    // 章节一加载好就预加载下一章（用 read 触发，且每章只触发一次）
-    if (next != null && content.hasValue && _preloaded != next.cid) {
-      _preloaded = next.cid;
-      Future.microtask(() {
-        if (mounted) ref.read(chapterProvider((widget.aid, next.cid)));
-      });
+    // 章节一加载好就预加载后面几章（用 read 触发，且每章只触发一次）
+    if (index >= 0 && content.hasValue) {
+      for (final ahead in chapters.skip(index + 1).take(_prefetch)) {
+        if (_preloaded.add(ahead.cid)) {
+          Future.microtask(() {
+            if (mounted) ref.read(chapterProvider((widget.aid, ahead.cid)));
+          });
+        }
+      }
     }
 
     final title = index >= 0 ? chapters[index].title : '';
@@ -569,7 +609,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     );
   }
 
-  String? _preloaded;
+  static const _prefetch = 2;
+  final _preloaded = <String>{};
 
   /// 目录（按卷分层，当前章所在的卷默认展开）、本书的书签、人物备注。
   void _showCatalogue(List<CatVolume> volumes, String current) {

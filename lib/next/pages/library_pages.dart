@@ -77,9 +77,9 @@ class CachePage extends ConsumerWidget {
     final tasks = ref.watch(downloadProvider);
     final books = ChapterCache.books().entries.toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('离线缓存')),
+      appBar: AppBar(title: Text('离线缓存 · 共 ${ChapterCache.totalLabel()}')),
       body: books.isEmpty
-          ? const StatePanel(title: '还没有缓存', detail: '在书籍详情页点"缓存"，可以整本或只缓存选中的章节。')
+          ? const StatePanel(title: '还没有缓存', detail: '在书籍详情页点"缓存"，可以整本或只缓存选中的章节。读过的章节也会自动存下来（占用见上方）。')
           : ListView(
               children: [
                 for (final b in books)

@@ -13,9 +13,10 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 /// - 阅读进度：按时间，新的赢
 /// - 阅读历史：每本书取最近一次；书签：同一章 40 字以内视为同一个，取较新的；规则：按编号并集，本机优先
 /// - 已读章节：并集；已读字数、评分：取较大 / 本机没有才用对方的；备注：并集，本机优先
+/// - 书签、规则的删除靠"墓碑"同步（编号 → 删除时间，留 90 天）；规则的修改按修改时间，新的赢
 /// - 阅读统计：其他设备的统计**单独存放**，显示时和本机相加，所以两边同时读也不会互相覆盖
 ///
-/// shortcut: 删除不会同步（在一台设备上删掉的书签、规则，另一台同步时会再带回来），需要时再加删除标记。
+/// shortcut: 备注的删除和修改不同步（本机优先），书签的墓碑按精确偏移匹配；需要时再给备注加时间。
 /// shortcut: 设置（字号、主题等）不同步，每台设备外观习惯本来就不一样。
 class Sync {
   Sync._();
@@ -49,6 +50,23 @@ class Sync {
     }
   }
 
+  static const _tombDays = 90;
+
+  static Map<String, int> _tombs() => Map<String, int>.from((_box.get('sync:tomb') as Map?) ?? const {});
+
+  /// 记下被删掉的东西（`b:书:章:偏移`、`r:规则编号`），同步时告诉其他设备也删掉。
+  static Future<void> tombstone(Iterable<String> keys) async {
+    if (keys.isEmpty) return;
+    final t = _tombs();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final k in keys) {
+      t[k] = now;
+    }
+    await _box.put('sync:tomb', t);
+  }
+
+  static String bookmarkKey(Map b) => 'b:${b['aid']}:${b['cid']}:${b['offset']}';
+
   static String get deviceId {
     var id = _box.get('sync:device') as String?;
     if (id == null) {
@@ -66,7 +84,7 @@ class Sync {
   static Map<String, dynamic> snapshot() {
     Map<String, dynamic> byAid(String prefix) => {for (final k in _keys(prefix)) k.substring(prefix.length): _box.get(k)};
     return {
-      'v': 1,
+      'v': 2,
       'device': deviceId,
       'at': DateTime.now().millisecondsSinceEpoch,
       'progress': byAid('progress:'),
@@ -77,6 +95,7 @@ class Sync {
       'rating': byAid('rating:'),
       'rules': _box.get('rules') ?? const [],
       'notes': byAid('notes:'),
+      'tomb': _tombs(),
       'stats': {
         'day': _box.get('stats:day') ?? const {},
         'book': _box.get('stats:book') ?? const {},
@@ -96,6 +115,16 @@ class Sync {
     if (remote['device'] == deviceId) return;
     final puts = <String, Object?>{};
 
+    // 墓碑：取较新的删除时间，超过 90 天的丢掉；比删除时间旧的东西视为已删
+    final tomb = _tombs();
+    for (final e in ((remote['tomb'] as Map?) ?? const {}).entries) {
+      if ((e.value as int) > (tomb[e.key] ?? 0)) tomb['${e.key}'] = e.value as int;
+    }
+    final cutoff = DateTime.now().millisecondsSinceEpoch - const Duration(days: _tombDays).inMilliseconds;
+    tomb.removeWhere((_, t) => t < cutoff);
+    puts['sync:tomb'] = tomb;
+    bool dead(String key, int time) => tomb.containsKey(key) && tomb[key]! >= time;
+
     // 进度
     for (final e in ((remote['progress'] as Map?) ?? const {}).entries) {
       final r = e.value as List;
@@ -112,8 +141,9 @@ class Sync {
     puts['history2'] = (hist.values.toList()..sort((a, b) => (b['time'] as int).compareTo(a['time'] as int))).take(300).toList();
 
     // 书签
-    final marks = _maps(_box.get('bookmarks'));
+    final marks = _maps(_box.get('bookmarks')).where((l) => !dead(bookmarkKey(l), l['time'] as int)).toList();
     for (final r in _maps(remote['bookmarks'])) {
+      if (dead(bookmarkKey(r), r['time'] as int)) continue;
       final i = marks.indexWhere((l) => l['aid'] == r['aid'] && l['cid'] == r['cid'] && ((l['offset'] as int) - (r['offset'] as int)).abs() <= 40);
       if (i < 0) {
         marks.add(r);
@@ -134,11 +164,17 @@ class Sync {
       if (((_box.get('rating:${e.key}') as int?) ?? 0) == 0 && (e.value as int) > 0) puts['rating:${e.key}'] = e.value;
     }
 
-    // 规则、备注：并集，本机优先
-    final rules = _maps(_box.get('rules'));
-    final ids = {for (final r in rules) r['id']};
+    // 规则：按编号并集，同一条取修改时间较新的；备注：并集，本机优先
+    int ts(Map r) => (r['ts'] as int?) ?? 0;
+    final rules = _maps(_box.get('rules')).where((r) => !dead('r:${r['id']}', ts(r))).toList();
     for (final r in _maps(remote['rules'])) {
-      if (r['id'] != null && !ids.contains(r['id'])) rules.add(r);
+      if (r['id'] == null || dead('r:${r['id']}', ts(r))) continue;
+      final i = rules.indexWhere((l) => l['id'] == r['id']);
+      if (i < 0) {
+        rules.add(r);
+      } else if (ts(r) > ts(rules[i])) {
+        rules[i] = r;
+      }
     }
     puts['rules'] = rules;
     for (final e in ((remote['notes'] as Map?) ?? const {}).entries) {
@@ -158,6 +194,14 @@ class Sync {
   static Iterable<Map<String, dynamic>> otherStats() => [
     for (final k in _keys('sync:stats:')) Map<String, dynamic>.from(jsonDecode(_box.get(k) as String) as Map),
   ];
+
+  /// 导入备份文件（别的设备或本机导出的快照）：规则同同步；返回 false 表示这是本机自己导出的。
+  static Future<bool> importBackup(String json) async {
+    final m = jsonDecode(json) as Map<String, dynamic>;
+    if (m['device'] == deviceId) return false;
+    await merge(m);
+    return true;
+  }
 
   // ---- WebDAV ----
 

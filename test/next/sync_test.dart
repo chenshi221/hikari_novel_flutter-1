@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_ce/hive.dart';
+import 'package:hikari_novel_flutter/next/bookmarks.dart';
+import 'package:hikari_novel_flutter/next/rules.dart';
 import 'package:hikari_novel_flutter/next/stats.dart';
 import 'package:hikari_novel_flutter/next/sync.dart';
 
@@ -76,6 +78,46 @@ void main() {
     await ReadingStats.addSeconds('1', 30);
     expect(box.get('stats:day'), {ReadingStats.dayKey(DateTime.now()): 30, '2026-10-20': 60}.map((k, v) => MapEntry(k, v)));
     expect(Sync.snapshot()['stats']['day'], isNot(contains('160')));
+  });
+
+  test('删除靠墓碑同步：对方删了本机也删，本机删了不会被对方带回来，删除后重新添加的保留', () async {
+    Map<String, Object> mark(int offset, int time) => {'aid': '1', 'book': 'B', 'cid': 'c', 'chapter': 'c', 'offset': offset, 'excerpt': 'e', 'time': time};
+    Map<String, Object> rule(String id, int ts, {String p = 'x'}) => {'p': p, 'r': '', 'e': true, 'k': 1, 'c': 1, 'n': '', 'a': '', 'id': id, 'ts': ts};
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 对方删了：本机的旧书签、旧规则被删
+    await box.put('bookmarks', [mark(100, 10), mark(500, now + 10000)]);
+    await box.put('rules', [rule('a', 5), rule('b', 5)]);
+    await Sync.merge(remote(extra: {
+      'tomb': {'b:1:c:100': now, 'b:1:c:500': now, 'r:a': now},
+    }));
+    expect((box.get('bookmarks') as List).map((e) => e['offset']), [500]); // 删除之后又加的书签留下
+    expect((box.get('rules') as List).map((e) => e['id']), ['b']);
+
+    // 本机删了：对方的旧数据带不回来
+    await Bookmarks.remove(Bookmarks.all().single);
+    await ReplaceRules.save([]);
+    await Sync.merge(remote(extra: {
+      'bookmarks': [mark(500, 20)],
+      'rules': [rule('b', 5)],
+    }));
+    expect(box.get('bookmarks'), isEmpty);
+    expect(box.get('rules'), isEmpty);
+  });
+
+  test('规则改动按修改时间：对方改得新就用对方的', () async {
+    await ReplaceRules.save([const ReplaceRule(pattern: 'old', replacement: '', id: 'r1', kind: RuleKind.highlight)]);
+    final at = (box.get('rules') as List).single['ts'] as int;
+    expect(at, greaterThan(0));
+    await Sync.merge(remote(extra: {
+      'rules': [
+        {'p': 'new', 'r': '', 'e': true, 'k': 1, 'c': 1, 'n': '', 'a': '', 'id': 'r1', 'ts': at + 5},
+      ],
+    }));
+    expect((box.get('rules') as List).single['p'], 'new');
+    // 没改动的规则再保存一次，修改时间不变
+    await ReplaceRules.save(ReplaceRules.all());
+    expect((box.get('rules') as List).single['ts'], at + 5);
   });
 
   test('解析 PROPFIND 返回的文件名', () {

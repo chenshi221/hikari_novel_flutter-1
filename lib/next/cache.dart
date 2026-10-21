@@ -21,6 +21,7 @@ class ChapterCache {
     _text = await Hive.openLazyBox('chapters');
     _index = await Hive.openBox('chapter_index');
     PageStore._box = await Hive.openLazyBox('pages');
+    PageStore._stamp = _index;
     await _migrate();
   }
 
@@ -81,6 +82,13 @@ class ChapterCache {
     await _index.deleteAll(keys);
   }
 
+  /// 所有已缓存章节（含读过自动缓存的）的估算占用，规则同 [sizeLabel]。
+  static String totalLabel() {
+    final chars = _index.keys.whereType<String>().where((k) => !k.startsWith('meta:') && !k.startsWith('pt|') && k != 'migrated').fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));
+    final bytes = chars * 3;
+    return bytes > 1 << 20 ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB' : '${(bytes / 1024).round()} KB';
+  }
+
   /// 估算占用：按每个字符 3 字节（UTF-8 中文）算，不含插图。
   static String sizeLabel(String aid) {
     final chars = _keys(aid).fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));
@@ -90,23 +98,34 @@ class ChapterCache {
 }
 
 /// 网页原文的离线备份（详情、目录、书架、用户页）：联网并解析成功后才更新，断网时拿来顶替。
-/// 最多保留 [_cap] 页，超出删最旧的；账号私有的页面（书架）键里带用户 ID，退出登录时清掉。
+/// 最多保留 [_cap] 页，超出删写入最早的（写入时间记在 chapter_index 里，Hive 自己的顺序是按键排的，不能拿来判断新旧）；
+/// 账号私有的页面（书架）键里带用户 ID，退出登录时清掉。
 class PageStore {
   PageStore._();
 
   static late LazyBox _box;
+  static late Box _stamp;
   static const _cap = 400;
+
+  static int _time(String key) => (_stamp.get('pt|$key') as int?) ?? 0;
 
   static Future<String?> get(String key) async => await _box.get(key) as String?;
 
   static Future<void> put(String key, String html) async {
     await _box.put(key, html);
+    await _stamp.put('pt|$key', DateTime.now().millisecondsSinceEpoch);
     while (_box.length > _cap) {
-      await _box.deleteAt(0);
+      final oldest = _box.keys.whereType<String>().reduce((a, b) => _time(a) <= _time(b) ? a : b);
+      await _box.delete(oldest);
+      await _stamp.delete('pt|$oldest');
     }
   }
 
-  static Future<void> removeScope(String scope) => _box.deleteAll(_box.keys.where((k) => k is String && k.startsWith('$scope|')).toList());
+  static Future<void> removeScope(String scope) async {
+    final keys = _box.keys.where((k) => k is String && k.startsWith('$scope|')).toList();
+    await _box.deleteAll(keys);
+    await _stamp.deleteAll([for (final k in keys) 'pt|$k']);
+  }
 }
 
 class DownloadState {

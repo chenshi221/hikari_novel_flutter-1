@@ -33,6 +33,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_checkUpdates);
+    Sync.auto();
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
   }
 
@@ -48,6 +49,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     // 进后台时把 cookie jar 里服务端续期过的 cookie 写回本地
     if (state == AppLifecycleState.paused) {
       ref.read(sessionProvider.notifier).persistCookies();
+      Sync.auto();
+    } else if (state == AppLifecycleState.resumed) {
       Sync.auto();
     }
   }

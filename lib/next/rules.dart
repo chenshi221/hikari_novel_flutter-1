@@ -1,5 +1,7 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'sync.dart';
+
 /// 替换：改写文字；高亮：底色 + 可写备注；变色：只改字的颜色（比如给不同人物分色），不带备注。
 enum RuleKind { replace, highlight, color }
 
@@ -85,9 +87,24 @@ class ReplaceRules {
     return out;
   }
 
-  static Future<void> save(List<ReplaceRule> rules) => _box.put('rules', [
-    for (final (i, r) in rules.indexed) {'p': r.pattern, 'r': r.replacement, 'e': r.enabled, 'k': r.kind.index, 'c': r.color, 'n': r.name, 'a': r.aid, 'id': r.id.isEmpty ? 'r${DateTime.now().microsecondsSinceEpoch}$i' : r.id},
-  ]);
+  /// 保存时顺带给改过的规则打上修改时间，删掉的规则记墓碑，同步靠它们决定谁新谁旧。
+  static Future<void> save(List<ReplaceRule> rules) async {
+    final old = {
+      for (final e in ((_box.get('rules') as List?) ?? const []).cast<Map>())
+        if (e['id'] != null) e['id'] as String: e,
+    };
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final out = <Map<String, Object>>[];
+    for (final (i, r) in rules.indexed) {
+      final id = r.id.isEmpty ? 'r${DateTime.now().microsecondsSinceEpoch}$i' : r.id;
+      final o = old[id];
+      final same = o != null && o['p'] == r.pattern && o['r'] == r.replacement && o['e'] == r.enabled && o['k'] == r.kind.index && o['c'] == r.color && o['n'] == r.name && o['a'] == r.aid;
+      out.add({'p': r.pattern, 'r': r.replacement, 'e': r.enabled, 'k': r.kind.index, 'c': r.color, 'n': r.name, 'a': r.aid, 'id': id, 'ts': same ? (o['ts'] as int?) ?? 0 : now});
+    }
+    final kept = {for (final e in out) e['id']};
+    await Sync.tombstone([for (final id in old.keys) if (!kept.contains(id)) 'r:$id']);
+    await _box.put('rules', out);
+  }
 
   /// 依次套用启用的替换规则；替换串里可用 `$1` 引用分组。无效的规则直接跳过。
   static String apply(String text, [List<ReplaceRule>? rules]) {

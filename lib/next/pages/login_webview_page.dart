@@ -54,6 +54,12 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   int _progress = 0;
   String? _ua;
   bool _proxied = false;
+  final _events = <String>[]; // 最近的页面加载 / 报错记录，复制诊断信息时带上
+
+  void _log(String line) {
+    _events.add('${DateTime.now().toIso8601String().substring(11, 19)} $line');
+    if (_events.length > 12) _events.removeAt(0);
+  }
 
   @override
   void initState() {
@@ -85,15 +91,16 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     super.dispose();
   }
 
-  /// 找到带密码框的表单，确认提交地址和当前页面同域、https，再填值提交。返回 false 表示当前页面没有可用的登录表单（例如还在验证页）。
-  Future<bool> _fillAndSubmit(InAppWebViewController c) async {
+  /// 找到带密码框的表单，确认提交地址和当前页面同域、https，再填值提交。返回 null 表示已提交，否则是没填的原因（例如还在验证页）。
+  Future<String?> _fillAndSubmit(InAppWebViewController c) async {
     final js = '''
 (() => {
   const pass = document.querySelector('input[name=password]');
   const form = pass && pass.form;
-  if (!form) return false;
+  if (!form) return '页面上没有登录表单';
   const action = new URL(form.getAttribute('action') || location.href, location.href);
-  if (action.host !== location.host || action.protocol !== 'https:') return false;
+  if (action.host !== location.host) return '表单提交到其他域名：' + action.host;
+  if (action.protocol !== 'https:') return '表单不是 https 提交';
   form.querySelector('input[name=username]').value = ${_js(widget.username!)};
   pass.value = ${_js(widget.password!)};
   const keep = form.querySelector('[name=usecookie]');
@@ -107,10 +114,11 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     }
   }
   form.submit();
-  return true;
+  return 'ok';
 })()
 ''';
-    return (await c.evaluateJavascript(source: js)) == true;
+    final r = await c.evaluateJavascript(source: js);
+    return r == 'ok' ? null : '$r';
   }
 
   static String _js(String s) => "'${s.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll('\n', r'\n').replaceAll('\r', '')}'";
@@ -128,14 +136,24 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   }
 
   Future<void> _check(InAppWebViewController c, WebUri? uri) async {
-    if (_done || uri == null || !uri.host.endsWith(_root)) return;
+    if (_done || uri == null) return;
+    _log('加载完成 ${uri.host}${uri.path}');
+    if (!uri.host.endsWith(_root)) {
+      if (mounted) setState(() => _status = '当前在其他域名 ${uri.host}，不会自动填表（登录页是 $_host）');
+      return;
+    }
     _ua ??= (await c.evaluateJavascript(source: 'navigator.userAgent')) as String?;
     final names = (await _cookieManager.getCookies(url: uri)).map((e) => e.name).toSet();
     if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：${names.any((n) => n.startsWith('jieqiUserInfo')) ? '有' : '无'}  已填表：${_submitted ? '是' : '否'}');
     if (widget.isLogin) {
       if (names.any((n) => n.startsWith('jieqiUserInfo'))) return _finish(c, uri);
-      if (!_submitted) _submitted = await _fillAndSubmit(c);
-      if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：无  已填表：${_submitted ? '是' : '否'}');
+      String? why;
+      if (!_submitted) {
+        why = await _fillAndSubmit(c);
+        _submitted = why == null;
+        if (why != null) _log('没填表：$why');
+      }
+      if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：无  已填表：${_submitted ? '是' : '否${why == null ? '' : '（$why）'}'}');
     } else if (names.contains('cf_clearance')) {
       await _finish(c, uri);
     }
@@ -148,7 +166,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
     final url = await c.getUrl();
     final names = url == null ? <String>[] : (await _cookieManager.getCookies(url: url)).map((e) => e.name).toList();
     final forms = await c.evaluateJavascript(source: "JSON.stringify([...document.forms].map(f => ({action: f.getAttribute('action'), fields: [...f.elements].map(e => e.name + ':' + e.type)})))");
-    final info = '地址：$url\ncookie 名：${names.join(',')}\nUA：$_ua\n表单：$forms\n状态：$_status';
+    final info = '地址：$url\ncookie 名：${names.join(',')}\nUA：$_ua\n表单：$forms\n状态：$_status\n最近记录：\n${_events.join('\n')}';
     await Clipboard.setData(ClipboardData(text: info));
     if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制诊断信息')));
   }
@@ -185,6 +203,8 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
               onWebViewCreated: (c) => _controller = c,
               onProgressChanged: (_, p) => setState(() => _progress = p),
               onLoadStop: _check,
+              onReceivedError: (_, req, err) => _log('出错 ${req.url.host}${req.url.path}：${err.description}'),
+              onReceivedHttpError: (_, req, res) => _log('HTTP ${res.statusCode} ${req.url.host}${req.url.path}'),
             ),
     );
   }

@@ -87,7 +87,25 @@ class Api {
 
   Future<PageResult> completed(int page) async => _list(await _client.getPage(_urls.completedNovels(page)));
 
+  DateTime _lastSearch = DateTime(0);
+
+  /// 网站限制搜索间隔 5 秒：连续搜索先等够；因为太频繁、超时、网络抖动失败的，等一下自动重试一次。
+  /// "没搜到结果"（[lastFailedHtml] 有值）不重试。
   Future<PageResult> search(String keyword, {required bool byAuthor, required int page}) async {
+    for (var attempt = 0;; attempt++) {
+      final wait = const Duration(seconds: 5, milliseconds: 200) - DateTime.now().difference(_lastSearch);
+      if (wait > Duration.zero) await Future<void>.delayed(wait);
+      _lastSearch = DateTime.now();
+      lastFailedHtml = null;
+      try {
+        return await _search(keyword, byAuthor: byAuthor, page: page);
+      } catch (_) {
+        if (attempt > 0 || lastFailedHtml != null) rethrow;
+      }
+    }
+  }
+
+  Future<PageResult> _search(String keyword, {required bool byAuthor, required int page}) async {
     final html = await _client.getPage(byAuthor ? _urls.searchByAuthor(keyword, page) : _urls.searchByTitle(keyword, page));
     final doc = parse(html);
     lastFailedHtml = null;

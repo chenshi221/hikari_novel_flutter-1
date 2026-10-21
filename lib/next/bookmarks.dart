@@ -1,5 +1,7 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'sync.dart';
+
 class Bookmark {
   const Bookmark({required this.aid, required this.book, required this.cid, required this.chapter, required this.offset, required this.excerpt, required this.time});
 
@@ -41,6 +43,7 @@ class Bookmarks {
   static Future<bool> toggle(String aid, String book, String cid, String chapter, int offset, String excerpt) async {
     final list = all();
     if (list.any((b) => _near(b, aid, cid, offset))) {
+      await Sync.tombstone(list.where((b) => _near(b, aid, cid, offset)).map(_key));
       await _save(list.where((b) => !_near(b, aid, cid, offset)).toList());
       return false;
     }
@@ -48,5 +51,10 @@ class Bookmarks {
     return true;
   }
 
-  static Future<void> remove(Bookmark b) async => _save(all().where((e) => !(e.aid == b.aid && e.cid == b.cid && e.offset == b.offset)).toList());
+  static String _key(Bookmark b) => 'b:${b.aid}:${b.cid}:${b.offset}';
+
+  static Future<void> remove(Bookmark b) async {
+    await Sync.tombstone([_key(b)]);
+    await _save(all().where((e) => !(e.aid == b.aid && e.cid == b.cid && e.offset == b.offset)).toList());
+  }
 }
