@@ -38,6 +38,15 @@ TextStyle readerStyle(ReaderPrefs prefs, Color color, {String? family, List<Stri
   leadingDistribution: TextLeadingDistribution.proportional,
 );
 
+/// 键盘（和其他外部操作）驱动翻页 / 滚动：正文组件把自己的动作挂到这里。
+class ReaderNav {
+  VoidCallback? next;
+  VoidCallback? prev;
+
+  /// 滚动模式：按像素滚动；翻页模式不用
+  void Function(double)? scrollBy;
+}
+
 /// 取出 [from, to) 这一段正文，高亮的地方染色（有备注的加虚线下划线），[hl] 是朗读正在读的那一句。颜色、底色和下划线不改变字形宽度，不影响分页。
 InlineSpan buildSpan(Chapter c, int from, int to, TextStyle base, Set<String> noted, [(int, int)? hl, Color? hlColor]) {
   final cuts = <int>{from, to};
@@ -149,6 +158,7 @@ class ScrollBody extends StatefulWidget {
     required this.onTapZone,
     required this.onMark,
     this.follow,
+    this.nav,
     required this.hasSelection,
   });
 
@@ -170,6 +180,7 @@ class ScrollBody extends StatefulWidget {
 
   /// 朗读正在读的位置（字符偏移）：不在当前屏幕内时自动翻页 / 滚动过去
   final int? follow;
+  final ReaderNav? nav;
   final bool Function() hasSelection;
 
   @override
@@ -184,6 +195,10 @@ class _ScrollBodyState extends State<ScrollBody> {
   @override
   void initState() {
     super.initState();
+    widget.nav
+      ?..next = (() => _page(1))
+      ..prev = (() => _page(-1))
+      ..scrollBy = _nudge;
     WidgetsBinding.instance.addPostFrameCallback((_) => _restore());
   }
 
@@ -205,6 +220,20 @@ class _ScrollBodyState extends State<ScrollBody> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void _nudge(double dy) {
+    if (!_controller.hasClients) return;
+    final p = _controller.position;
+    _controller.animateTo((p.pixels + dy).clamp(0.0, p.maxScrollExtent), duration: const Duration(milliseconds: 160), curve: Curves.easeOut);
+  }
+
+  /// 滚一屏（留一点重叠）；已经到底再往后就去下一章。
+  void _page(int dir) {
+    if (!_controller.hasClients) return;
+    final p = _controller.position;
+    if (dir > 0 && p.pixels >= p.maxScrollExtent - 2) return widget.onNext?.call();
+    _nudge(dir * p.viewportDimension * 0.9);
   }
 
   void _restore() {
@@ -272,6 +301,7 @@ class PagedBody extends StatefulWidget {
     required this.title,
     required this.curl,
     this.cover = false,
+    this.dual = false,
     required this.background,
     required this.color,
     required this.startOffset,
@@ -283,6 +313,7 @@ class PagedBody extends StatefulWidget {
     required this.onTapZone,
     required this.onMark,
     this.follow,
+    this.nav,
     required this.hasSelection,
   });
 
@@ -293,6 +324,9 @@ class PagedBody extends StatefulWidget {
   final String title;
   final bool curl;
   final bool cover;
+
+  /// 宽屏双页：一屏显示左右两页，像摊开的书
+  final bool dual;
   final Color background;
   final Color color;
   final int startOffset;
@@ -306,6 +340,7 @@ class PagedBody extends StatefulWidget {
 
   /// 朗读正在读的位置（字符偏移）：不在当前屏幕内时自动翻页 / 滚动过去
   final int? follow;
+  final ReaderNav? nav;
   final bool Function() hasSelection;
 
   @override
@@ -321,11 +356,15 @@ class _PagedBodyState extends State<PagedBody> {
   int _page = 0;
   int _cur = 0; // 当前读到的字符偏移，重新分页时按它定位
   double _overscroll = 0;
+  int _cols = 1; // 一屏几页（1 或 2）；_page、翻页动画的"页"都以一屏为单位
 
   @override
   void initState() {
     super.initState();
     _cur = widget.startOffset;
+    widget.nav
+      ?..next = (() => _step(1))
+      ..prev = (() => _step(-1));
   }
 
   @override
@@ -354,15 +393,28 @@ class _PagedBodyState extends State<PagedBody> {
 
   int get _textPages => _hasText ? _starts.length : 0;
 
+  /// 单页总数
   int get _total => _textPages + _c.images.length;
 
-  int _offsetOf(int page) => page < _textPages ? _starts[page] : _c.text.length + 1 + (page - _textPages);
+  /// 翻页的单位数（双页时两页算一屏）
+  int get _units => (_total + _cols - 1) ~/ _cols;
 
+  int _offsetOfPage(int page) => page < _textPages ? _starts[page] : _c.text.length + 1 + (page - _textPages);
+
+  int _offsetOf(int unit) => _offsetOfPage(unit * _cols);
+
+  /// 字符偏移所在的那一屏。
   int _pageOf(int offset) {
     if (_total == 0) return 0;
-    if (offset >= kToEnd) return _total - 1;
-    if (offset > _c.text.length) return math.min(_textPages + (offset - _c.text.length - 1), _total - 1);
-    return _hasText ? pageOfOffset(_starts, offset) : 0;
+    final int page;
+    if (offset >= kToEnd) {
+      page = _total - 1;
+    } else if (offset > _c.text.length) {
+      page = math.min(_textPages + (offset - _c.text.length - 1), _total - 1);
+    } else {
+      page = _hasText ? pageOfOffset(_starts, offset) : 0;
+    }
+    return page ~/ _cols;
   }
 
   GlobalKey _keyFor(int page) => _keys.putIfAbsent(page, GlobalKey.new);
@@ -371,10 +423,23 @@ class _PagedBodyState extends State<PagedBody> {
     _page = page;
     _cur = _offsetOf(page);
     widget.onOffset(_cur);
-    if (page >= _total - 1) widget.onEnd();
+    if (page >= _units - 1) widget.onEnd();
   }
 
-  Widget _pageContent(BuildContext context, int i, bool live, EdgeInsets pad) {
+  Widget _pageContent(BuildContext context, int unit, bool live, EdgeInsets pad) {
+    if (_cols == 1) return _single(context, unit, live, pad);
+    final line = widget.color.withValues(alpha: 0.12);
+    return Row(
+      children: [
+        for (var k = 0; k < _cols; k++) ...[
+          Expanded(child: unit * _cols + k < _total ? _single(context, unit * _cols + k, live, pad) : const SizedBox.shrink()),
+          if (k < _cols - 1) VerticalDivider(width: 1, thickness: 1, indent: 24, endIndent: 24, color: line),
+        ],
+      ],
+    );
+  }
+
+  Widget _single(BuildContext context, int i, bool live, EdgeInsets pad) {
     if (i >= _textPages) return Center(child: NetImage(_c.images[i - _textPages], fit: BoxFit.contain));
     final end = i + 1 < _starts.length ? _starts[i + 1] : _c.text.length;
     final faint = TextStyle(fontSize: 11, color: widget.color.withValues(alpha: 0.5));
@@ -389,22 +454,27 @@ class _PagedBodyState extends State<PagedBody> {
   }
 
   void _tap(Offset local, Size size, Offset global) {
-    final m = _page < _textPages ? markAt(_c, _keyFor(_page), _starts[_page], global) : null;
-    if (m != null) return widget.onMark(m);
+    for (var k = 0; k < _cols; k++) {
+      final p = _page * _cols + k;
+      final m = p < _textPages ? markAt(_c, _keyFor(p), _starts[p], global) : null;
+      if (m != null) return widget.onMark(m);
+    }
     final x = local.dx / size.width;
     if (x < 0.3) {
-      widget.curl ? _curl.prev() : _slide(-1);
+      _step(-1);
     } else if (x > 0.7) {
-      widget.curl ? _curl.next() : _slide(1);
+      _step(1);
     } else {
       widget.onTapZone();
     }
   }
 
+  void _step(int delta) => widget.curl ? (delta > 0 ? _curl.next() : _curl.prev()) : _slide(delta);
+
   void _slide(int delta) {
     final target = _page + delta;
     if (target < 0) return widget.onPrev?.call();
-    if (target >= _total) return widget.onNext?.call();
+    if (target >= _units) return widget.onNext?.call();
     _controller?.animateToPage(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
   }
 
@@ -414,12 +484,14 @@ class _PagedBodyState extends State<PagedBody> {
     final pad = EdgeInsets.fromLTRB(widget.margin, view.top + 36, widget.margin, view.bottom + 36);
     return LayoutBuilder(
       builder: (context, box) {
-        final size = Size(box.maxWidth - pad.horizontal, box.maxHeight - pad.vertical);
+        final cols = widget.dual && box.maxWidth >= 900 ? 2 : 1;
+        final size = Size(box.maxWidth / cols - pad.horizontal, box.maxHeight - pad.vertical);
         // 同样的版面（大小、样式、正文）不重复分页；开关菜单栏、拖滑块这类重建不会触发全文排版
-        final sig = Object.hash(size, widget.style, _c.text.length, _c.text.hashCode);
+        final sig = Object.hash(size, cols, widget.style, _c.text.length, _c.text.hashCode);
         if (sig != _sig) {
           final keep = _sig == null ? widget.startOffset : _cur;
           _sig = sig;
+          _cols = cols;
           _starts = _hasText ? paginate(_c.text, widget.style, size) : const [0];
           _controller?.dispose();
           _controller = null;
@@ -433,7 +505,7 @@ class _PagedBodyState extends State<PagedBody> {
             key: ValueKey(sig),
             controller: _curl,
             cover: widget.cover,
-            pageCount: _total,
+            pageCount: _units,
             initialIndex: _page,
             background: widget.background,
             pageBuilder: (context, i, live) => _pageContent(context, i, live, pad),
@@ -458,7 +530,7 @@ class _PagedBodyState extends State<PagedBody> {
               key: ValueKey(sig),
               controller: _controller,
               physics: const PageScrollPhysics(parent: ClampingScrollPhysics()),
-              itemCount: _total,
+              itemCount: _units,
               onPageChanged: _changed,
               itemBuilder: (context, i) => _pageContent(context, i, true, pad),
             ),

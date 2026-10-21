@@ -32,7 +32,7 @@ final paletteProvider = NotifierProvider<PaletteController, int>(PaletteControll
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true});
 
   final double fontSize;
   final double lineHeight;
@@ -64,7 +64,10 @@ class ReaderPrefs {
   /// 读完一章自动读下一章
   final bool ttsAutoNext;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext}) => ReaderPrefs(
+  /// 宽屏（窗口宽度 ≥ 900）时左右翻页模式显示双页
+  final bool dual;
+
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
@@ -76,6 +79,7 @@ class ReaderPrefs {
     ttsVoice: ttsVoice ?? this.ttsVoice,
     ttsHighlight: ttsHighlight ?? this.ttsHighlight,
     ttsAutoNext: ttsAutoNext ?? this.ttsAutoNext,
+    dual: dual ?? this.dual,
   );
 }
 
@@ -93,10 +97,11 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     ttsVoice: (_box.get('r.ttsVoice') as String?) ?? '',
     ttsHighlight: (_box.get('r.ttsHighlight') as bool?) ?? true,
     ttsAutoNext: (_box.get('r.ttsAutoNext') as bool?) ?? true,
+    dual: (_box.get('r.dual') as bool?) ?? true,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual});
     state = next;
   }
 }

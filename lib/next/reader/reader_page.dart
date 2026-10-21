@@ -115,6 +115,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   DateTime? _sleepAt; // 定时关闭
   bool _stopAtChapterEnd = false;
   CatChapter? _nextChapter;
+  final _nav = ReaderNav();
 
   @override
   void initState() {
@@ -194,6 +195,32 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _stopAtChapterEnd = false;
     await _tts.stop();
     if (mounted) setState(() => _speaking = false);
+  }
+
+  /// 键盘：→ ↓ 空格 PageDown 下一页，← ↑ Shift+空格 PageUp 上一页，] [ 下一章 / 上一章，Esc 呼出 / 收起菜单。
+  KeyEventResult _onKey(KeyEvent e, CatChapter? prev, CatChapter? next, int mode) {
+    if (e is KeyUpEvent) return KeyEventResult.ignored;
+    final key = e.logicalKey;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    final scroll = mode == 0;
+    if (key == LogicalKeyboardKey.arrowRight || key == LogicalKeyboardKey.pageDown || (key == LogicalKeyboardKey.space && !shift)) {
+      _nav.next?.call();
+    } else if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.pageUp || (key == LogicalKeyboardKey.space && shift)) {
+      _nav.prev?.call();
+    } else if (key == LogicalKeyboardKey.arrowDown) {
+      scroll ? _nav.scrollBy?.call(80) : _nav.next?.call();
+    } else if (key == LogicalKeyboardKey.arrowUp) {
+      scroll ? _nav.scrollBy?.call(-80) : _nav.prev?.call();
+    } else if (key == LogicalKeyboardKey.bracketRight && next != null) {
+      _go(next.cid);
+    } else if (key == LogicalKeyboardKey.bracketLeft && prev != null) {
+      _go(prev.cid);
+    } else if (key == LogicalKeyboardKey.escape) {
+      _toggleBar();
+    } else {
+      return KeyEventResult.ignored;
+    }
+    return KeyEventResult.handled;
   }
 
   void _toggleBar() {
@@ -384,7 +411,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final style = readerStyle(prefs, palette.fg, family: f.family, fallback: f.fallback);
     final noted = RuleNotes.of(widget.aid).keys.toSet();
 
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (_, e) => _onKey(e, prev, next, prefs.mode),
+      child: Scaffold(
       backgroundColor: palette.bg,
       body: Stack(
         children: [
@@ -428,6 +458,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       onTapZone: _toggleBar,
                       onMark: onMark,
                       follow: reading?.$1,
+                      nav: _nav,
                       hasSelection: () => _hasSelection,
                     )
                   : PagedBody(
@@ -439,6 +470,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       title: title,
                       curl: prefs.mode >= 2,
                       cover: prefs.mode == 3,
+                      dual: prefs.dual,
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
@@ -450,6 +482,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       onTapZone: _toggleBar,
                       onMark: onMark,
                       follow: reading?.$1,
+                      nav: _nav,
                       hasSelection: () => _hasSelection,
                     );
             },
@@ -531,6 +564,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
             ),
           ],
         ],
+      ),
       ),
     );
   }
@@ -774,6 +808,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                     selected: {prefs.mode},
                     onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
                   ),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('宽屏双页'), subtitle: const Text('窗口宽度 ≥ 900 时，左右翻页模式一屏显示两页'), value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
                 ],
               ),
             ),
