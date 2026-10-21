@@ -60,7 +60,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           section('阅读'),
           SegmentedButton<int>(
-            segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真'))],
+            segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真')), ButtonSegment(value: 3, label: Text('覆盖'))],
             selected: {prefs.mode},
             onSelectionChanged: (s) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(mode: s.first)),
           ),

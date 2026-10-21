@@ -11,6 +11,9 @@ import 'package:path_provider/path_provider.dart';
 import '../env.dart';
 import '../router.dart';
 import '../session.dart';
+import '../settings.dart';
+import '../theme.dart';
+import '../theme_art.dart';
 
 /// 自己选的头像：只保存在本机（wenku8 的头像要在网站上改，这里不改网站上的）。
 class _AvatarController extends Notifier<String?> {
@@ -89,6 +92,7 @@ class ProfilePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(sessionProvider);
     final custom = ref.watch(avatarProvider);
+    final palette = appPalettes[ref.watch(paletteProvider)];
     final theme = Theme.of(context);
     final user = session is SessionLoggedIn ? session.user : null;
 
@@ -111,15 +115,39 @@ class ProfilePage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          Card(
-            child: ListTile(
-              contentPadding: const EdgeInsets.all(20),
-              leading: isWebPreview || user == null ? avatar : GestureDetector(onTap: () => _avatarMenu(context, ref), child: avatar),
-              title: Text(name, style: theme.textTheme.headlineSmall),
-              subtitle: Text(user == null ? '点击登录' : (session is SessionLoggedIn && session.offline ? 'UID ${user.uid} · 离线' : 'UID ${user.uid}')),
-              onTap: user == null ? () => context.push(Routes.login) : null,
+          if (palette.art != null)
+            ThemeBanner(
+              palette: palette,
+              child: Row(
+                children: [
+                  isWebPreview || user == null ? avatar : GestureDetector(onTap: () => _avatarMenu(context, ref), child: avatar),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: InkWell(
+                      onTap: user == null ? () => context.push(Routes.login) : null,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleLarge),
+                          Text(user == null ? '点击登录' : (session is SessionLoggedIn && session.offline ? 'UID ${user.uid} · 离线' : 'UID ${user.uid}'), style: theme.textTheme.bodySmall),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            Card(
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(20),
+                leading: isWebPreview || user == null ? avatar : GestureDetector(onTap: () => _avatarMenu(context, ref), child: avatar),
+                title: Text(name, style: theme.textTheme.headlineSmall),
+                subtitle: Text(user == null ? '点击登录' : (session is SessionLoggedIn && session.offline ? 'UID ${user.uid} · 离线' : 'UID ${user.uid}')),
+                onTap: user == null ? () => context.push(Routes.login) : null,
+              ),
             ),
-          ),
           const SizedBox(height: 16),
           entry(Icons.bar_chart_outlined, '阅读统计', Routes.stats),
           entry(Icons.history, '阅读历史', Routes.history),

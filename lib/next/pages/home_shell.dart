@@ -6,6 +6,9 @@ import 'package:go_router/go_router.dart';
 
 import '../router.dart';
 import '../session.dart';
+import '../settings.dart';
+import '../theme.dart';
+import '../theme_art.dart';
 import '../updates.dart';
 
 /// 主界面框架：窄屏底部导航，宽屏（平板、电脑、网页）左侧导航。
@@ -63,7 +66,13 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     final needsVerify = (session is SessionLoggedIn && session.needsVerify) || (session is SessionLoggedOut && session.needsVerify);
     final offline = (session is SessionLoggedIn && session.offline) || needsVerify;
     final unread = UpdateStore.unread();
-    Widget icon(IconData data, String label) => label == '更新' && unread > 0 ? Badge(label: Text('$unread'), child: Icon(data)) : Icon(data);
+    final palette = appPalettes[ref.watch(paletteProvider)];
+    Widget icon(int i, bool selected) {
+      final (outlined, filled, label) = _items[i];
+      final art = ThemeArt.navIcon(palette, i, selected: selected) ?? Icon(selected ? filled : outlined);
+      return label == '更新' && unread > 0 ? Badge(label: Text('$unread'), child: art) : art;
+    }
+
     final body = Column(
       children: [
         if (offline)
@@ -89,7 +98,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
               backgroundColor: Theme.of(context).colorScheme.surface,
               indicatorColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.14),
               destinations: [
-                for (final (i, selected, label) in _items) NavigationRailDestination(icon: icon(i, label), selectedIcon: icon(selected, label), label: Text(label)),
+                for (final (i, item) in _items.indexed) NavigationRailDestination(icon: icon(i, false), selectedIcon: icon(i, true), label: Text(item.$3)),
               ],
             ),
             const VerticalDivider(width: 1),
@@ -107,7 +116,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
           NavigationBar(
             selectedIndex: shell.currentIndex,
             onDestinationSelected: _go,
-            destinations: [for (final (i, selected, label) in _items) NavigationDestination(icon: icon(i, label), selectedIcon: icon(selected, label), label: label)],
+            destinations: [for (final (i, item) in _items.indexed) NavigationDestination(icon: icon(i, false), selectedIcon: icon(i, true), label: item.$3)],
           ),
         ],
       ),

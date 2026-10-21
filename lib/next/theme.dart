@@ -27,9 +27,15 @@ const List<String> kSerifFallback = ['Noto Serif SC', 'Source Han Serif SC', 'So
 
 /// 配色方案：强调色 + 浅色 / 深色各一套底色，整个界面（背景、卡片、边框、导航）都跟着换。
 class AppPalette {
-  const AppPalette(this.name, this.accentLight, this.accentDark, {required this.bgLight, required this.cardLight, required this.lineLight, required this.bgDark, required this.cardDark, required this.lineDark});
+  const AppPalette(this.name, this.accentLight, this.accentDark, {required this.bgLight, required this.cardLight, required this.lineLight, required this.bgDark, required this.cardDark, required this.lineDark, this.art, this.secondary});
 
   final String name;
+
+  /// 角色主题的图片前缀（assets/theme/`art`_full.png、`art`_0..3.png）；普通配色为 null
+  final String? art;
+
+  /// 角色主题的第二强调色（装饰、渐变用）
+  final Color? secondary;
   final Color accentLight, accentDark;
   final Color bgLight, cardLight, lineLight;
   final Color bgDark, cardDark, lineDark;
@@ -46,6 +52,9 @@ const appPalettes = [
   AppPalette('森绿', Color(0xFF4A7C59), Color(0xFF8DBB9A), bgLight: Color(0xFFF4F7F2), cardLight: Color(0xFFE4ECDF), lineLight: Color(0xFFD1DDCB), bgDark: Color(0xFF171D18), cardDark: Color(0xFF232B25), lineDark: Color(0xFF34402F)),
   AppPalette('玫瑰', Color(0xFFB04A6B), Color(0xFFE08CA5), bgLight: Color(0xFFFBF5F6), cardLight: Color(0xFFF3E3E7), lineLight: Color(0xFFE8D0D6), bgDark: Color(0xFF211A1D), cardDark: Color(0xFF30262A), lineDark: Color(0xFF463539)),
   AppPalette('琥珀', Color(0xFFB07A1E), Color(0xFFE2B45E), bgLight: Color(0xFFFAF6EC), cardLight: Color(0xFFF1E8D2), lineLight: Color(0xFFE3D6B5), bgDark: Color(0xFF1F1B12), cardDark: Color(0xFF2D271A), lineDark: Color(0xFF43392A)),
+  AppPalette('杏菜·汽水', Color(0xFFE0266E), Color(0xFFFF6FA3), bgLight: Color(0xFFF2F9FE), cardLight: Color(0xFFDDEFFA), lineLight: Color(0xFFC5E0F2), bgDark: Color(0xFF121A33), cardDark: Color(0xFF1C2848), lineDark: Color(0xFF2D3C66), art: 'anna', secondary: Color(0xFFF4935E)),
+  AppPalette('知花·草莓牛奶', Color(0xFFB04560), Color(0xFFE88FA6), bgLight: Color(0xFFFDF1F3), cardLight: Color(0xFFF8DCE2), lineLight: Color(0xFFEFC6CF), bgDark: Color(0xFF241619), cardDark: Color(0xFF33212A), lineDark: Color(0xFF4A3038), art: 'chika', secondary: Color(0xFF29A9E0)),
+  AppPalette('天爱星·薄荷会长', Color(0xFF3E8FBF), Color(0xFF8CC4E6), bgLight: Color(0xFFF1F8F2), cardLight: Color(0xFFDDEBDF), lineLight: Color(0xFFC8DDCB), bgDark: Color(0xFF141C26), cardDark: Color(0xFF1F2A38), lineDark: Color(0xFF31405A), art: 'amane', secondary: Color(0xFFEE6C9A)),
   AppPalette('石墨', Color(0xFF4B4A47), Color(0xFFC2C0B6), bgLight: Color(0xFFF3F3F2), cardLight: Color(0xFFE6E6E4), lineLight: Color(0xFFD5D5D2), bgDark: Color(0xFF121212), cardDark: Color(0xFF1E1E1E), lineDark: Color(0xFF333333)),
 ];
 
@@ -59,7 +68,7 @@ ThemeData buildAppTheme(Brightness brightness, [AppPalette palette = const AppPa
     brightness: brightness,
     primary: palette.accent(dark),
     onPrimary: dark && palette.name == '石墨' ? Colors.black : Colors.white,
-    secondary: dark ? AppColors.paperSoft : AppColors.inkSoft,
+    secondary: palette.secondary ?? (dark ? AppColors.paperSoft : AppColors.inkSoft),
     onSecondary: dark ? AppColors.night : AppColors.cream,
     error: const Color(0xFFB3261E),
     onError: Colors.white,
