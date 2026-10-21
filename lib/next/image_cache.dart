@@ -66,6 +66,10 @@ class ImageStore {
     _mem.clear();
   }
 
+  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%。
+  /// shortcut: 离线缓存的插图也可能被清掉，联网时会重新下载；以后要区分就给离线插图单独目录
+  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes);
+
   Future<int> diskBytes() async {
     final dir = await _cacheDir();
     var n = 0;
@@ -73,6 +77,25 @@ class ImageStore {
       if (f is File) n += await f.length();
     }
     return n;
+  }
+}
+
+/// 目录总大小超过 [maxBytes] 时，按修改时间从旧到新删文件，直到不超过 [maxBytes] 的 80%。
+Future<void> trimDir(Directory dir, int maxBytes) async {
+  final files = <(File, FileStat)>[];
+  var total = 0;
+  await for (final f in dir.list()) {
+    if (f is! File) continue;
+    final st = await f.stat();
+    files.add((f, st));
+    total += st.size;
+  }
+  if (total <= maxBytes) return;
+  files.sort((a, b) => a.$2.modified.compareTo(b.$2.modified));
+  for (final (f, st) in files) {
+    if (total <= maxBytes * 0.8) break;
+    await f.delete();
+    total -= st.size;
   }
 }
 

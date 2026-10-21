@@ -120,9 +120,13 @@ class NetImage extends ConsumerWidget {
     if (isWebPreview) return Image.network(displayImageUrl(url), fit: fit, errorBuilder: (_, _, _) => fallback);
     return ref
         .watch(imageBytesProvider(url))
-        .when(data: (b) => Image.memory(b, fit: fit, errorBuilder: (_, _, _) => fallback), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+        .when(data: (b) => Image.memory(b, fit: fit, frameBuilder: _fadeIn, errorBuilder: (_, _, _) => fallback), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
   }
 }
+
+// 已同步解码出来的（内存缓存命中）直接显示，否则 150ms 淡入
+Widget _fadeIn(BuildContext context, Widget child, int? frame, bool sync) =>
+    sync ? child : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 150), child: child);
 
 class CoverImage extends StatelessWidget {
   const CoverImage(this.url, {super.key});
@@ -177,7 +181,7 @@ class NovelCard extends StatelessWidget {
 
 int gridColumns(double width) => (width / 132).floor().clamp(3, 8);
 
-SliverGridDelegate _gridDelegate(double width) =>
+SliverGridDelegate novelGridDelegate(double width) =>
     SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(width), mainAxisSpacing: 20, crossAxisSpacing: 14, childAspectRatio: 0.52);
 
 /// 分页的书籍网格：下拉刷新，滑到底自动加载下一页。[fetch] 变化（用 [Key] 区分）时整体重新加载。
@@ -210,7 +214,7 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
     if (_loading || (!reset && _page >= _maxPage)) return;
     setState(() {
       _loading = true;
-      if (reset) _error = null;
+      _error = null;
     });
     try {
       final next = reset ? 1 : _page + 1;
@@ -233,27 +237,73 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
   @override
   Widget build(BuildContext context) {
     if (_items.isEmpty) {
-      if (_loading) return const Center(child: CircularProgressIndicator());
+      if (_loading) return LayoutBuilder(builder: (context, c) => _GridSkeleton(width: c.maxWidth));
       return RefreshIndicator(
         onRefresh: () => _load(reset: true),
         child: _error != null ? StatePanel(title: '加载失败', detail: _error.toString(), error: _error, sourceHtml: widget.sourceHtml?.call(), onRetry: () => _load(reset: true)) : const StatePanel(title: '没有内容'),
       );
     }
+    final theme = Theme.of(context);
+    final hint = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    // 下一页失败后不再自动加载，只能点重试或下拉刷新，避免狂发请求触发 429
+    Widget footer() {
+      if (_error != null) return TextButton(onPressed: _load, child: const Text('加载失败，点击重试'));
+      if (_loading) return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)));
+      if (_page >= _maxPage) return Center(child: Text('没有更多了', style: hint));
+      return const SizedBox.shrink();
+    }
+
     return RefreshIndicator(
       onRefresh: () => _load(reset: true),
       child: NotificationListener<ScrollNotification>(
         onNotification: (n) {
-          if (n.metrics.extentAfter < 600) _load();
+          if (_error == null && n.metrics.extentAfter < 600) _load();
           return false;
         },
         child: LayoutBuilder(
-          builder: (context, c) => GridView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            gridDelegate: _gridDelegate(c.maxWidth),
-            itemCount: _items.length,
-            itemBuilder: (context, i) => NovelCard(title: _items[i].title, aid: _items[i].aid, imageUrl: _items[i].imageUrl),
+          builder: (context, c) => CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                sliver: SliverGrid.builder(
+                  gridDelegate: novelGridDelegate(c.maxWidth),
+                  itemCount: _items.length,
+                  itemBuilder: (context, i) => NovelCard(title: _items[i].title, aid: _items[i].aid, imageUrl: _items[i].imageUrl),
+                ),
+              ),
+              SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: footer())),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 首次加载的骨架：12 个封面色块 + 两行灰条。
+class _GridSkeleton extends StatelessWidget {
+  const _GridSkeleton({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.surfaceContainer;
+    Widget bar(double w) => Container(height: 12, width: w, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)));
+    return GridView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      gridDelegate: novelGridDelegate(width),
+      itemCount: 12,
+      itemBuilder: (context, i) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: DecoratedBox(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)), child: const SizedBox.expand())),
+          const SizedBox(height: 8),
+          bar(double.infinity),
+          const SizedBox(height: 6),
+          bar(48),
+        ],
       ),
     );
   }
