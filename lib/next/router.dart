@@ -9,9 +9,11 @@ import 'pages/comments_page.dart';
 import 'pages/discover_page.dart';
 import 'pages/home_shell.dart';
 import 'pages/library_pages.dart';
+import 'pages/login_webview_page.dart';
 import 'pages/login_page.dart';
 import 'pages/novel_page.dart';
 import 'pages/profile_page.dart';
+import 'pages/report_page.dart';
 import 'pages/rules_page.dart';
 import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
@@ -26,11 +28,13 @@ class Routes {
 
   static const splash = '/splash';
   static const login = '/login';
+  static const verify = '/verify';
   static const discover = '/discover';
   static const bookshelf = '/bookshelf';
   static const updates = '/updates';
   static const stats = '/stats';
   static const bookmarks = '/bookmarks';
+  static String report(String aid) => '/report/$aid';
   static const rules = '/rules';
   static const profile = '/profile';
   static const search = '/search';
@@ -64,8 +68,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: Routes.splash, builder: (_, _) => const SplashPage()),
       GoRoute(path: Routes.login, builder: (_, _) => const LoginPage()),
+      GoRoute(path: Routes.verify, builder: (_, _) => const VerifyPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
       GoRoute(path: Routes.bookmarks, builder: (_, _) => const BookmarksPage()),
+      GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: '/cache/:aid', builder: (_, state) => CacheBookPage(aid: state.pathParameters['aid']!)),
@@ -75,7 +81,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/novel/:aid', builder: (_, state) => NovelPageView(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments', builder: (_, state) => CommentsPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments/:rid', builder: (_, state) => RepliesPage(aid: state.pathParameters['aid']!, rid: state.pathParameters['rid']!)),
-      GoRoute(path: '/reader/:aid/:cid', builder: (_, state) => ReaderPage(aid: state.pathParameters['aid']!, cid: state.pathParameters['cid']!)),
+      GoRoute(path: '/reader/:aid/:cid', builder: (_, state) => ReaderPage(aid: state.pathParameters['aid']!, cid: state.pathParameters['cid']!, offset: state.extra as int?)),
       StatefulShellRoute.indexedStack(
         builder: (_, _, shell) => HomeShell(shell: shell),
         branches: [

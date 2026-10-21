@@ -18,8 +18,26 @@ class ReadingStats {
 
   static int get chapters => (_box.get('stats:chapters') as int?) ?? 0;
 
+  /// 读过这本书的日期（`yyyy-MM-dd`，去重）
+  static List<String> bookDays(String aid) => (((_box.get('stats:days:$aid') as List?) ?? const []).cast<String>().toList())..sort();
+
+  /// 书的信息（标题、作者、封面），统计页和阅读报告用。
+  static ({String title, String author, String img})? meta(String aid) {
+    final m = (_box.get('stats:meta') as Map?)?[aid];
+    return m is Map ? (title: m['t'] as String, author: (m['a'] as String?) ?? '', img: (m['i'] as String?) ?? '') : null;
+  }
+
+  static Future<void> setMeta(String aid, String title, String author, String img) async {
+    final all = Map.of((_box.get('stats:meta') as Map?) ?? const {});
+    all[aid] = {'t': title, 'a': author, 'i': img};
+    await _box.put('stats:meta', all);
+  }
+
   static Future<void> addSeconds(String aid, int seconds) async {
     if (seconds <= 0) return;
+    final today = dayKey(DateTime.now());
+    final days = bookDays(aid);
+    if (!days.contains(today)) await _box.put('stats:days:$aid', [...days, today]);
     final day = perDay();
     final book = perBook();
     final k = dayKey(DateTime.now());

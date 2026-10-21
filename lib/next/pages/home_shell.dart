@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../router.dart';
 import '../session.dart';
 import '../updates.dart';
 
@@ -17,7 +18,7 @@ class HomeShell extends ConsumerStatefulWidget {
   ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends ConsumerState<HomeShell> {
+class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserver {
   Timer? _timer;
 
   StatefulNavigationShell get shell => widget.shell;
@@ -26,14 +27,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void initState() {
     super.initState();
     // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
+    WidgetsBinding.instance.addObserver(this);
     Future.microtask(_checkUpdates);
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 进后台时把 cookie jar 里服务端续期过的 cookie 写回本地
+    if (state == AppLifecycleState.paused) ref.read(sessionProvider.notifier).persistCookies();
   }
 
   void _checkUpdates() {
@@ -51,7 +60,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     });
     ref.watch(updateProvider);
     final session = ref.watch(sessionProvider);
-    final offline = session is SessionLoggedIn && session.offline;
+    final needsVerify = (session is SessionLoggedIn && session.needsVerify) || (session is SessionLoggedOut && session.needsVerify);
+    final offline = (session is SessionLoggedIn && session.offline) || needsVerify;
     final unread = UpdateStore.unread();
     Widget icon(IconData data, String label) => label == '更新' && unread > 0 ? Badge(label: Text('$unread'), child: Icon(data)) : Icon(data);
     final body = Column(
@@ -60,8 +70,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           Material(
             color: Theme.of(context).colorScheme.surfaceContainer,
             child: InkWell(
-              onTap: () => ref.read(sessionProvider.notifier).restore(),
-              child: const Padding(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Row(children: [Icon(Icons.cloud_off_outlined, size: 16), SizedBox(width: 8), Expanded(child: Text('离线模式，显示的是已保存的内容，点这里重新连接', style: TextStyle(fontSize: 12)))])),
+              onTap: () => needsVerify ? context.push(Routes.verify) : ref.read(sessionProvider.notifier).restore(),
+              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Row(children: [const Icon(Icons.cloud_off_outlined, size: 16), const SizedBox(width: 8), Expanded(child: Text(needsVerify ? '被网站的验证拦住了，点这里去验证' : '离线模式，显示的是已保存的内容，点这里重新连接', style: const TextStyle(fontSize: 12)))])),
             ),
           ),
         Expanded(child: shell),

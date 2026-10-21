@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../bookmarks.dart';
-import '../progress.dart';
 import '../router.dart';
 import '../widgets.dart';
 import 'updates_page.dart';
@@ -43,10 +42,8 @@ class _BookmarksPageState extends State<BookmarksPage> {
                       child: ListTile(
                         title: Text(b.excerpt.isEmpty ? b.chapter : b.excerpt, maxLines: 2, overflow: TextOverflow.ellipsis),
                         subtitle: Text('${b.chapter} · ${dayLabel(b.time)} ${hhmm(b.time)}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () async {
-                          await ReadingProgress.save(b.aid, b.cid, b.offset);
-                          if (context.mounted) context.push(Routes.reader(b.aid, b.cid));
-                        },
+                        // 位置随路由传过去，不覆盖真正的阅读进度
+                        onTap: () => context.push(Routes.reader(b.aid, b.cid), extra: b.offset),
                       ),
                     ),
                 ],

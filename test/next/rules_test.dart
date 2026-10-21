@@ -16,4 +16,19 @@ void main() {
     expect(ReplaceRule.validate('('), isNotNull);
     expect(ReplaceRule.validate('a+'), isNull);
   });
+
+  test('高亮规则：先写的优先，重叠的让位，结果按位置排序', () {
+    final rules = [
+      const ReplaceRule(pattern: '林云', replacement: '', kind: RuleKind.highlight, id: 'a'),
+      const ReplaceRule(pattern: '云海|林', replacement: '', kind: RuleKind.highlight, id: 'b'),
+      const ReplaceRule(pattern: '广告', replacement: '', id: 'c'),
+    ];
+    final marks = ReplaceRules.marks('林云看见云海，广告', rules);
+    expect([for (final m in marks) (m.start, m.end, m.rule.id)], [(0, 2, 'a'), (4, 6, 'b')]);
+  });
+
+  test('高亮规则不参与文字替换', () {
+    final rules = [const ReplaceRule(pattern: '林云', replacement: 'X', kind: RuleKind.highlight, id: 'a')];
+    expect(ReplaceRules.apply('林云', rules), '林云');
+  });
 }

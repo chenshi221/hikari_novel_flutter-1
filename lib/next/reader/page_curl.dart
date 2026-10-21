@@ -1,0 +1,389 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+
+/// 外部（点击翻页、朗读等）驱动翻页用。
+class PageCurlController {
+  VoidCallback? _next;
+  VoidCallback? _prev;
+
+  void next() => _next?.call();
+
+  void prev() => _prev?.call();
+}
+
+/// 仿真翻页：手指拖住页角，纸张沿一条折线折过去，露出背面和下一页。
+///
+/// 折线的算法（原创，只用平面几何）：
+/// 1. 被拖起的页角 C 和手指位置 T 的**垂直平分线**就是折线；
+/// 2. 页面被折线分成两半：靠近 C 的一半被翻过去，另一半留在原处（连着书脊）；
+/// 3. 翻过去的一半沿折线**镜像**，落在手指一侧，就是我们看到的"纸背"；
+/// 4. 折线另一侧被揭开的区域露出下一页，并加上沿折线渐变的阴影；
+/// 5. 翻页进度 t 从 0（平放）到 1（整页翻走）：T 沿一条略微上抬的弧线从 C 运动到页面左边之外。
+///
+/// 往回翻不卷页：上一页从左边水平滑进来，盖在当前页上（和常见阅读器一致）。
+class PageCurl extends StatefulWidget {
+  const PageCurl({super.key, this.debugT, this.debugDir = 1, this.debugCorner = 1, required this.pageCount, required this.pageBuilder, required this.initialIndex, required this.background, this.controller, this.onIndexChanged, this.onReachStart, this.onReachEnd});
+
+  /// 仅用于 tool/curl_demo.dart 目测：把折叠状态固定在进度 [debugT]（方向 [debugDir]，折角在高度的 [debugCorner] 处）
+  final double? debugT;
+  final int debugDir;
+  final double debugCorner;
+
+  final int pageCount;
+
+  /// [live] 为 true 表示这是静止时显示的那一页（可以选字）；翻页动画中同一页会被画几次，此时为 false。
+  final Widget Function(BuildContext context, int index, bool live) pageBuilder;
+  final int initialIndex;
+  final Color background;
+  final PageCurlController? controller;
+  final ValueChanged<int>? onIndexChanged;
+  final VoidCallback? onReachStart;
+  final VoidCallback? onReachEnd;
+
+  @override
+  State<PageCurl> createState() => _PageCurlState();
+}
+
+class _PageCurlState extends State<PageCurl> with SingleTickerProviderStateMixin {
+  late final AnimationController _anim = AnimationController(vsync: this)..addListener(_tick);
+  late int _index = widget.initialIndex.clamp(0, math.max(0, widget.pageCount - 1));
+
+  /// 当前翻页方向：1 往后翻（第 _index 页翻走），-1 往回翻（第 _index-1 页翻回来），0 静止
+  int _dir = 0;
+
+  /// 翻页进度：0 平放，1 整页翻走。往回翻时从 1 减到 0。
+  double _t = 0;
+  double _from = 0, _to = 0;
+  Curve _curve = Curves.easeOutCubic;
+  Size _size = Size.zero;
+
+  // 拖动状态
+  double _startX = 0, _startY = 0, _cornerY = 0, _dy = 0;
+  bool _dragging = false;
+  bool _edgeFired = false; // 一次拖动里只通知一次"到头了"，否则会连续切好几章
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller
+      ?.._next = (() => _auto(1))
+      .._prev = (() => _auto(-1));
+  }
+
+  @override
+  void didUpdateWidget(PageCurl old) {
+    super.didUpdateWidget(old);
+    if (widget.pageCount != old.pageCount) _index = _index.clamp(0, math.max(0, widget.pageCount - 1));
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  bool get _canNext => _index < widget.pageCount - 1;
+  bool get _canPrev => _index > 0;
+
+  void _tick() {
+    setState(() => _t = _from + (_to - _from) * _curve.transform(_anim.value));
+    if (_anim.isCompleted && !_dragging) _settle();
+  }
+
+  /// 动画结束：翻成功了就换页，否则恢复原样。
+  void _settle() {
+    final turned = _dir == 1 ? _t >= 1 : _t <= 0;
+    final dir = _dir;
+    setState(() {
+      if (turned) _index += dir;
+      _dir = 0;
+      _t = 0;
+    });
+    if (turned) widget.onIndexChanged?.call(_index);
+  }
+
+  /// 立即结束正在进行的动画（用户又按下手指时）。
+  void _finishNow() {
+    if (_dir == 0) return;
+    _anim.stop();
+    final turn = _dir == 1 ? _to >= 0.5 : _to <= 0.5;
+    _t = _dir == 1 ? (turn ? 1 : 0) : (turn ? 0 : 1);
+    _settle();
+  }
+
+  void _animateTo(double target, {double velocity = 0}) {
+    _from = _t;
+    _to = target;
+    final distance = (target - _t).abs();
+    _curve = Curves.easeOutCubic;
+    _anim.duration = Duration(milliseconds: (180 + distance * 380 / (1 + velocity.abs() / 3000)).round().clamp(140, 560));
+    _anim.forward(from: 0);
+  }
+
+  void _auto(int dir) {
+    if (_size.isEmpty) return;
+    _finishNow();
+    if (dir == 1 && !_canNext) return widget.onReachEnd?.call();
+    if (dir == -1 && !_canPrev) return widget.onReachStart?.call();
+    setState(() {
+      _dir = dir;
+      _cornerY = _size.height;
+      _dy = 0;
+      _t = dir == 1 ? 0.0001 : 0.9999;
+    });
+    _animateTo(dir == 1 ? 1 : 0);
+  }
+
+  void _onDragStart(DragStartDetails d) {
+    _finishNow();
+    _startX = d.localPosition.dx;
+    _startY = d.localPosition.dy;
+    _dragging = true;
+    _edgeFired = false;
+    _dir = 0;
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (!_dragging || _size.isEmpty) return;
+    final dx = d.localPosition.dx - _startX;
+    if (_dir == 0) {
+      if (dx.abs() < 8) return;
+      final dir = dx < 0 ? 1 : -1;
+      if ((dir == 1 && !_canNext) || (dir == -1 && !_canPrev)) {
+        if (!_edgeFired) {
+          _edgeFired = true;
+          (dir == 1 ? widget.onReachEnd : widget.onReachStart)?.call();
+        }
+        return;
+      }
+      _dir = dir;
+      // 从上 / 下三分之一处起手：折页角在上 / 下角；从中间起手：折线几乎竖直，像翻书
+      final y = _startY / _size.height;
+      _cornerY = y < 0.33 ? 0 : (y > 0.67 ? _size.height : _startY);
+    }
+    final p = (dx.abs() / (_size.width * 0.85)).clamp(0.0, 1.0);
+    setState(() {
+      _dy = d.localPosition.dy - _startY;
+      _t = _dir == 1 ? (dx < 0 ? p : 0.0001) : (dx > 0 ? 1 - p : 0.9999);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails d) {
+    _dragging = false;
+    if (_dir == 0) return;
+    final v = d.velocity.pixelsPerSecond.dx;
+    final complete = _dir == 1 ? (_t > 0.3 || v < -700) : (_t < 0.7 || v > 700);
+    _animateTo(_dir == 1 ? (complete ? 1 : 0) : (complete ? 0 : 1), velocity: v);
+  }
+
+  void _onDragCancel() {
+    if (!_dragging) return;
+    _dragging = false;
+    if (_dir != 0) _animateTo(_dir == 1 ? 0 : 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, box) {
+        _size = Size(box.maxWidth, box.maxHeight);
+        if (widget.debugT != null) {
+          _dir = widget.debugDir;
+          _t = widget.debugT!;
+          _cornerY = widget.debugCorner * _size.height;
+        }
+        final bg = widget.background;
+        Widget page(int i, bool live) => ColoredBox(color: bg, child: SizedBox.expand(child: widget.pageBuilder(context, i, live)));
+
+        Widget body;
+        if (_dir == 0 || widget.pageCount == 0) {
+          body = widget.pageCount == 0 ? ColoredBox(color: bg) : page(_index, true);
+        } else if (_dir == -1) {
+          final dx = -_size.width * _t;
+          body = Stack(
+            fit: StackFit.expand,
+            children: [
+              page(_index, false),
+              Transform.translate(
+                offset: Offset(dx, 0),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.28), blurRadius: 14)]),
+                  child: page(_index - 1, false),
+                ),
+              ),
+            ],
+          );
+        } else {
+          final turning = _dir == 1 ? _index : _index - 1;
+          final under = _dir == 1 ? _index + 1 : _index;
+          final fold = _Fold.at(size: _size, t: _t, cornerY: _cornerY, dy: _dy);
+          final dark = ThemeData.estimateBrightnessForColor(bg) == Brightness.dark;
+          body = Stack(
+            fit: StackFit.expand,
+            children: [
+              page(under, false),
+              if (fold.back.length >= 3) CustomPaint(painter: _UnderShadow(fold, dark)),
+              if (fold.front.length >= 3) ClipPath(clipper: _PolyClipper(fold.front), child: page(turning, false)),
+              if (fold.flap.length >= 3) CustomPaint(painter: _FlapShadow(fold, dark)),
+              if (fold.flap.length >= 3)
+                ClipPath(
+                  clipper: _PolyClipper(fold.flap),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Transform(transform: fold.mirror, child: page(turning, false)),
+                      // 纸背：比正面暗一点、透出一点字迹
+                      ColoredBox(color: Color.lerp(bg, dark ? Colors.black : const Color(0xFFEDE6D6), dark ? 0.35 : 0.55)!.withValues(alpha: 0.78)),
+                      CustomPaint(painter: _FlapShade(fold, dark)),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        }
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: _onDragStart,
+          onHorizontalDragUpdate: _onDragUpdate,
+          onHorizontalDragEnd: _onDragEnd,
+          onHorizontalDragCancel: _onDragCancel,
+          child: ClipRect(child: body),
+        );
+      },
+    );
+  }
+}
+
+/// 一帧的折叠几何。
+class _Fold {
+  _Fold._(this.m, this.n, this.front, this.back, this.flap, this.mirror);
+
+  /// 折线上的一点（C 和 T 的中点）
+  final Offset m;
+
+  /// 折线的单位法向量，从 T 指向 C（C 那一侧是被翻过去的部分）
+  final Offset n;
+
+  /// 留在原处的部分（连着书脊）
+  final List<Offset> front;
+
+  /// 被翻过去的部分（原位置，这里露出下一页）
+  final List<Offset> back;
+
+  /// 翻过去的部分镜像后的位置（纸背）
+  final List<Offset> flap;
+
+  /// 把页面镜像到 [flap] 位置的变换
+  final Matrix4 mirror;
+
+  factory _Fold.at({required Size size, required double t, required double cornerY, required double dy}) {
+    final w = size.width, h = size.height;
+    final corner = Offset(w, cornerY);
+    // 手指（页角）位置：从 C 沿一条向页面中部略微上抬的弧线运动到左边之外
+    final towardCenter = (h / 2 - cornerY).sign;
+    final lift = towardCenter * h * 0.26 * math.sin(math.pi * t);
+    final follow = dy * 0.35 * (1 - t);
+    final touch = Offset(w + (-1.15 * w - w) * t, (cornerY + lift + follow).clamp(0.0, h));
+    final diff = corner - touch;
+    final len = diff.distance;
+    final rect = [Offset.zero, Offset(w, 0), Offset(w, h), Offset(0, h)];
+    if (len < 0.5) return _Fold._(corner, const Offset(1, 0), rect, const [], const [], Matrix4.identity());
+
+    final n = diff / len;
+    final m = (corner + touch) / 2;
+    final back = _clip(rect, m, n, true);
+    final front = _clip(rect, m, n, false);
+    final flap = [for (final p in back) p - n * (2 * ((p - m).dx * n.dx + (p - m).dy * n.dy))];
+    final d = m.dx * n.dx + m.dy * n.dy;
+    final mirror = Matrix4(1 - 2 * n.dx * n.dx, -2 * n.dx * n.dy, 0, 0, -2 * n.dx * n.dy, 1 - 2 * n.dy * n.dy, 0, 0, 0, 0, 1, 0, 2 * n.dx * d, 2 * n.dy * d, 0, 1);
+    return _Fold._(m, n, front, back, flap, mirror);
+  }
+
+  /// 用折线裁剪凸多边形，保留法向量正侧（[positive]）或负侧。
+  static List<Offset> _clip(List<Offset> poly, Offset m, Offset n, bool positive) {
+    double side(Offset p) => ((p - m).dx * n.dx + (p - m).dy * n.dy) * (positive ? 1 : -1);
+    final out = <Offset>[];
+    for (var i = 0; i < poly.length; i++) {
+      final a = poly[i], b = poly[(i + 1) % poly.length];
+      final da = side(a), db = side(b);
+      if (da >= 0) out.add(a);
+      if ((da >= 0) != (db >= 0)) out.add(a + (b - a) * (da / (da - db)));
+    }
+    return out;
+  }
+
+  Path path(List<Offset> poly) => Path()..addPolygon(poly, true);
+}
+
+class _PolyClipper extends CustomClipper<Path> {
+  const _PolyClipper(this.poly);
+
+  final List<Offset> poly;
+
+  @override
+  Path getClip(Size size) => Path()..addPolygon(poly, true);
+
+  @override
+  bool shouldReclip(_PolyClipper old) => old.poly != poly;
+}
+
+/// 下一页被揭开的区域靠近折线的一侧加阴影。
+class _UnderShadow extends CustomPainter {
+  _UnderShadow(this.f, this.dark);
+
+  final _Fold f;
+  final bool dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.clipPath(f.path(f.back));
+    // 从折线起沿法向量（进入被揭开的区域）由深到浅
+    canvas.drawRect(Offset.zero & size, Paint()..shader = _along(f.m, f.n, 34, [Colors.black.withValues(alpha: dark ? 0.5 : 0.34), Colors.transparent]));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_UnderShadow old) => old.f != f;
+}
+
+/// 纸背投在正面上的阴影：把纸背轮廓模糊后画在留下的那部分页面上。
+class _FlapShadow extends CustomPainter {
+  _FlapShadow(this.f, this.dark);
+
+  final _Fold f;
+  final bool dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.clipPath(f.path(f.front));
+    canvas.drawPath(f.path(f.flap), Paint()..color = Colors.black.withValues(alpha: dark ? 0.55 : 0.32)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9));
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_FlapShadow old) => old.f != f;
+}
+
+/// 纸背靠近折线处的明暗：模拟纸卷起来的弧度。
+class _FlapShade extends CustomPainter {
+  _FlapShade(this.f, this.dark);
+
+  final _Fold f;
+  final bool dark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dir = -f.n; // 从折线进入纸背的方向
+    canvas.drawRect(Offset.zero & size, Paint()..shader = _along(f.m, dir, 46, [Colors.black.withValues(alpha: dark ? 0.35 : 0.22), Colors.white.withValues(alpha: dark ? 0.04 : 0.16), Colors.transparent], const [0, 0.35, 1]));
+  }
+
+  @override
+  bool shouldRepaint(_FlapShade old) => old.f != f;
+}
+
+/// 从 [from] 出发沿 [dir] 方向、长 [length] 的线性渐变。
+Shader _along(Offset from, Offset dir, double length, List<Color> colors, [List<double>? stops]) => ui.Gradient.linear(from, from + dir * length, colors, stops);

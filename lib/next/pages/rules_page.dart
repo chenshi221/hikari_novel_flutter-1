@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../reader/reader_page.dart';
 import '../rules.dart';
 
-/// 正则替换规则管理：添加、编辑、启用/停用、删除。改动后已打开的章节会重新生成。
+/// 正则规则管理：替换（去广告、统一用字）和高亮（给人物名染色、点一下写备注）。改动后已打开的章节会重新生成。
 class RulesPage extends ConsumerStatefulWidget {
   const RulesPage({super.key});
 
@@ -18,7 +18,7 @@ class _RulesPageState extends ConsumerState<RulesPage> {
   Future<void> _commit(List<ReplaceRule> next) async {
     await ReplaceRules.save(next);
     ref.invalidate(chapterProvider);
-    setState(() => _rules = next);
+    setState(() => _rules = ReplaceRules.all());
   }
 
   Future<void> _edit(int? index) async {
@@ -37,19 +37,24 @@ class _RulesPageState extends ConsumerState<RulesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('正则替换'), actions: [IconButton(icon: const Icon(Icons.add), onPressed: () => _edit(null))]),
+      appBar: AppBar(title: const Text('正则规则'), actions: [IconButton(icon: const Icon(Icons.add), onPressed: () => _edit(null))]),
       body: _rules.isEmpty
-          ? const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('还没有规则。可以用来去掉章节里的广告、统一用字，例如把「著」换成「着」。', textAlign: TextAlign.center)))
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('还没有规则。\n替换：去掉章节里的广告、统一用字。\n高亮：给人物名染色，阅读时点一下可以写备注。', textAlign: TextAlign.center),
+              ),
+            )
           : ListView(
               children: [
                 for (final (i, r) in _rules.indexed)
                   Dismissible(
-                    key: ValueKey('$i${r.pattern}'),
+                    key: ValueKey(r.id),
                     background: Container(color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15)),
                     onDismissed: (_) => _commit([..._rules]..removeAt(i)),
                     child: SwitchListTile(
-                      title: Text(r.pattern, style: const TextStyle(fontFamily: 'monospace')),
-                      subtitle: Text(r.replacement.isEmpty ? '→（删除）' : '→ ${r.replacement}'),
+                      title: Text(r.kind == RuleKind.highlight ? r.label : r.pattern, style: r.kind == RuleKind.highlight ? TextStyle(color: Color(r.color), fontWeight: FontWeight.w600) : const TextStyle(fontFamily: 'monospace')),
+                      subtitle: Text(r.kind == RuleKind.highlight ? '高亮 · ${r.pattern}' : (r.replacement.isEmpty ? '替换 → （删除）' : '替换 → ${r.replacement}')),
                       value: r.enabled,
                       onChanged: (v) => _commit([..._rules]..[i] = r.copyWith(enabled: v)),
                       secondary: IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _edit(i)),
@@ -61,23 +66,54 @@ class _RulesPageState extends ConsumerState<RulesPage> {
   }
 }
 
-/// 添加 / 编辑一条替换规则的对话框；返回 null 表示取消。阅读器里选中文字后也用它。
+/// 添加 / 编辑一条规则的对话框；返回 null 表示取消。阅读器里选中文字后也用它。
 Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}) async {
   final pattern = TextEditingController(text: initial?.pattern ?? '');
   final replacement = TextEditingController(text: initial?.replacement ?? '');
+  final name = TextEditingController(text: initial?.name ?? '');
+  var kind = initial?.kind ?? RuleKind.replace;
+  var color = initial?.color ?? ruleColors.first;
   String? error;
   final saved = await showDialog<bool>(
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setLocal) => AlertDialog(
-        title: Text(initial == null ? '添加规则' : '编辑规则'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配（正则）', errorText: error)),
-            const SizedBox(height: 12),
-            TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组')),
-          ],
+        title: Text(initial == null || initial.pattern.isEmpty ? '添加规则' : '编辑规则'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SegmentedButton<RuleKind>(
+                segments: const [ButtonSegment(value: RuleKind.replace, label: Text('替换')), ButtonSegment(value: RuleKind.highlight, label: Text('高亮'))],
+                selected: {kind},
+                onSelectionChanged: (s) => setLocal(() => kind = s.first),
+              ),
+              const SizedBox(height: 12),
+              TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配（正则）', errorText: error)),
+              const SizedBox(height: 12),
+              if (kind == RuleKind.replace)
+                TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组'))
+              else ...[
+                TextField(controller: name, decoration: const InputDecoration(labelText: '名字（备注按它归档）', helperText: '例如人物名，可留空')),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final c in ruleColors)
+                      GestureDetector(
+                        onTap: () => setLocal(() => color = c),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface)),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
@@ -97,5 +133,5 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
     ),
   );
   if (saved != true) return null;
-  return (initial ?? const ReplaceRule(pattern: '', replacement: '')).copyWith(pattern: pattern.text, replacement: replacement.text);
+  return (initial ?? const ReplaceRule(pattern: '', replacement: '')).copyWith(pattern: pattern.text, replacement: replacement.text, name: name.text.trim(), kind: kind, color: color);
 }

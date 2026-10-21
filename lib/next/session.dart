@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../common/constants.dart';
@@ -13,31 +15,44 @@ import '../data/wenku8/wenku8_parser.dart';
 import '../data/wenku8/wenku8_urls.dart';
 import '../models/common/charset_type.dart';
 import '../models/common/wenku8_node.dart';
+import '../models/custom_exception.dart';
 import '../models/user_info.dart';
+import 'cache.dart';
 import 'env.dart';
 
-/// 本地保存的登录信息：cookie 和选择的节点。
+/// 本地保存的登录信息：cookie、选择的节点、代理、浏览器标识。密码放在系统安全存储里。
 class SessionStore {
   SessionStore._(this._box);
 
   final Box _box;
+  static const _secure = FlutterSecureStorage();
 
   static Future<SessionStore> open() async {
     await Hive.initFlutter('next');
     return SessionStore._(await Hive.openBox('session'));
   }
 
-  /// 原生 App：wenku8 的 cookie 字符串；网页预览：cookie 保存在转发程序里，这里只存一个标记。
+  /// 登录 cookie（`jieqiUserInfo=…;jieqiVisitInfo=…`）；网页预览：cookie 保存在转发程序里，这里只存一个标记。
   String? get cookie => _box.get('cookie') as String?;
 
   Future<void> setCookie(String? value) => value == null ? _box.delete('cookie') : _box.put('cookie', value);
+
+  /// Cloudflare 放行 cookie（`cf_clearance` 等）按站点保存：它只对验证时的那个域名有效。
+  String? cfCookie(String host) => _box.get('cf:$host') as String?;
+
+  Future<void> setCfCookie(String host, String? value) => value == null || value.isEmpty ? _box.delete('cf:$host') : _box.put('cf:$host', value);
+
+  /// WebView 的真实浏览器标识。Dio 用同一个，Cloudflare 才认得放行 cookie。
+  String get userAgent => (_box.get('ua') as String?) ?? kUserAgent['User-Agent']!;
+
+  Future<void> setUserAgent(String ua) => _box.put('ua', ua);
 
   Wenku8Node get node => Wenku8Node.values[(_box.get('node') as int?) ?? Wenku8Node.wwwWenku8Net.index];
 
   /// 最近一次成功取到的用户页 HTML，断网时用它显示登录状态。
   String? get userHtml => _box.get('userHtml') as String?;
 
-  Future<void> setUserHtml(String html) => _box.put('userHtml', html);
+  Future<void> setUserHtml(String? html) => html == null ? _box.delete('userHtml') : _box.put('userHtml', html);
 
   Future<void> setNode(Wenku8Node node) => _box.put('node', node.index);
 
@@ -51,37 +66,63 @@ class SessionStore {
 
   Future<void> setKeepSeconds(int value) => _box.put('keepSeconds', value);
 
-  /// 记住的账号密码，没记住时为 null。
-  // shortcut: 明文存在本地 Hive，要更安全时改用 flutter_secure_storage（钥匙串 / Keystore）
-  (String, String)? get savedLogin {
-    final u = _box.get('savedUser') as String?;
-    final p = _box.get('savedPass') as String?;
-    return u == null || p == null ? null : (u, p);
+  /// 记住的账号密码，没记住时为 null。用户名在 Hive，密码在 Keystore / 钥匙串。
+  /// 旧版本把密码明文存在 Hive 里，读到时搬到安全存储并删掉明文。
+  Future<(String, String)?> loadLogin() async {
+    final user = _box.get('savedUser') as String?;
+    if (user == null) return null;
+    try {
+      final legacy = _box.get('savedPass') as String?;
+      if (legacy != null) {
+        await _secure.write(key: 'savedPass', value: legacy);
+        await _box.delete('savedPass');
+      }
+      final pass = await _secure.read(key: 'savedPass');
+      return pass == null ? null : (user, pass);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> saveLogin(String? user, String? pass) async {
-    if (user == null || pass == null) {
-      await _box.delete('savedUser');
-      await _box.delete('savedPass');
-    } else {
-      await _box.put('savedUser', user);
-      await _box.put('savedPass', pass);
-    }
+    try {
+      if (user == null || pass == null) {
+        await _box.delete('savedUser');
+        await _secure.delete(key: 'savedPass');
+      } else {
+        await _secure.write(key: 'savedPass', value: pass);
+        await _box.put('savedUser', user);
+      }
+    } catch (_) {}
   }
 }
 
 final sessionStoreProvider = Provider<SessionStore>((ref) => throw UnimplementedError('在 main() 里通过 overrides 提供'));
 
+/// 当前线路。切换后所有依赖它的 provider（地址、API、图片请求）都会重建，不用重启。
+class NodeController extends Notifier<Wenku8Node> {
+  @override
+  Wenku8Node build() => ref.read(sessionStoreProvider).node;
+
+  Future<void> set(Wenku8Node node) async {
+    await ref.read(sessionStoreProvider).setNode(node);
+    state = node;
+  }
+}
+
+final nodeProvider = NotifierProvider<NodeController, Wenku8Node>(NodeController.new);
+
 /// 当前用于请求的站点地址：网页预览走转发程序，原生 App 直连所选节点。
-String siteBase(SessionStore store) => isWebPreview ? previewProxyBase : store.node.node;
+String siteBase(Wenku8Node node) => isWebPreview ? previewProxyBase : node.node;
 
 final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
   final store = ref.watch(sessionStoreProvider);
   return Wenku8Client(
-    baseUrl: () => siteBase(store),
+    // 用 read：客户端自己带着 cookie jar，节点变了只换地址，不能重建
+    baseUrl: () => siteBase(ref.read(nodeProvider)),
     charset: () => CharsetType.gbk,
     // 浏览器不允许网页设置 User-Agent，由转发程序代为添加
-    headers: kIsWeb ? const {} : kUserAgent,
+    headers: kIsWeb ? const {} : {'User-Agent': store.userAgent},
     dio: kIsWeb ? null : (Dio()..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}')),
   );
 });
@@ -89,11 +130,12 @@ final wenku8ClientProvider = Provider<Wenku8Client>((ref) {
 /// 图片专用的 Dio：和请求页面一样走所选代理，并带上浏览器 UA 和 Referer（图片服务器会检查）。
 final imageDioProvider = Provider<Dio>((ref) {
   final store = ref.watch(sessionStoreProvider);
-  return Dio(BaseOptions(responseType: ResponseType.bytes, headers: {...kUserAgent, 'Referer': '${siteBase(store)}/'}))
+  final node = ref.watch(nodeProvider);
+  return Dio(BaseOptions(responseType: ResponseType.bytes, connectTimeout: const Duration(seconds: 12), receiveTimeout: const Duration(seconds: 25), headers: {'User-Agent': store.userAgent, 'Referer': '${siteBase(node)}/'}))
     ..httpClientAdapter = IOHttpClientAdapter(createHttpClient: () => HttpClient()..findProxy = (_) => store.proxy.isEmpty ? 'DIRECT' : 'PROXY ${store.proxy}');
 });
 
-final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(sessionStoreProvider)), CharsetType.gbk));
+final wenku8UrlsProvider = Provider<Wenku8Urls>((ref) => Wenku8Urls(siteBase(ref.watch(nodeProvider)), CharsetType.gbk));
 
 sealed class SessionState {
   const SessionState();
@@ -105,20 +147,28 @@ class SessionChecking extends SessionState {
 }
 
 class SessionLoggedOut extends SessionState {
-  const SessionLoggedOut({this.message});
+  const SessionLoggedOut({this.message, this.needsVerify = false});
 
   /// 给登录页显示的提示，例如"登录已过期"
   final String? message;
+
+  /// 被 Cloudflare 拦住了，需要先过一次浏览器验证
+  final bool needsVerify;
 }
 
 class SessionLoggedIn extends SessionState {
-  const SessionLoggedIn(this.user, {this.offline = false});
+  const SessionLoggedIn(this.user, {this.offline = false, this.needsVerify = false});
 
   final UserInfo user;
 
   /// 没连上网站，用的是上次保存的账号信息；已缓存的内容仍可阅读
   final bool offline;
+
+  /// 离线的原因是被 Cloudflare 拦住：去验证一下就能恢复，不是真的没网
+  final bool needsVerify;
 }
+
+bool isCloudflare(Object e) => e is Cloudflare403Exception || e is CloudflareChallengeException;
 
 /// 登录状态。没登录也能进主界面（游客），需要账号的页面再提示登录。
 class SessionController extends Notifier<SessionState> {
@@ -134,32 +184,82 @@ class SessionController extends Notifier<SessionState> {
 
   Wenku8Urls get _urls => ref.read(wenku8UrlsProvider);
 
-  /// 启动时：有保存的登录信息就向网站确认一次。失效则清除；网络出错按游客处理，但保留 cookie，下次启动再检查。
+  static const _nodeHosts = [Wenku8Node.wwwWenku8Net, Wenku8Node.wwwWenku8Cc];
+
+  /// 把保存的登录 cookie 和各站点的 Cloudflare cookie 放进请求用的 cookie jar。
+  Future<void> _restoreCookies() async {
+    if (isWebPreview) return;
+    final login = _store.cookie;
+    for (final n in _nodeHosts) {
+      final parts = [?login, ?_store.cfCookie(n.node)];
+      if (parts.isNotEmpty) await _client.restoreCookie(parts.join(';'), [n.node]);
+    }
+  }
+
+  /// 把 cookie jar 里的最新 cookie 写回本地：服务端续期过的 cookie 重启后才不会丢。
+  Future<void> persistCookies() async {
+    if (isWebPreview) return;
+    for (final n in _nodeHosts) {
+      final all = await _client.exportCookies(n.node);
+      final cf = all.entries.where((e) => !e.key.startsWith('jieqi')).map((e) => '${e.key}=${e.value}').join(';');
+      if (cf.isNotEmpty) await _store.setCfCookie(n.node, cf);
+    }
+    if (_store.cookie != null && _store.cookie != 'preview') {
+      final all = await _client.exportCookies(_store.node.node);
+      final login = all.entries.where((e) => e.key.startsWith('jieqi')).map((e) => '${e.key}=${e.value}').join(';');
+      if (login.contains('jieqiUserInfo')) await _store.setCookie(login);
+    }
+  }
+
+  /// 启动时：有保存的登录信息就向网站确认一次（最多等 6 秒）。失效则清除；网络出错、超时、被拦截都按"离线"处理，保留 cookie。
   Future<void> restore() async {
+    await _restoreCookies();
     final cookie = _store.cookie;
     if (cookie == null) {
       state = const SessionLoggedOut();
       return;
     }
     state = const SessionChecking();
-    if (!isWebPreview) await _client.restoreCookie(cookie, Wenku8Node.values.map((e) => e.node));
     try {
-      state = SessionLoggedIn(await _fetchUser());
+      state = SessionLoggedIn(await _fetchUser().timeout(const Duration(seconds: 6)));
     } on Wenku8UnexpectedPageException {
       await _clear();
       state = const SessionLoggedOut(message: '登录已过期，请重新登录');
-    } catch (_) {
+    } catch (e) {
       // 联网失败不等于没登录：有 cookie 和上次保存的账号信息就按离线登录处理
       final html = _store.userHtml;
-      state = html == null ? const SessionLoggedOut() : SessionLoggedIn(Wenku8Parser.userInfo(html), offline: true);
+      final verify = isCloudflare(e);
+      state = html == null ? SessionLoggedOut(needsVerify: verify) : SessionLoggedIn(Wenku8Parser.userInfo(html), offline: true, needsVerify: verify);
     }
   }
 
-  /// 原生 App：在内嵌网页里登录后拿到的 cookie。
-  Future<void> loginWithCookie(String cookie) async {
+  /// 过完 Cloudflare 验证（或登录）后，WebView 里的 cookie 分流：登录 cookie 全站点通用，其余只属于验证过的站点。
+  Future<void> acceptWebCookies(String cookies, {String? userAgent}) async {
+    final pairs = cookies.split(';').map((e) => e.trim()).where((e) => e.contains('='));
+    final login = pairs.where((e) => e.startsWith('jieqi')).join(';');
+    final cf = pairs.where((e) => !e.startsWith('jieqi')).join(';');
+    final host = _store.node.node;
+    if (cf.isNotEmpty) await _store.setCfCookie(host, cf);
+    if (login.contains('jieqiUserInfo')) await _store.setCookie(login);
+    if (userAgent != null && userAgent.isNotEmpty && userAgent != _store.userAgent) {
+      await _store.setUserAgent(userAgent);
+      _client.dio.options.headers['User-Agent'] = userAgent;
+      ref.read(imageDioProvider).options.headers['User-Agent'] = userAgent;
+    }
     await _client.clearCookie();
-    await _client.restoreCookie(cookie, Wenku8Node.values.map((e) => e.node));
-    await _confirm(cookie);
+    await _restoreCookies();
+  }
+
+  /// 原生 App：在内嵌网页里登录后拿到的 cookie。
+  Future<void> loginWithCookie(String cookies, {String? userAgent}) async {
+    await acceptWebCookies(cookies, userAgent: userAgent);
+    await _confirm(_store.cookie ?? cookies);
+  }
+
+  /// 验证完成后重新确认一次登录状态。
+  Future<void> afterVerify(String cookies, {String? userAgent}) async {
+    await acceptWebCookies(cookies, userAgent: userAgent);
+    await restore();
   }
 
   /// 网页预览：账号密码登录，由转发程序提交并保存 cookie。
@@ -188,18 +288,23 @@ class SessionController extends Notifier<SessionState> {
   }
 
   Future<void> logout() async {
+    final s = state;
     if (isWebPreview) {
       try {
         await _client.dio.post('$previewProxyBase/__session/logout');
       } catch (_) {}
     }
+    // 书架这类账号私有的离线备份一并清掉，换账号不会看到上一个人的内容
+    if (s is SessionLoggedIn) await PageStore.removeScope(s.user.uid);
     await _clear();
     state = const SessionLoggedOut();
   }
 
   Future<void> _clear() async {
     await _store.setCookie(null);
+    await _store.setUserHtml(null);
     await _client.clearCookie();
+    await _restoreCookies();
   }
 }
 

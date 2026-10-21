@@ -85,7 +85,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                         ListTile(leading: const Icon(Icons.history), title: Text(h), onTap: () => _search(h)),
                     ],
                   )
-                : PagedNovelGrid(key: ValueKey((_keyword, _byAuthor)), fetch: (page) => api.search(_keyword!, byAuthor: _byAuthor, page: page)),
+                : PagedNovelGrid(key: ValueKey((_keyword, _byAuthor)), sourceHtml: () => lastFailedHtml, fetch: (page) => api.search(_keyword!, byAuthor: _byAuthor, page: page)),
           ),
         ],
       ),

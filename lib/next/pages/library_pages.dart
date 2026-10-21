@@ -113,8 +113,9 @@ class CachePage extends ConsumerWidget {
                                   if (v == 'manage') {
                                     context.push(Routes.cacheBook(b.key));
                                   } else {
+                                    // 先停掉这本书的下载，再删；不重建整个下载管理器，别的书的下载不受影响
+                                    ref.read(downloadProvider.notifier).forget(b.key);
                                     await ChapterCache.remove(b.key);
-                                    ref.invalidate(downloadProvider);
                                   }
                                 },
                                 itemBuilder: (_) => const [PopupMenuItem(value: 'manage', child: Text('管理章节')), PopupMenuItem(value: 'delete', child: Text('删除缓存'))],

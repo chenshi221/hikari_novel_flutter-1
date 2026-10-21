@@ -221,7 +221,7 @@ class Wenku8Parser {
   /// 章节目录。
   static List<CatVolume> catalogue(String html) {
     final table = parse(html).querySelector('table.css');
-    if (table == null) return [];
+    if (table == null) throw const Wenku8UnexpectedPageException('catalogue: table.css not found');
 
     final List<CatVolume> volumes = [];
     String? currentVolumeTitle;
@@ -444,6 +444,7 @@ class Wenku8Parser {
     for (final src in images) {
       text = text.replaceAll(src, '');
     }
+    if (text.isEmpty && images.isEmpty) throw const Wenku8UnexpectedPageException('chapter: empty content');
     return Content(text: text, images: images);
   }
 }

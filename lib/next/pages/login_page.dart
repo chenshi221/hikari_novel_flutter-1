@@ -24,18 +24,21 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _password = TextEditingController();
   late final _proxy = TextEditingController(text: ref.read(sessionStoreProvider).proxy);
   late int _keepSeconds = ref.read(sessionStoreProvider).keepSeconds;
-  late bool _remember = ref.read(sessionStoreProvider).savedLogin != null;
+  bool _remember = false;
   bool _busy = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    final saved = ref.read(sessionStoreProvider).savedLogin;
-    if (saved != null) {
-      _username.text = saved.$1;
-      _password.text = saved.$2;
-    }
+    ref.read(sessionStoreProvider).loadLogin().then((saved) {
+      if (saved == null || !mounted) return;
+      setState(() {
+        _remember = true;
+        _username.text = saved.$1;
+        _password.text = saved.$2;
+      });
+    });
   }
 
   @override
@@ -70,13 +73,13 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       await ref.read(sessionProvider.notifier).loginWithPassword(username, _password.text, _keepSeconds);
     } else {
       if (!mounted) return;
-      final cookie = await Navigator.of(context).push<String>(
+      final result = await Navigator.of(context).push<WebSessionResult>(
         MaterialPageRoute(
-          builder: (_) => LoginWebViewPage(loginUrl: '${store.node.node}/login.php', username: username, password: _password.text, keepSeconds: _keepSeconds),
+          builder: (_) => LoginWebViewPage(url: '${siteBase(ref.read(nodeProvider))}/login.php', title: '登录轻小说文库', username: username, password: _password.text, keepSeconds: _keepSeconds),
         ),
       );
-      if (cookie == null) return;
-      await ref.read(sessionProvider.notifier).loginWithCookie(cookie);
+      if (result == null) return;
+      await ref.read(sessionProvider.notifier).loginWithCookie(result.cookies, userAgent: result.userAgent);
     }
     await store.saveLogin(_remember ? username : null, _remember ? _password.text : null);
     // 登录成功后回到主界面
@@ -120,7 +123,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   static const _keepOptions = [(86400, '一天'), (2592000, '一个月'), (315360000, '永久')];
 
   List<Widget> _form(ThemeData theme) {
-    final store = ref.read(sessionStoreProvider);
     return [
       TextField(
         controller: _username,
@@ -162,12 +164,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
             ButtonSegment(value: Wenku8Node.wwwWenku8Net, label: Text('wenku8.net')),
             ButtonSegment(value: Wenku8Node.wwwWenku8Cc, label: Text('wenku8.cc')),
           ],
-          selected: {store.node},
+          selected: {ref.watch(nodeProvider)},
           onSelectionChanged: _busy
               ? null
               : (s) async {
-                  await store.setNode(s.first);
-                  setState(() {});
+                  await ref.read(nodeProvider.notifier).set(s.first);
                 },
         ),
         const SizedBox(height: 16),

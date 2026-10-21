@@ -1,55 +1,101 @@
-import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../common/constants.dart';
+import '../../models/common/wenku8_node.dart';
+import '../session.dart';
 
-/// 原生 App 的登录：wenku8 有 Cloudflare 验证，Dart 的 HTTP 请求过不去，所以让真正的浏览器引擎
-/// 打开登录页（需要时用户可以直接在页面里完成验证），页面加载好后把用户名、密码、有效期填进表单并提交。
-/// 登录成功（出现 jieqiUserInfo cookie）后关闭页面，返回该站点的全部 cookie 字符串。
-class LoginWebViewPage extends StatefulWidget {
-  const LoginWebViewPage({super.key, required this.loginUrl, required this.username, required this.password, required this.keepSeconds});
+class WebSessionResult {
+  const WebSessionResult(this.cookies, this.userAgent);
 
-  final String loginUrl;
-  final String username;
-  final String password;
-  final int keepSeconds;
+  /// 站点的全部 cookie（`a=1;b=2`）
+  final String cookies;
 
-  @override
-  State<LoginWebViewPage> createState() => _LoginWebViewPageState();
+  /// WebView 的真实 User-Agent，Dio 要用同一个，Cloudflare 才认放行 cookie
+  final String? userAgent;
 }
 
-class _LoginWebViewPageState extends State<LoginWebViewPage> {
+/// 内嵌浏览器页，两种用法：
+/// - 登录（[username] 不为空）：打开登录页，过完 Cloudflare 验证后把用户名、密码、有效期填进表单提交，出现登录 cookie 后返回
+/// - 验证（[username] 为空）：只打开站点，让用户通过 Cloudflare 验证（游客、已登录都能用），出现 `cf_clearance` 后返回，也可以点右上角"完成"
+///
+/// 只在登录页本身的域名上、表单提交到同一域名时才自动填密码。
+class LoginWebViewPage extends ConsumerStatefulWidget {
+  const LoginWebViewPage({super.key, required this.url, required this.title, this.username, this.password, this.keepSeconds = 0, this.onDone});
+
+  final String url;
+  final String title;
+  final String? username;
+  final String? password;
+  final int keepSeconds;
+
+  /// 不为空时用它接收结果（路由页用），否则 pop 返回
+  final Future<void> Function(WebSessionResult result)? onDone;
+
+  bool get isLogin => username != null;
+
+  @override
+  ConsumerState<LoginWebViewPage> createState() => _LoginWebViewPageState();
+}
+
+class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   final _cookieManager = CookieManager.instance();
+  late final String _host = Uri.parse(widget.url).host;
   bool _ready = false;
   bool _done = false;
   bool _submitted = false;
   int _progress = 0;
+  String? _ua;
+  bool _proxied = false;
 
   @override
   void initState() {
     super.initState();
-    // 先清掉旧 cookie，避免带着过期的登录状态进入
-    _cookieManager.deleteAllCookies().whenComplete(() {
-      if (mounted) setState(() => _ready = true);
-    });
+    _prepare();
   }
 
-  /// 找到带密码框的表单，填值后提交。返回 false 表示当前页面没有登录表单（例如还在验证页）。
+  Future<void> _prepare() async {
+    // 请求页面用了代理时，WebView 也用同一个，两边的出口才一致（只有 Android 支持）
+    final proxy = ref.read(sessionStoreProvider).proxy;
+    if (Platform.isAndroid && proxy.isNotEmpty) {
+      try {
+        await ProxyController.instance().setProxyOverride(settings: ProxySettings(proxyRules: [ProxyRule(url: 'http://$proxy')]));
+        _proxied = true;
+      } catch (_) {}
+    }
+    if (widget.isLogin) {
+      // 只清掉旧的登录 cookie，保留 Cloudflare 的放行 cookie，免得又要验证一遍
+      for (final c in await _cookieManager.getCookies(url: WebUri(widget.url))) {
+        if (c.name.startsWith('jieqi')) await _cookieManager.deleteCookie(url: WebUri(widget.url), name: c.name);
+      }
+    }
+    if (mounted) setState(() => _ready = true);
+  }
+
+  @override
+  void dispose() {
+    if (_proxied) ProxyController.instance().clearProxyOverride();
+    super.dispose();
+  }
+
+  /// 找到带密码框的表单，确认提交地址和当前页面同域、https，再填值提交。返回 false 表示当前页面没有可用的登录表单（例如还在验证页）。
   Future<bool> _fillAndSubmit(InAppWebViewController c) async {
     final js = '''
 (() => {
   const pass = document.querySelector('input[name=password]');
   const form = pass && pass.form;
   if (!form) return false;
-  form.querySelector('input[name=username]').value = ${jsonEncode(widget.username)};
-  pass.value = ${jsonEncode(widget.password)};
+  const action = new URL(form.getAttribute('action') || location.href, location.href);
+  if (action.host !== location.host || action.protocol !== 'https:') return false;
+  form.querySelector('input[name=username]').value = ${_js(widget.username!)};
+  pass.value = ${_js(widget.password!)};
   const keep = form.querySelector('[name=usecookie]');
   if (keep) {
     const want = '${widget.keepSeconds}';
     if (keep.tagName === 'SELECT' && ![...keep.options].some(o => o.value === want)) {
-      // 选项里没有刚好相同的，选不超过所需时长的最大一项，没有就选最长的
       const opts = [...keep.options].map(o => +o.value).filter(v => v > 0).sort((a, b) => a - b);
       keep.value = String([...opts].reverse().find(v => v <= ${widget.keepSeconds}) ?? opts[opts.length - 1]);
     } else {
@@ -63,22 +109,48 @@ class _LoginWebViewPageState extends State<LoginWebViewPage> {
     return (await c.evaluateJavascript(source: js)) == true;
   }
 
-  Future<void> _check(InAppWebViewController c, WebUri? uri) async {
-    if (_done || uri == null || !uri.host.contains('wenku8')) return;
+  static String _js(String s) => "'${s.replaceAll(r'\', r'\\').replaceAll("'", r"\'").replaceAll('\n', r'\n').replaceAll('\r', '')}'";
+
+  Future<void> _finish(InAppWebViewController c, WebUri uri) async {
+    if (_done) return;
+    _done = true;
     final cookies = await _cookieManager.getCookies(url: uri);
-    if (cookies.any((e) => e.name == 'jieqiUserInfo') && cookies.any((e) => e.name == 'jieqiVisitInfo')) {
-      _done = true;
-      if (mounted) Navigator.of(context).pop(cookies.map((e) => '${e.name}=${e.value}').join(';'));
-      return;
+    final result = WebSessionResult(cookies.map((e) => '${e.name}=${e.value}').join(';'), _ua);
+    if (widget.onDone != null) {
+      await widget.onDone!(result);
+    } else if (mounted) {
+      Navigator.of(context).pop(result);
     }
-    if (!_submitted && uri.path.contains('login.php')) _submitted = await _fillAndSubmit(c);
+  }
+
+  Future<void> _check(InAppWebViewController c, WebUri? uri) async {
+    if (_done || uri == null || uri.host != _host || uri.scheme != 'https') return;
+    _ua ??= (await c.evaluateJavascript(source: 'navigator.userAgent')) as String?;
+    final cookies = await _cookieManager.getCookies(url: uri);
+    final names = cookies.map((e) => e.name).toSet();
+    if (widget.isLogin) {
+      if (names.contains('jieqiUserInfo') && names.contains('jieqiVisitInfo')) return _finish(c, uri);
+      if (!_submitted && uri.path.contains('login.php')) _submitted = await _fillAndSubmit(c);
+    } else if (names.contains('cf_clearance')) {
+      await _finish(c, uri);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('登录轻小说文库'),
+        title: Text(widget.title),
+        actions: [
+          if (!widget.isLogin && _ready)
+            TextButton(
+              onPressed: () async {
+                final c = _controller;
+                if (c != null) await _finish(c, WebUri(widget.url));
+              },
+              child: const Text('完成'),
+            ),
+        ],
         bottom: _progress < 100
             ? PreferredSize(
                 preferredSize: const Size.fromHeight(2),
@@ -89,11 +161,32 @@ class _LoginWebViewPageState extends State<LoginWebViewPage> {
       body: !_ready
           ? const SizedBox.shrink()
           : InAppWebView(
-              initialUrlRequest: URLRequest(url: WebUri(widget.loginUrl)),
-              initialSettings: InAppWebViewSettings(userAgent: kUserAgent['User-Agent'], javaScriptEnabled: true),
+              initialUrlRequest: URLRequest(url: WebUri(widget.url)),
+              initialSettings: InAppWebViewSettings(javaScriptEnabled: true),
+              onWebViewCreated: (c) => _controller = c,
               onProgressChanged: (_, p) => setState(() => _progress = p),
               onLoadStop: _check,
             ),
+    );
+  }
+
+  InAppWebViewController? _controller;
+}
+
+/// "去验证"路由页：打开当前线路的首页过 Cloudflare 验证，通过后写回 cookie、重新确认登录状态并返回。
+class VerifyPage extends ConsumerWidget {
+  const VerifyPage({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final node = ref.watch(nodeProvider);
+    return LoginWebViewPage(
+      url: '${siteBase(node)}/',
+      title: '验证（${node.node.replaceFirst('https://www.', '')}）',
+      onDone: (r) async {
+        await ref.read(sessionProvider.notifier).afterVerify(r.cookies, userAgent: r.userAgent);
+        if (context.mounted) context.pop();
+      },
     );
   }
 }

@@ -42,7 +42,7 @@ class _RecommendTab extends ConsumerWidget {
           .watch(_recommendProvider)
           .when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => StatePanel(title: '加载失败', detail: e.toString(), onRetry: () => ref.invalidate(_recommendProvider)),
+            error: (e, _) => StatePanel(title: '加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(_recommendProvider)),
             data: (blocks) => ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [

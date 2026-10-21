@@ -28,7 +28,7 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
       appBar: AppBar(title: const Text('缓存管理')),
       body: novel.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => StatePanel(title: '加载失败', detail: e.toString(), onRetry: () => ref.invalidate(novelProvider(widget.aid))),
+        error: (e, _) => StatePanel(title: '加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(novelProvider(widget.aid))),
         data: (data) {
           final all = data.catalogue.expand((v) => v.chapters).toList();
           final cached = ChapterCache.count(widget.aid);
@@ -96,6 +96,7 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                         onPressed: _picked.isEmpty
                             ? null
                             : () async {
+                                if (running) ref.read(downloadProvider.notifier).cancel(widget.aid);
                                 await ChapterCache.removeChapters(widget.aid, _picked);
                                 setState(_picked.clear);
                               },

@@ -6,7 +6,8 @@ import '../models/novel_cover.dart';
 import '../data/wenku8/wenku8_parser.dart';
 import 'package:flutter/services.dart';
 
-import 'data.dart' show PageResult, lastFailedHtml;
+import 'data.dart' show PageResult;
+import 'image_cache.dart';
 import 'env.dart';
 import 'router.dart';
 import 'session.dart';
@@ -41,11 +42,17 @@ class LoginPrompt extends StatelessWidget {
 
 /// 错误 / 空状态。出错时给"重试"，没登录时额外给"去登录"。可滚动，保证下拉刷新可用。
 class StatePanel extends ConsumerWidget {
-  const StatePanel({super.key, required this.title, this.detail, this.onRetry});
+  const StatePanel({super.key, required this.title, this.detail, this.onRetry, this.error, this.sourceHtml});
 
   final String title;
   final String? detail;
   final VoidCallback? onRetry;
+
+  /// 出错的原始异常：被 Cloudflare 拦住时给"去验证"入口
+  final Object? error;
+
+  /// 解析失败的页面源码（搜索用），给"复制页面源码"按钮
+  final String? sourceHtml;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -70,11 +77,16 @@ class StatePanel extends ConsumerWidget {
           const SizedBox(height: 24),
           Center(child: OutlinedButton(onPressed: onRetry, child: const Text('重试'))),
         ],
-        if (onRetry != null && lastFailedHtml != null)
+        if (error != null && isCloudflare(error!))
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Center(child: FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(160, 44)), onPressed: () => context.push(Routes.verify), child: const Text('去验证'))),
+          ),
+        if (onRetry != null && sourceHtml != null)
           Center(
             child: TextButton(
               onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: lastFailedHtml!));
+                await Clipboard.setData(ClipboardData(text: sourceHtml!));
                 if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已复制页面源码，可以粘贴给开发者排查')));
               },
               child: const Text('复制页面源码'),
@@ -91,12 +103,8 @@ class StatePanel extends ConsumerWidget {
   }
 }
 
-/// 原生 App 里 Image.network 不走代理，所以自己用 Dio 取图并缓存在内存里；网页预览走转发程序，直接用 Image.network。
-// shortcut: 只缓存在内存，没有上限也不落盘，封面很多时占内存，要时改成磁盘缓存
-final imageBytesProvider = FutureProvider.family<Uint8List, String>((ref, url) async {
-  final res = await ref.watch(imageDioProvider).get<List<int>>(url.replaceFirst('http://', 'https://'));
-  return Uint8List.fromList(res.data!);
-});
+/// 原生 App 里 Image.network 不走代理，所以用 [ImageStore] 取图（内存 LRU + 磁盘缓存）；网页预览走转发程序，直接用 Image.network。
+final imageBytesProvider = FutureProvider.autoDispose.family<Uint8List, String>((ref, url) => ref.read(imageStoreProvider).load(url));
 
 class NetImage extends ConsumerWidget {
   const NetImage(this.url, {super.key, this.fit = BoxFit.cover, this.error});
@@ -174,9 +182,12 @@ SliverGridDelegate _gridDelegate(double width) =>
 
 /// 分页的书籍网格：下拉刷新，滑到底自动加载下一页。[fetch] 变化（用 [Key] 区分）时整体重新加载。
 class PagedNovelGrid extends ConsumerStatefulWidget {
-  const PagedNovelGrid({super.key, required this.fetch});
+  const PagedNovelGrid({super.key, required this.fetch, this.sourceHtml});
 
   final Future<PageResult> Function(int page) fetch;
+
+  /// 出错时取解析失败的页面源码（搜索页用）
+  final String? Function()? sourceHtml;
 
   @override
   ConsumerState<PagedNovelGrid> createState() => _PagedNovelGridState();
@@ -225,7 +236,7 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
       if (_loading) return const Center(child: CircularProgressIndicator());
       return RefreshIndicator(
         onRefresh: () => _load(reset: true),
-        child: _error != null ? StatePanel(title: '加载失败', detail: _error.toString(), onRetry: () => _load(reset: true)) : const StatePanel(title: '没有内容'),
+        child: _error != null ? StatePanel(title: '加载失败', detail: _error.toString(), error: _error, sourceHtml: widget.sourceHtml?.call(), onRetry: () => _load(reset: true)) : const StatePanel(title: '没有内容'),
       );
     }
     return RefreshIndicator(

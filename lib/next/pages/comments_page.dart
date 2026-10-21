@@ -26,7 +26,7 @@ class _ThreadListState<T> extends ConsumerState<_ThreadList<T>> {
   final _items = <T>[];
   final _input = TextEditingController();
   int _page = 0;
-  bool _loading = false, _end = false;
+  bool _loading = false, _end = false, _sending = false;
   Object? _error;
 
   @override
@@ -73,13 +73,16 @@ class _ThreadListState<T> extends ConsumerState<_ThreadList<T>> {
       return;
     }
     final text = _input.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
     try {
       await widget.send(text);
-      _input.clear();
+      _input.clear(); // 发送成功才清空，失败时保留输入
       await _load(reset: true);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -89,7 +92,7 @@ class _ThreadListState<T> extends ConsumerState<_ThreadList<T>> {
       children: [
         Expanded(
           child: _items.isEmpty
-              ? (_loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: () => _load(reset: true), child: StatePanel(title: _error != null ? '加载失败' : '还没有内容', detail: _error?.toString(), onRetry: _error != null ? () => _load(reset: true) : null)))
+              ? (_loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(onRefresh: () => _load(reset: true), child: StatePanel(title: _error != null ? '加载失败' : '还没有内容', detail: _error?.toString(), error: _error, onRetry: _error != null ? () => _load(reset: true) : null)))
               : RefreshIndicator(
                   onRefresh: () => _load(reset: true),
                   child: NotificationListener<ScrollNotification>(
@@ -110,7 +113,7 @@ class _ThreadListState<T> extends ConsumerState<_ThreadList<T>> {
                 Expanded(
                   child: TextField(controller: _input, minLines: 1, maxLines: 4, decoration: InputDecoration(hintText: widget.hint)),
                 ),
-                IconButton(onPressed: _send, icon: const Icon(Icons.send_outlined)),
+                IconButton(onPressed: _sending ? null : _send, icon: const Icon(Icons.send_outlined)),
               ],
             ),
           ),

@@ -38,26 +38,46 @@ class NovelPage {
 /// 所有网络请求的入口：每个方法 = 请求页面 + 交给解析层。页面结构不对（多半是没登录）时抛出
 /// [Wenku8UnexpectedPageException]，界面据此提示去登录。
 class Api {
-  Api(this._client, this._urls, this._base);
+  Api(this._client, this._urls, this._base, this._scope);
 
   final Wenku8Client _client;
   final Wenku8Urls _urls;
   final String _base;
 
-  /// 取页面；[offline] 为 true 时联网失败可以用上次保存的备份。
-  Future<String> _page(String url, {bool offline = false}) async {
+  /// 当前用户 ID（游客为 guest）：账号私有页面（书架）的离线备份按它分开存。
+  final String _scope;
+
+  /// 取页面并解析，带离线备份：
+  /// - 联网且解析成功：返回结果并更新备份（解析失败的页面——登录页、错误页、结构变了——绝不写进备份）
+  /// - 页面不对（[Wenku8UnexpectedPageException]）：直接抛出，不拿旧备份冒充
+  /// - 网络问题（超时、断网、5xx、Cloudflare）：有备份就用备份
+  Future<T> _cached<T>(String url, T Function(String html) parse, {bool private = false}) async {
+    final key = private ? '$_scope|$url' : url;
+    final String html;
     try {
-      final html = await _client.getPage(url);
-      if (offline) await PageStore.put(url, html);
-      return html;
+      html = await _client.getPage(url);
     } on Wenku8UnexpectedPageException {
       rethrow;
     } catch (_) {
-      final saved = offline ? PageStore.get(url) : null;
+      final saved = await PageStore.get(key);
       if (saved == null) rethrow;
-      return saved;
+      return parse(saved);
+    }
+    final result = parse(html);
+    await PageStore.put(key, html);
+    return result;
+  }
+
+  /// 提交表单；返回"出现错误！"页（太频繁、没权限等）当失败处理，让界面保留用户输入。
+  Future<void> _submit(String url, Object data) async {
+    final html = await _client.postForm(url, data);
+    if (Wenku8Parser.isErrorPage(html)) {
+      final why = parse(html).getElementsByClassName('blockcontent').firstOrNull?.text.trim();
+      throw Wenku8UnexpectedPageException(why == null || why.isEmpty ? '提交失败，请稍后再试' : why);
     }
   }
+
+  static String _enc(String value) => Wenku8Charset.percentEncode(value, CharsetType.gbk);
 
   PageResult _list(String html) => PageResult(Wenku8Parser.novelList(html, baseUrl: _base), Wenku8Parser.maxPage(html));
 
@@ -70,6 +90,7 @@ class Api {
   Future<PageResult> search(String keyword, {required bool byAuthor, required int page}) async {
     final html = await _client.getPage(byAuthor ? _urls.searchByAuthor(keyword, page) : _urls.searchByTitle(keyword, page));
     final doc = parse(html);
+    lastFailedHtml = null;
     if (Wenku8Parser.isErrorPage(html)) {
       final why = doc.getElementsByClassName('blockcontent').firstOrNull?.text.trim();
       throw Wenku8UnexpectedPageException(why == null || why.isEmpty ? '搜索太频繁，请 5 秒后再试' : why);
@@ -87,19 +108,19 @@ class Api {
     return result;
   }
 
-  Future<List<RecommendBlock>> recommend() async => Wenku8Parser.recommend(await _page(_urls.home(), offline: true));
+  Future<List<RecommendBlock>> recommend() => _cached(_urls.home(), Wenku8Parser.recommend);
 
   Future<NovelPage> novel(String aid) async {
-    final detail = Wenku8Parser.novelDetail(await _page(_urls.novelDetail(aid), offline: true));
-    return NovelPage(detail, Wenku8Parser.catalogue(await _page(_urls.catalogue(aid), offline: true)));
+    final detail = await _cached(_urls.novelDetail(aid), Wenku8Parser.novelDetail);
+    return NovelPage(detail, await catalogue(aid));
   }
 
   /// 只取目录（检查更新用，比 [novel] 少一次请求）。
-  Future<List<CatVolume>> catalogue(String aid) async => Wenku8Parser.catalogue(await _page(_urls.catalogue(aid), offline: true));
+  Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue);
 
   Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid)));
 
-  Future<Bookshelf> bookshelf(int classId) async => Wenku8Parser.bookshelf(await _page(_urls.bookshelf(classId), offline: true), classId);
+  Future<Bookshelf> bookshelf(int classId) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true);
 
   /// 加入默认书架。wenku8 返回"出现错误！"页时说明失败（例如书架满了）。
   Future<void> addToBookshelf(String aid) async {
@@ -109,27 +130,25 @@ class Api {
   Future<void> removeFromBookshelf(String bid) => _client.getPage(_urls.removeFromBookshelf(bid));
 
   Future<void> removeBooks(List<String> bids, int classId) =>
-      _client.postForm(_urls.bookshelfAction(), {'checkid[]': bids, 'classlist': classId, 'checkall': 'checkall', 'newclassid': -1, 'classid': classId});
+      _submit(_urls.bookshelfAction(), {'checkid[]': bids, 'classlist': classId, 'checkall': 'checkall', 'newclassid': -1, 'classid': classId});
 
   Future<void> moveBooks(List<String> bids, int classId, int newClassId) =>
-      _client.postForm(_urls.bookshelfAction(), {'checkid[]': bids, 'classlist': classId, 'checkall': 'checkall', 'newclassid': newClassId, 'classid': classId});
+      _submit(_urls.bookshelfAction(), {'checkid[]': bids, 'classlist': classId, 'checkall': 'checkall', 'newclassid': newClassId, 'classid': classId});
 
   Future<String> vote(String aid) async => Wenku8Parser.voteResult(await _client.getPage(_urls.vote(aid)));
 
   Future<List<CommentItem>> comments(String aid, int page) async => Wenku8Parser.comments(await _client.getPage(_urls.comments(aid, page)));
 
-  Future<void> sendComment(String aid, String title, String content) => _client.postForm(
-    _urls.sendComment(aid),
-    'ptitle=${Wenku8Charset.percentEncodeNonAscii(title, CharsetType.gbk)}&pcontent=${Wenku8Charset.percentEncodeNonAscii(content, CharsetType.gbk)}&Submit=${_urls.submitButtonValue()}',
-  );
+  Future<void> sendComment(String aid, String title, String content) =>
+      _submit(_urls.sendComment(aid), 'ptitle=${_enc(title)}&pcontent=${_enc(content)}&Submit=${_urls.submitButtonValue()}');
 
-  Future<void> sendReply(String aid, String rid, String content) =>
-      _client.postForm(_urls.sendReply(aid, rid), 'pcontent=${Wenku8Charset.percentEncodeNonAscii(content, CharsetType.gbk)}&Submit=${_urls.submitButtonValue()}');
+  Future<void> sendReply(String aid, String rid, String content) => _submit(_urls.sendReply(aid, rid), 'pcontent=${_enc(content)}&Submit=${_urls.submitButtonValue()}');
 
   Future<List<ReplyItem>> replies(String rid, int page) async => Wenku8Parser.replies(await _client.getPage(_urls.replies(rid, page)));
 }
 
 final apiProvider = Provider<Api>((ref) {
-  final store = ref.watch(sessionStoreProvider);
-  return Api(ref.watch(wenku8ClientProvider), ref.watch(wenku8UrlsProvider), siteBase(store));
+  final node = ref.watch(nodeProvider);
+  final scope = ref.watch(sessionProvider.select((s) => s is SessionLoggedIn ? s.user.uid : 'guest'));
+  return Api(ref.watch(wenku8ClientProvider), ref.watch(wenku8UrlsProvider), siteBase(node), scope);
 });

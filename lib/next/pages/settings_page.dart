@@ -6,6 +6,7 @@ import '../../models/common/wenku8_node.dart';
 import 'package:go_router/go_router.dart';
 
 import '../env.dart';
+import '../image_cache.dart';
 import '../router.dart';
 import '../theme.dart';
 import '../session.dart';
@@ -64,7 +65,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onSelectionChanged: (s) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(mode: s.first)),
           ),
           const SizedBox(height: 8),
-          ListTile(contentPadding: EdgeInsets.zero, title: const Text('正则替换'), subtitle: const Text('去广告、统一用字'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.rules)),
+          ListTile(contentPadding: EdgeInsets.zero, title: const Text('正则规则'), subtitle: const Text('替换（去广告、统一用字）和高亮（人物名染色、备注）'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.rules)),
           Text('字号 ${prefs.fontSize.round()}'),
           Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(fontSize: v))),
           Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
@@ -76,17 +77,29 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ButtonSegment(value: Wenku8Node.wwwWenku8Net, label: Text('wenku8.net')),
                 ButtonSegment(value: Wenku8Node.wwwWenku8Cc, label: Text('wenku8.cc')),
               ],
-              selected: {store.node},
-              onSelectionChanged: (s) async {
-                await store.setNode(s.first);
-                setState(() {});
-              },
+              selected: {ref.watch(nodeProvider)},
+              onSelectionChanged: (s) => ref.read(nodeProvider.notifier).set(s.first),
             ),
             const SizedBox(height: 12),
             TextFormField(
               initialValue: store.proxy,
               decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'),
               onChanged: store.setProxy,
+            ),
+          ],
+          if (!isWebPreview) ...[
+            const SizedBox(height: 8),
+            FutureBuilder<int>(
+              future: ref.read(imageStoreProvider).diskBytes(),
+              builder: (context, snap) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('清除图片缓存'),
+                subtitle: Text(snap.hasData ? '封面和插图缓存 ${(snap.data! / (1 << 20)).toStringAsFixed(1)} MB' : '计算中…'),
+                onTap: () async {
+                  await ref.read(imageStoreProvider).clearDisk();
+                  if (context.mounted) setState(() {});
+                },
+              ),
             ),
           ],
           section('关于'),

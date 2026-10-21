@@ -7,12 +7,14 @@ import '../../models/bookshelf.dart';
 import '../catalog.dart';
 import '../data.dart';
 import '../progress.dart';
+import '../read_state.dart';
 import '../router.dart';
 import '../session.dart';
 import '../updates.dart';
 import '../widgets.dart';
 
-final bookshelfProvider = FutureProvider.autoDispose.family<Bookshelf, int>((ref, classId) => ref.watch(apiProvider).bookshelf(classId));
+/// 常驻（不 autoDispose）：详情页判断"这本书在不在书架"、书架页都用同一份数据，只在刷新、加入、移出后才重新请求。
+final bookshelfProvider = FutureProvider.family<Bookshelf, int>((ref, classId) => ref.watch(apiProvider).bookshelf(classId));
 
 enum ShelfSort {
   site('默认'),
@@ -191,7 +193,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
             onRefresh: () => ref.refresh(bookshelfProvider(widget.classId).future),
             child: shelf.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => StatePanel(title: '书架加载失败', detail: e.toString(), onRetry: () => ref.invalidate(bookshelfProvider(widget.classId))),
+              error: (e, _) => StatePanel(title: '书架加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(bookshelfProvider(widget.classId))),
               data: (data) {
                 final books = _arrange(data.list, sort, query, widget.classId);
                 if (data.list.isEmpty) return const StatePanel(title: '这个书架还是空的', detail: '在书籍详情页点"加入书架"后会出现在默认书架。');
@@ -205,6 +207,9 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                     itemBuilder: (context, i) {
                       final book = books[i];
                       final picked = _selected.contains(book.bid);
+                      // 未读章数：上次检查更新时记下的总章数减去读过的章数
+                      final total = UpdateStore.knownCounts()[book.aid] ?? 0;
+                      final unread = total - ReadState.read(book.aid).length;
                       void toggle() => setState(() => picked ? _selected.remove(book.bid) : _selected.add(book.bid));
                       return GestureDetector(
                         onLongPress: toggle,
@@ -213,7 +218,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                           aid: book.aid,
                           imageUrl: book.img,
                           onTap: _selected.isEmpty ? () => context.push(Routes.novel(book.aid)) : toggle,
-                          badge: picked ? Icon(Icons.check_circle, color: theme.colorScheme.primary) : null,
+                          badge: picked ? Icon(Icons.check_circle, color: theme.colorScheme.primary) : (unread > 0 && total > 0 ? Badge(label: Text('$unread')) : null),
                         ),
                       );
                     },

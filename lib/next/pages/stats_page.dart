@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'package:go_router/go_router.dart';
+
+import '../../data/wenku8/wenku8_parser.dart';
 import '../cache.dart';
+import '../read_state.dart';
+import '../router.dart';
 import '../history.dart';
 import '../stats.dart';
 import '../widgets.dart';
@@ -21,6 +26,7 @@ class StatsPage extends StatelessWidget {
     final days = [for (var i = 6; i >= 0; i--) DateTime.now().subtract(Duration(days: i))];
     final maxSec = days.map((d) => perDay[ReadingStats.dayKey(d)] ?? 0).fold(1, (a, b) => a > b ? a : b);
     final titles = {for (final e in ReadingHistory.all()) e.aid: e.title, for (final e in ChapterCache.books().entries) e.key: e.value.$1};
+    final covers = {for (final e in ReadingHistory.all()) e.aid: e.img, for (final e in ChapterCache.books().entries) e.key: e.value.$3};
     final top = perBook.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
     Widget tile(String label, String value) => Expanded(
@@ -73,7 +79,24 @@ class StatsPage extends StatelessWidget {
                 Text('单位：分钟', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                 const SizedBox(height: 24),
                 Text('读得最久', style: theme.textTheme.titleMedium),
-                for (final e in top.take(10)) ListTile(contentPadding: EdgeInsets.zero, title: Text(titles[e.key] ?? '书号 ${e.key}', maxLines: 1, overflow: TextOverflow.ellipsis), trailing: Text(_duration(e.value))),
+                for (final e in top.take(20))
+                  Builder(
+                    builder: (context) {
+                      final meta = ReadingStats.meta(e.key);
+                      final img = (meta?.img.isNotEmpty ?? false) ? meta!.img : (covers[e.key] ?? Wenku8Parser.coverUrl(e.key));
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: SizedBox(width: 40, height: 54, child: CoverImage(img)),
+                        title: Text(meta?.title ?? titles[e.key] ?? '书号 ${e.key}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text('${ReadingStats.bookDays(e.key).length} 天 · ${ReadState.read(e.key).length} 章已读'),
+                        trailing: Text(_duration(e.value)),
+                        onTap: () => context.push(Routes.report(e.key)),
+                        onLongPress: () => context.push(Routes.novel(e.key)),
+                      );
+                    },
+                  ),
+                const SizedBox(height: 4),
+                Text('点一本书看阅读报告，长按进详情', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
               ],
             ),
     );

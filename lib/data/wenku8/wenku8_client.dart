@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:cookie_jar/cookie_jar.dart';
@@ -8,6 +10,7 @@ import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import '../../models/common/charset_type.dart';
 import '../../models/custom_exception.dart';
 import 'wenku8_charset.dart';
+import 'wenku8_exceptions.dart';
 
 /// 访问 wenku8 的 HTTP 客户端。
 ///
@@ -17,7 +20,16 @@ class Wenku8Client {
   Wenku8Client({required this.baseUrl, required this.charset, required Map<String, String> headers, Dio? dio, CookieJar? cookieJar})
     : _cookieJar = cookieJar ?? CookieJar() {
     this.dio = (dio ?? Dio())
-      ..options = BaseOptions(headers: headers, responseType: ResponseType.bytes, followRedirects: false, validateStatus: (status) => status != null)
+      ..options = BaseOptions(
+        headers: headers,
+        responseType: ResponseType.bytes,
+        followRedirects: false,
+        validateStatus: (status) => status != null,
+        connectTimeout: const Duration(seconds: 12),
+        sendTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 25),
+      )
+      ..interceptors.add(_ThrottleInterceptor())
       ..interceptors.add(_CloudflareInterceptor());
     // 浏览器自己管理 cookie，CookieManager 在网页环境会断言失败（网页预览的 cookie 由转发程序保存）
     if (!kIsWeb) this.dio.interceptors.add(CookieManager(_cookieJar));
@@ -47,6 +59,9 @@ class Wenku8Client {
 
   Future<void> clearCookie() => _cookieJar.deleteAll();
 
+  /// 导出 cookie jar 里会发给 [host] 的 cookie（名字 → 值），用来把服务端续期过的 cookie 存回本地。
+  Future<Map<String, String>> exportCookies(String host) async => {for (final c in await _cookieJar.loadForRequest(Uri.parse(host))) c.name: c.value};
+
   /// GET 一个页面并按当前编码解码成字符串。
   Future<String> getPage(String url) async {
     final currentCharset = charset();
@@ -65,7 +80,14 @@ class Wenku8Client {
       data: data,
       options: Options(contentType: Headers.formUrlEncodedContentType),
     );
+    _checkStatus(response);
     return Wenku8Charset.decode(response.data as Uint8List, currentCharset);
+  }
+
+  /// 4xx/5xx 不是页面，抛出让调用方走"网络问题"分支（403 已由 Cloudflare 拦截器处理）。
+  void _checkStatus(Response response) {
+    final status = response.statusCode ?? 0;
+    if (status >= 400) throw Wenku8HttpException(status);
   }
 
   /// wenku8 会用 3xx 跳转（例如跳到登录页）。dio 关闭了自动跳转，这里手动跟随，
@@ -81,6 +103,7 @@ class Wenku8Client {
       if (location == null || location.isEmpty) break;
       current = await dio.getUri(current.requestOptions.uri.resolve(location));
     }
+    _checkStatus(current);
     return current.data as Uint8List;
   }
 }
@@ -99,5 +122,52 @@ class _CloudflareInterceptor extends Interceptor {
       return;
     }
     handler.next(response);
+  }
+}
+
+/// 全局限流：同时最多 4 个请求在途，相邻请求至少间隔 120 毫秒，避免触发 Cloudflare 的速率限制。
+class _ThrottleInterceptor extends Interceptor {
+  static const _maxActive = 4;
+  static const _gap = Duration(milliseconds: 120);
+
+  int _active = 0;
+  DateTime _last = DateTime.fromMillisecondsSinceEpoch(0);
+  final _waiters = Queue<Completer<void>>();
+
+  @override
+  Future<void> onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
+    if (_active >= _maxActive) {
+      final c = Completer<void>();
+      _waiters.add(c);
+      await c.future;
+    } else {
+      _active++;
+    }
+    final wait = _gap - DateTime.now().difference(_last);
+    if (!wait.isNegative) await Future<void>.delayed(wait);
+    _last = DateTime.now();
+    options.extra['throttled'] = true;
+    handler.next(options);
+  }
+
+  void _release(RequestOptions options) {
+    if (options.extra.remove('throttled') != true) return;
+    if (_waiters.isNotEmpty) {
+      _waiters.removeFirst().complete();
+    } else {
+      _active--;
+    }
+  }
+
+  @override
+  void onResponse(Response<dynamic> response, ResponseInterceptorHandler handler) {
+    _release(response.requestOptions);
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    _release(err.requestOptions);
+    handler.next(err);
   }
 }
