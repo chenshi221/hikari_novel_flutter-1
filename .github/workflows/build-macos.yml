@@ -1,0 +1,44 @@
+name: Build macOS (personal use)
+
+on:
+  workflow_dispatch:
+  # 手动触发只对默认分支上的工作流有效；合并前先在改动这个文件时自动打一次包
+  push:
+    paths:
+      - .github/workflows/build-macos.yml
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      # flutter_inappwebview_macos 的 Swift Package 版本最低系统设置过低，用 SPM 编译会报错，改用 CocoaPods
+      - name: Use CocoaPods instead of Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release -t lib/next/main.dart
+
+      - name: Zip app
+        run: |
+          cd build/macos/Build/Products/Release
+          ditto -c -k --sequesterRsrc --keepParent *.app "$GITHUB_WORKSPACE/hikari_novel_macos.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: hikari_novel_macos.zip
+          retention-days: 1
+# 1792589229
+# 1792594163

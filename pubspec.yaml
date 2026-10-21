@@ -3,7 +3,7 @@ description: "An app for reading wenku8, refactor with flutter"
 
 publish_to: 'none'
 
-version: 0.5.0-beta.1+13
+version: 0.10.0-beta.3+22
 
 environment:
   sdk: ^3.12.2
@@ -14,6 +14,9 @@ dependencies:
 
   # 框架
   get: ^4.6.6
+  # 新框架（lib/next）：状态管理与路由
+  flutter_riverpod: ^3.4.3
+  go_router: ^18.1.1
 
   # 网络
   dio: ^5.3.3
@@ -85,6 +88,8 @@ dependencies:
 
   # 文件选择器
   file_picker: ^13.0.0
+  flutter_secure_storage: ^11.2.0
+  share_plus: ^13.3.1
 
   # ttf源文件解析
   ttf_metadata: ^0.0.6
@@ -132,6 +137,15 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/theme/
+
+  fonts:
+    - family: LXGWWenKai
+      fonts:
+        - asset: assets/fonts/LXGWWenKaiLite.ttf
+    - family: NotoSerifSCBundled
+      fonts:
+        - asset: assets/fonts/NotoSerifSC.otf
 
 # dart run flutter_native_splash:create
 flutter_native_splash:
