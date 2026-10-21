@@ -11,6 +11,7 @@ import '../router.dart';
 import '../theme.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../widgets.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -31,7 +32,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: ListView(
+      body: contentWidth(ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
           section('外观'),
@@ -128,7 +129,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             builder: (context, snap) => ListTile(contentPadding: EdgeInsets.zero, title: const Text('Hikari Novel'), subtitle: Text('轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}')),
           ),
         ],
-      ),
+      )),
     );
   }
 }

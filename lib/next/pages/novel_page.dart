@@ -57,6 +57,8 @@ class _Body extends ConsumerStatefulWidget {
 }
 
 class _BodyState extends ConsumerState<_Body> {
+  bool _introOpen = false;
+
   String get aid => widget.aid;
   NovelPage get data => widget.data;
 
@@ -102,13 +104,23 @@ class _BodyState extends ConsumerState<_Body> {
     final startCid = progress?.cid ?? _firstCid();
     final muted = theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
 
-    return ListView(
+    return contentWidth(ListView(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
       children: [
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(width: 110, height: 150, child: CoverImage(d.imgUrl)),
+            SizedBox(
+              width: 110,
+              height: 150,
+              child: GestureDetector(
+                onTap: () => showDialog(
+                  context: context,
+                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(d.imgUrl, fit: BoxFit.contain))),
+                ),
+                child: CoverImage(d.imgUrl),
+              ),
+            ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -223,7 +235,20 @@ class _BodyState extends ConsumerState<_Body> {
         const SizedBox(height: 8),
         Text('简介', style: theme.textTheme.titleMedium),
         const SizedBox(height: 6),
-        Text(d.introduce.trim().isEmpty ? '暂无简介' : d.introduce.trim(), style: theme.textTheme.bodyMedium?.copyWith(height: 1.6)),
+        LayoutBuilder(
+          builder: (context, c) {
+            final intro = d.introduce.trim().isEmpty ? '暂无简介' : d.introduce.trim();
+            final style = theme.textTheme.bodyMedium?.copyWith(height: 1.6);
+            final over = (TextPainter(text: TextSpan(text: intro, style: style), maxLines: 5, textDirection: TextDirection.ltr, textScaler: MediaQuery.textScalerOf(context))..layout(maxWidth: c.maxWidth)).didExceedMaxLines;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(intro, maxLines: _introOpen ? null : 5, overflow: TextOverflow.ellipsis, style: style),
+                if (over) TextButton(onPressed: () => setState(() => _introOpen = !_introOpen), child: Text(_introOpen ? '收起' : '展开')),
+              ],
+            );
+          },
+        ),
         const SizedBox(height: 20),
         Text('目录', style: theme.textTheme.titleMedium),
         const SizedBox(height: 4),
@@ -249,7 +274,7 @@ class _BodyState extends ConsumerState<_Body> {
             ],
           ),
       ],
-    );
+    ));
   }
 }
 

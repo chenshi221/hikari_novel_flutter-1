@@ -12,6 +12,9 @@ import 'env.dart';
 import 'router.dart';
 import 'session.dart';
 
+/// 宽屏（平板、电脑）上把内容限制在 760 宽并居中。
+Widget contentWidth(Widget child) => Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: child));
+
 /// 游客看到需要账号的内容时显示的提示，点按钮再去登录。
 class LoginPrompt extends StatelessWidget {
   const LoginPrompt({super.key, required this.title, this.detail = '登录轻小说文库账号后即可使用。'});

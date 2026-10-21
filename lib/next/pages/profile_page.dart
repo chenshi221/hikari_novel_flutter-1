@@ -14,6 +14,7 @@ import '../session.dart';
 import '../settings.dart';
 import '../theme.dart';
 import '../theme_art.dart';
+import '../widgets.dart';
 
 /// 自己选的头像：只保存在本机（wenku8 的头像要在网站上改，这里不改网站上的）。
 class _AvatarController extends Notifier<String?> {
@@ -112,7 +113,7 @@ class ProfilePage extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
-      body: ListView(
+      body: contentWidth(ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
           if (palette.art != null)
@@ -156,7 +157,7 @@ class ProfilePage extends ConsumerWidget {
           entry(Icons.settings_outlined, '设置', Routes.settings),
           if (user != null) ...[const SizedBox(height: 24), OutlinedButton(onPressed: () => _confirmLogout(context, ref), child: const Text('退出登录'))],
         ],
-      ),
+      )),
     );
   }
 }

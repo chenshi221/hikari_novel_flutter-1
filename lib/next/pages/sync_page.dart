@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../sync.dart';
+import '../widgets.dart';
 
 /// 同步设置：坚果云（或其他 WebDAV）。应用密码在坚果云网页端"账户信息 → 安全选项 → 第三方应用管理"里生成。
 class SyncPage extends ConsumerStatefulWidget {
@@ -85,7 +86,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     final last = Sync.lastSync;
     return Scaffold(
       appBar: AppBar(title: const Text('同步')),
-      body: ListView(
+      body: contentWidth(ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Text('在多台设备上填同一个账号和文件夹，进度、书签、历史、已读章节、规则备注和阅读统计会互相合并。章节缓存和外观设置不同步。', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
@@ -131,7 +132,7 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           Text('已配置后，App 启动、回到前台和进入后台时会自动同步（3 分钟内不重复）。密码优先存在系统钥匙串，不可用时存在本机应用数据里。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           Text('书签和规则的删除、规则的修改会同步（记录保留 90 天，更久没同步的设备可能把已删的带回来）；备注的删改不同步。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         ],
-      ),
+      )),
     );
   }
 }
