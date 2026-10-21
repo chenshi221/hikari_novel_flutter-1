@@ -66,6 +66,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 8),
           ListTile(contentPadding: EdgeInsets.zero, title: const Text('正则规则'), subtitle: const Text('替换（去广告、统一用字）和高亮（人物名染色、备注）'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.rules)),
+          ListTile(contentPadding: EdgeInsets.zero, title: const Text('同步'), subtitle: const Text('通过坚果云 WebDAV 在多台设备间同步进度、书签、统计'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.sync)),
           Text('字号 ${prefs.fontSize.round()}'),
           Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(fontSize: v))),
           Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),

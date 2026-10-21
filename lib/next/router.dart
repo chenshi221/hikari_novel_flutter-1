@@ -15,6 +15,7 @@ import 'pages/novel_page.dart';
 import 'pages/profile_page.dart';
 import 'pages/report_page.dart';
 import 'pages/rules_page.dart';
+import 'pages/sync_page.dart';
 import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stats_page.dart';
@@ -36,6 +37,7 @@ class Routes {
   static const bookmarks = '/bookmarks';
   static String report(String aid) => '/report/$aid';
   static const rules = '/rules';
+  static const sync = '/sync';
   static const profile = '/profile';
   static const search = '/search';
   static const settings = '/settings';
@@ -74,6 +76,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
+      GoRoute(path: Routes.sync, builder: (_, _) => const SyncPage()),
       GoRoute(path: '/cache/:aid', builder: (_, state) => CacheBookPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.history, builder: (_, _) => const HistoryPage()),
       GoRoute(path: Routes.cache, builder: (_, _) => const CachePage()),

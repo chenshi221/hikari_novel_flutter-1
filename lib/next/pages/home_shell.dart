@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../sync.dart';
 import '../theme.dart';
 import '../theme_art.dart';
 import '../updates.dart';
@@ -45,7 +46,10 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // 进后台时把 cookie jar 里服务端续期过的 cookie 写回本地
-    if (state == AppLifecycleState.paused) ref.read(sessionProvider.notifier).persistCookies();
+    if (state == AppLifecycleState.paused) {
+      ref.read(sessionProvider.notifier).persistCookies();
+      Sync.auto();
+    }
   }
 
   void _checkUpdates() {
