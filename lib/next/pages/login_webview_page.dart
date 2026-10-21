@@ -44,6 +44,9 @@ class LoginWebViewPage extends ConsumerStatefulWidget {
 class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   final _cookieManager = CookieManager.instance();
   late final String _host = Uri.parse(widget.url).host;
+  // 站点可能在 wenku8.net 和 www.wenku8.net 之间跳转，按主域名判断
+  late final String _root = _host.split('.').reversed.take(2).toList().reversed.join('.');
+  String _status = '';
   bool _ready = false;
   bool _done = false;
   bool _submitted = false;
@@ -124,13 +127,14 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
   }
 
   Future<void> _check(InAppWebViewController c, WebUri? uri) async {
-    if (_done || uri == null || uri.host != _host || uri.scheme != 'https') return;
+    if (_done || uri == null || !uri.host.endsWith(_root)) return;
     _ua ??= (await c.evaluateJavascript(source: 'navigator.userAgent')) as String?;
-    final cookies = await _cookieManager.getCookies(url: uri);
-    final names = cookies.map((e) => e.name).toSet();
+    final names = (await _cookieManager.getCookies(url: uri)).map((e) => e.name).toSet();
+    if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：${names.any((n) => n.startsWith('jieqiUserInfo')) ? '有' : '无'}  已填表：${_submitted ? '是' : '否'}');
     if (widget.isLogin) {
-      if (names.contains('jieqiUserInfo') && names.contains('jieqiVisitInfo')) return _finish(c, uri);
-      if (!_submitted && uri.path.contains('login.php')) _submitted = await _fillAndSubmit(c);
+      if (names.any((n) => n.startsWith('jieqiUserInfo'))) return _finish(c, uri);
+      if (!_submitted) _submitted = await _fillAndSubmit(c);
+      if (mounted) setState(() => _status = '${uri.host}${uri.path}  登录cookie：无  已填表：${_submitted ? '是' : '否'}');
     } else if (names.contains('cf_clearance')) {
       await _finish(c, uri);
     }
@@ -142,11 +146,11 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
-          if (!widget.isLogin && _ready)
+          if (_ready)
             TextButton(
               onPressed: () async {
                 final c = _controller;
-                if (c != null) await _finish(c, WebUri(widget.url));
+                if (c != null) await _finish(c, (await c.getUrl()) ?? WebUri(widget.url));
               },
               child: const Text('完成'),
             ),
@@ -158,6 +162,7 @@ class _LoginWebViewPageState extends ConsumerState<LoginWebViewPage> {
               )
             : null,
       ),
+      bottomNavigationBar: _status.isEmpty ? null : Padding(padding: const EdgeInsets.all(8), child: Text(_status, style: Theme.of(context).textTheme.bodySmall)),
       body: !_ready
           ? const SizedBox.shrink()
           : InAppWebView(
