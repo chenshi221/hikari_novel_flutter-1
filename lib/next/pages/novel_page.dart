@@ -1,30 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/cat_volume.dart';
 import '../cache.dart';
 import '../data.dart';
-import '../pages/bookshelf_page.dart' show bookshelfProvider;
+import '../library.dart';
+import 'categories_page.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
 import '../session.dart';
 import '../widgets.dart';
 
-final novelProvider = FutureProvider.autoDispose.family<NovelPage, String>((ref, aid) => ref.watch(apiProvider).novel(aid));
-
-/// 这本书在哪个书架里：返回 bid（移出书架要用），不在书架里为 null。游客直接返回 null。
-final shelfEntryProvider = FutureProvider.autoDispose.family<String?, String>((ref, aid) async {
-  if (ref.watch(sessionProvider) is! SessionLoggedIn) return null;
-  // 书架数据是共享的、常驻的（bookshelfProvider），不用每开一本书的详情页就重新请求 6 个书架页
-  for (var classId = 0; classId < 6; classId++) {
-    final shelf = await ref.watch(bookshelfProvider(classId).future);
-    final hit = shelf.list.where((e) => e.aid == aid).firstOrNull;
-    if (hit != null) return hit.bid;
+/// 详情 + 目录：存过的先给（不等网络，挂 VPN 时也秒开），再联网取最新的；联网失败而本地有就不报错。
+final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref, aid) async* {
+  final api = ref.watch(apiProvider);
+  final saved = await api.saved(aid);
+  if (saved != null) yield saved;
+  try {
+    final fresh = await api.novel(aid);
+    final d = fresh.detail;
+    ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
+    yield fresh;
+  } catch (_) {
+    if (saved == null) rethrow;
   }
-  return null;
 });
 
 class NovelPageView extends ConsumerWidget {
@@ -58,6 +61,8 @@ class _Body extends ConsumerStatefulWidget {
 
 class _BodyState extends ConsumerState<_Body> {
   bool _introOpen = false;
+  final _picked = <String>{}; // 目录里多选的章节
+  bool _reverse = (Hive.box('session').get('catReverse') as bool?) ?? false;
 
   String get aid => widget.aid;
   NovelPage get data => widget.data;
@@ -70,23 +75,15 @@ class _BodyState extends ConsumerState<_Body> {
 
   void _snack(BuildContext context, String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
 
-  Future<void> _toggleShelf(String? bid) async {
-    if (ref.read(sessionProvider) is! SessionLoggedIn) {
-      context.push(Routes.login);
-      return;
-    }
-    final api = ref.read(apiProvider);
-    try {
-      if (bid == null) {
-        await api.addToBookshelf(aid);
-      } else {
-        await api.removeFromBookshelf(bid);
-      }
-      ref.invalidate(bookshelfProvider);
-      ref.invalidate(shelfEntryProvider(aid));
-    } catch (e) {
-      if (mounted) _snack(context, e.toString());
-    }
+  /// 本地书架：先改本地，网站那边由书架同步去推；没登录也能用。有分类时加入后让选分类。
+  Future<void> _toggleShelf(bool inLib) async {
+    final lib = ref.read(libraryProvider.notifier);
+    final d = data.detail;
+    if (inLib) return lib.remove([aid]);
+    final cats = ref.read(libraryProvider).cats;
+    final picked = cats.isEmpty ? const <String>[] : await pickCategories(context, cats, const []);
+    if (picked == null) return;
+    await lib.add(aid, d.title, d.imgUrl, cats: picked);
   }
 
   String? _firstCid() => data.catalogue.expand((v) => v.chapters).firstOrNull?.cid;
@@ -95,7 +92,7 @@ class _BodyState extends ConsumerState<_Body> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final d = data.detail;
-    final entry = ref.watch(shelfEntryProvider(aid));
+    final inLib = ref.watch(libraryProvider.select((s) => s.books.containsKey(aid)));
     final progress = ReadingProgress.of(aid);
     final all = data.catalogue.expand((v) => v.chapters).toList();
     final read = ReadState.read(aid);
@@ -104,8 +101,8 @@ class _BodyState extends ConsumerState<_Body> {
     final startCid = progress?.cid ?? _firstCid();
     final muted = theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
 
-    return contentWidth(ListView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+    final list = contentWidth(ListView(
+      padding: EdgeInsets.fromLTRB(16, 0, 16, _picked.isEmpty ? 32 : 96),
       children: [
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -155,8 +152,8 @@ class _BodyState extends ConsumerState<_Body> {
             const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton(
-                onPressed: entry.isLoading ? null : () => _toggleShelf(entry.value),
-                child: Text(entry.value == null ? '加入书架' : '移出书架'),
+                onPressed: () => _toggleShelf(inLib),
+                child: Text(inLib ? '移出书架' : '加入书架'),
               ),
             ),
           ],
@@ -250,31 +247,91 @@ class _BodyState extends ConsumerState<_Body> {
           },
         ),
         const SizedBox(height: 20),
-        Text('目录', style: theme.textTheme.titleMedium),
+        Row(
+          children: [
+            Expanded(child: Text('目录', style: theme.textTheme.titleMedium)),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _reverse = !_reverse);
+                Hive.box('session').put('catReverse', _reverse);
+              },
+              icon: const Icon(Icons.swap_vert, size: 18),
+              label: Text(_reverse ? '倒序' : '正序'),
+            ),
+          ],
+        ),
+        Text('长按章节可多选：批量标记已读、缓存', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 4),
-        for (final CatVolume v in data.catalogue)
+        for (final CatVolume v in _reverse ? data.catalogue.reversed : data.catalogue)
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
-            initiallyExpanded: data.catalogue.length == 1 || v.chapters.any((c) => c.cid == progress?.cid),
+            initiallyExpanded: data.catalogue.length == 1 || v.chapters.any((c) => c.cid == progress?.cid || _picked.contains(c.cid)),
             title: Text(v.title),
             children: [
-              for (final c in v.chapters)
+              for (final c in _reverse ? v.chapters.reversed : v.chapters)
                 ListTile(
                   dense: true,
-                  leading: read.contains(c.cid) ? Icon(Icons.check, size: 16, color: theme.colorScheme.onSurfaceVariant) : null,
+                  selected: _picked.contains(c.cid),
+                  leading: _picked.isNotEmpty
+                      ? Icon(_picked.contains(c.cid) ? Icons.check_box : Icons.check_box_outline_blank, size: 20)
+                      : (read.contains(c.cid) ? Icon(Icons.check, size: 16, color: theme.colorScheme.onSurfaceVariant) : null),
                   title: Text(
                     c.title,
                     style: c.cid == progress?.cid
                         ? TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)
                         : (read.contains(c.cid) ? TextStyle(color: theme.colorScheme.onSurfaceVariant) : null),
                   ),
-                  trailing: c.cid == progress?.cid ? Text('读到这里', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)) : null,
-                  onTap: () => _open(Routes.reader(aid, c.cid)),
+                  trailing: c.cid == progress?.cid ? Text('读到这里', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)) : (ChapterCache.has(aid, c.cid) ? Icon(Icons.download_done, size: 16, color: theme.colorScheme.onSurfaceVariant) : null),
+                  onTap: _picked.isNotEmpty ? () => _pick(c.cid) : () => _open(Routes.reader(aid, c.cid)),
+                  onLongPress: () => _pick(c.cid),
                 ),
             ],
           ),
       ],
     ));
+    if (_picked.isEmpty) return list;
+    return Stack(
+      children: [
+        list,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Material(
+            elevation: 3,
+            color: theme.colorScheme.surfaceContainer,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  IconButton(tooltip: '取消', icon: const Icon(Icons.close), onPressed: () => setState(_picked.clear)),
+                  Expanded(child: Text('已选 ${_picked.length} 章', maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  // 从第一章选到已选的最后一章，方便"之前的全部标为已读"
+                  TextButton(onPressed: () => setState(() => _picked.addAll(all.take(all.lastIndexWhere((c) => _picked.contains(c.cid)) + 1).map((c) => c.cid))), child: const Text('选到开头')),
+                  TextButton(onPressed: () => _markPicked(true), child: const Text('已读')),
+                  TextButton(onPressed: () => _markPicked(false), child: const Text('未读')),
+                  TextButton(
+                    onPressed: () {
+                      final chosen = all.where((c) => _picked.contains(c.cid)).toList();
+                      ref.read(downloadProvider.notifier).start(aid, data.detail.title, chosen, total: all.length, img: data.detail.imgUrl, firstCid: all.first.cid);
+                      setState(_picked.clear);
+                    },
+                    child: const Text('缓存'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _pick(String cid) => setState(() => _picked.contains(cid) ? _picked.remove(cid) : _picked.add(cid));
+
+  Future<void> _markPicked(bool read) async {
+    await ReadState.setRead(aid, _picked, read);
+    if (mounted) setState(_picked.clear);
   }
 }
 

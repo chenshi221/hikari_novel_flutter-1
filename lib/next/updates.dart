@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'data.dart';
+import 'library.dart';
 
 class UpdateEntry {
   const UpdateEntry({required this.aid, required this.title, required this.img, required this.chapter, required this.cid, required this.time});
@@ -63,18 +64,13 @@ class UpdateController extends Notifier<UpdateProgress> {
   @override
   UpdateProgress build() => const UpdateProgress();
 
-  /// 检查书架里所有书。第一次只记录当前章节数作为基准，不产生更新。
+  /// 检查本地书架里所有书。第一次只记录当前章节数作为基准，不产生更新。
   Future<void> refresh() async {
     if (state.running) return;
     final api = ref.read(apiProvider);
     state = const UpdateProgress(running: true);
     try {
-      final books = <String, ({String title, String img})>{};
-      for (var classId = 0; classId < 6; classId++) {
-        for (final b in (await api.bookshelf(classId)).list) {
-          books[b.aid] = (title: b.title, img: b.img);
-        }
-      }
+      final books = {for (final b in ref.read(libraryProvider).books.values) b.aid: (title: b.title, img: b.img)};
       final known = UpdateStore.knownCounts();
       final feed = UpdateStore.feed().map((e) => {'aid': e.aid, 'title': e.title, 'img': e.img, 'chapter': e.chapter, 'cid': e.cid, 'time': e.time.millisecondsSinceEpoch}).toList();
       final at = <String, int>{};

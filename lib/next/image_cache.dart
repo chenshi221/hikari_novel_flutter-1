@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'library.dart';
 import 'session.dart';
 
 /// 图片缓存：内存里最多留 [_memBytes] 字节（LRU），磁盘上长期保留，断网后封面和插图还能显示。
@@ -84,9 +85,9 @@ class ImageStore {
     _memUsed = 0;
   }
 
-  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%。
+  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%；本地书架里的书的封面不删。
   /// shortcut: 离线缓存的插图也可能被清掉，联网时会重新下载；以后要区分就给离线插图单独目录
-  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes);
+  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes, keep: {for (final url in LibraryStore.covers()) _name(_norm(url))});
 
   Future<int> diskBytes() async {
     final dir = await _cacheDir();
@@ -99,14 +100,15 @@ class ImageStore {
 }
 
 /// 目录总大小超过 [maxBytes] 时，按修改时间从旧到新删文件，直到不超过 [maxBytes] 的 80%。
-Future<void> trimDir(Directory dir, int maxBytes) async {
+/// 文件名在 [keep] 里的不删（但计入总大小）。
+Future<void> trimDir(Directory dir, int maxBytes, {Set<String> keep = const {}}) async {
   final files = <(File, FileStat)>[];
   var total = 0;
   await for (final f in dir.list()) {
     if (f is! File) continue;
     final st = await f.stat();
-    files.add((f, st));
     total += st.size;
+    if (!keep.contains(p.basename(f.path))) files.add((f, st));
   }
   if (total <= maxBytes) return;
   files.sort((a, b) => a.$2.modified.compareTo(b.$2.modified));

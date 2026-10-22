@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../router.dart';
-import '../session.dart';
 import '../updates.dart';
 import '../widgets.dart';
 
@@ -42,7 +41,6 @@ class _UpdatesPageState extends ConsumerState<UpdatesPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final progress = ref.watch(updateProvider);
-    final loggedIn = ref.watch(sessionProvider) is SessionLoggedIn;
     final feed = UpdateStore.feed();
     final lastCheck = UpdateStore.lastCheck;
 
@@ -69,12 +67,10 @@ class _UpdatesPageState extends ConsumerState<UpdatesPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('更新'),
-        actions: [IconButton(tooltip: '检查更新', icon: const Icon(Icons.refresh), onPressed: progress.running || !loggedIn ? null : () => ref.read(updateProvider.notifier).refresh())],
+        actions: [IconButton(tooltip: '检查更新', icon: const Icon(Icons.refresh), onPressed: progress.running ? null : () => ref.read(updateProvider.notifier).refresh())],
         bottom: progress.running ? PreferredSize(preferredSize: const Size.fromHeight(2), child: LinearProgressIndicator(value: progress.total == 0 ? null : progress.done / progress.total, minHeight: 2)) : null,
       ),
-      body: !loggedIn
-          ? const LoginPrompt(title: '登录后追踪更新', detail: '会检查书架里每本书有没有新章节。')
-          : ListView(
+      body: ListView(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),

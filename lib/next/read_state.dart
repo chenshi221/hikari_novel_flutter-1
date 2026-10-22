@@ -18,6 +18,14 @@ class ReadState {
     await _box.put('readchars:$aid', readChars(aid) + chars);
   }
 
+  /// 手动标记一批章节已读 / 未读（详情页多选）。不改"已读字数"。
+  /// shortcut: 同步时已读记录按并集合并，标成未读不会同步到其他设备；要同步得给已读加墓碑
+  static Future<void> setRead(String aid, Iterable<String> cids, bool read) {
+    final set = ReadState.read(aid);
+    read ? set.addAll(cids) : set.removeAll(cids);
+    return _box.put('read:$aid', set.toList());
+  }
+
   static int readChars(String aid) => (_box.get('readchars:$aid') as int?) ?? 0;
 
   /// 书的评分（1 到 5 星），没评过为 0。

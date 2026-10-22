@@ -5,6 +5,7 @@ import '../models/cat_chapter.dart';
 import '../models/content.dart';
 import 'data.dart';
 import 'image_cache.dart';
+import 'library.dart';
 
 /// 离线章节缓存。正文放在 LazyBox（只在读的时候才从磁盘取，不常驻内存），
 /// 章数、大小、书的信息放在一个很小的普通 Box 里，列表和计数不用碰正文。
@@ -99,7 +100,7 @@ class ChapterCache {
 
 /// 网页原文的离线备份（详情、目录、书架、用户页）：联网并解析成功后才更新，断网时拿来顶替。
 /// 最多保留 [_cap] 页，超出删写入最早的（写入时间记在 chapter_index 里，Hive 自己的顺序是按键排的，不能拿来判断新旧）；
-/// 账号私有的页面（书架）键里带用户 ID，退出登录时清掉。
+/// 账号私有的页面（书架）键里带用户 ID，退出登录时清掉。本地书架里的书的详情和目录不参与淘汰，一直留着。
 class PageStore {
   PageStore._();
 
@@ -111,11 +112,22 @@ class PageStore {
 
   static Future<String?> get(String key) async => await _box.get(key) as String?;
 
+  static bool has(String key) => _box.containsKey(key);
+
+  static final _bookPage = RegExp(r'(?:articleinfo\.php\?id=|reader\.php\?aid=)(\d+)$');
+
+  static bool _pinned(String key) {
+    final m = _bookPage.firstMatch(key);
+    return m != null && LibraryStore.contains(m[1]!);
+  }
+
   static Future<void> put(String key, String html) async {
     await _box.put(key, html);
     await _stamp.put('pt|$key', DateTime.now().millisecondsSinceEpoch);
-    while (_box.length > _cap) {
-      final oldest = _box.keys.whereType<String>().reduce((a, b) => _time(a) <= _time(b) ? a : b);
+    final loose = _box.keys.whereType<String>().where((k) => !_pinned(k)).toList();
+    while (loose.length > _cap) {
+      final oldest = loose.reduce((a, b) => _time(a) <= _time(b) ? a : b);
+      loose.remove(oldest);
       await _box.delete(oldest);
       await _stamp.delete('pt|$oldest');
     }

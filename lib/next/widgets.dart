@@ -156,13 +156,16 @@ class CoverImage extends StatelessWidget {
 
 /// 封面 + 书名，点击进入详情。
 class NovelCard extends StatelessWidget {
-  const NovelCard({super.key, required this.title, required this.aid, this.imageUrl, this.onTap, this.badge});
+  const NovelCard({super.key, required this.title, required this.aid, this.imageUrl, this.onTap, this.badge, this.action});
 
   final String title;
   final String aid;
   final String? imageUrl;
   final VoidCallback? onTap;
   final Widget? badge;
+
+  /// 封面右下角的按钮（书架的"继续阅读"）
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +178,7 @@ class NovelCard extends StatelessWidget {
         children: [
           AspectRatio(
             aspectRatio: 3 / 4,
-            child: Stack(fit: StackFit.expand, children: [CoverImage(imageUrl ?? Wenku8Parser.coverUrl(aid)), if (badge != null) Positioned(top: 6, right: 6, child: badge!)]),
+            child: Stack(fit: StackFit.expand, children: [CoverImage(imageUrl ?? Wenku8Parser.coverUrl(aid)), if (badge != null) Positioned(top: 6, right: 6, child: badge!), if (action != null) Positioned(right: 2, bottom: 2, child: action!)]),
           ),
           const SizedBox(height: 8),
           Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(height: 1.3)),

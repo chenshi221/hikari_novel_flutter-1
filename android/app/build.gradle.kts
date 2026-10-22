@@ -34,6 +34,14 @@ android {
     }
 }
 
+// release 包只给 arm64 手机：--target-platform 只管 Flutter 自己的 .so，
+// Cronet、sqlite3 等插件还会带 x86_64 / armeabi-v7a 各一份（约 14 MB）。debug 不受影响，模拟器照常能跑。
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(listOf("lib/x86_64/**", "lib/armeabi-v7a/**", "lib/x86/**"))
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
