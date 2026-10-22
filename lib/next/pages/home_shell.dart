@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../env.dart';
+import '../image_cache.dart';
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -34,6 +36,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_checkUpdates);
     Sync.auto();
+    if (!isWebPreview) ref.read(imageStoreProvider).trim().ignore();
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
   }
 

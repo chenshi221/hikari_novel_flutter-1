@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/rendering.dart';
 
 import '../rules.dart';
@@ -123,6 +124,24 @@ class _TapDetectorState extends State<TapDetector> {
       widget.onTap(box.globalToLocal(e.position), box.size, e.position);
     },
     child: widget.child,
+  );
+}
+
+/// 页脚：左边时间和电量（[status] 每分钟刷新，只重建这一行，不影响正文和分页），右边页码 / 进度。
+class ReaderFooter extends StatelessWidget {
+  const ReaderFooter({super.key, required this.right, required this.style, this.status});
+
+  final String right;
+  final TextStyle style;
+  final ValueListenable<String>? status;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      status == null ? const SizedBox.shrink() : ValueListenableBuilder<String>(valueListenable: status!, builder: (_, v, _) => Text(v, style: style)),
+      Text(right, style: style),
+    ],
   );
 }
 
@@ -274,7 +293,7 @@ class _ScrollBodyState extends State<ScrollBody> {
         child: widget.wrap(
           SingleChildScrollView(
             controller: _controller,
-            padding: EdgeInsets.fromLTRB(widget.margin, _padTop, widget.margin, 48),
+            padding: EdgeInsets.fromLTRB(widget.margin, _padTop, widget.margin, MediaQuery.viewPaddingOf(context).bottom + 48), // 底部留出页脚的高度，别挡字
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -315,6 +334,7 @@ class PagedBody extends StatefulWidget {
     this.follow,
     this.nav,
     required this.hasSelection,
+    this.status,
   });
 
   final Chapter chapter;
@@ -322,6 +342,9 @@ class PagedBody extends StatefulWidget {
   final TextStyle style;
   final double margin;
   final String title;
+
+  /// 页脚左边的"时间 电量"
+  final ValueListenable<String>? status;
   final bool curl;
   final bool cover;
 
@@ -448,7 +471,7 @@ class _PagedBodyState extends State<PagedBody> {
       children: [
         Padding(padding: pad, child: Text.rich(widget.spanOf(_starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling)),
         Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
-        Positioned(bottom: view.bottom + 10, right: widget.margin, child: Text('${i + 1}/$_total', style: faint)),
+        Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/$_total · ${(i + 1) * 100 ~/ _total}%', style: faint)),
       ],
     );
   }

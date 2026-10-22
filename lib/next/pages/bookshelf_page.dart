@@ -202,7 +202,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                 return LayoutBuilder(
                   builder: (context, c) => GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(c.maxWidth), mainAxisSpacing: 20, crossAxisSpacing: 14, childAspectRatio: 0.52),
+                    gridDelegate: novelGridDelegate(c.maxWidth),
                     itemCount: books.length,
                     itemBuilder: (context, i) {
                       final book = books[i];

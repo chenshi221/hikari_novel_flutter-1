@@ -11,6 +11,7 @@ import '../router.dart';
 import '../theme.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../widgets.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -31,7 +32,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: ListView(
+      body: contentWidth(ListView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
         children: [
           section('外观'),
@@ -107,6 +108,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 title: const Text('清除图片缓存'),
                 subtitle: Text(snap.hasData ? '封面和插图缓存 ${(snap.data! / (1 << 20)).toStringAsFixed(1)} MB' : '计算中…'),
                 onTap: () async {
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('清除图片缓存？'),
+                      content: const Text('离线缓存里的插图也会被删掉，联网后重新下载。'),
+                      actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('清除'))],
+                    ),
+                  );
+                  if (ok != true) return;
                   await ref.read(imageStoreProvider).clearDisk();
                   if (context.mounted) setState(() {});
                 },
@@ -119,7 +129,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             builder: (context, snap) => ListTile(contentPadding: EdgeInsets.zero, title: const Text('Hikari Novel'), subtitle: Text('轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}')),
           ),
         ],
-      ),
+      )),
     );
   }
 }

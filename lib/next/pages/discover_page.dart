@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../../models/recommend_block.dart';
 import '../catalog.dart';
 import '../data.dart';
+import '../history.dart';
 import '../router.dart';
 import '../widgets.dart';
 
@@ -46,22 +48,21 @@ class _RecommendTab extends ConsumerWidget {
             data: (blocks) => ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [
+                const _ContinueCard(),
                 for (final block in blocks) ...[
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text(block.title, style: theme.textTheme.titleLarge),
                   ),
-                  SizedBox(
-                    height: 190,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
+                  // 一个分区通常 6 本：手机上 3 列排两排，宽屏放得下就 6 列一排
+                  LayoutBuilder(
+                    builder: (context, c) => GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(horizontal: 16),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(c.maxWidth) >= 6 ? 6 : 3, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: 0.52),
                       itemCount: block.list.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 12),
-                      itemBuilder: (_, i) => SizedBox(
-                        width: 100,
-                        child: NovelCard(title: block.list[i].title, aid: block.list[i].aid, imageUrl: block.list[i].imageUrl),
-                      ),
+                      itemBuilder: (_, i) => NovelCard(title: block.list[i].title, aid: block.list[i].aid, imageUrl: block.list[i].imageUrl),
                     ),
                   ),
                 ],
@@ -70,6 +71,48 @@ class _RecommendTab extends ConsumerWidget {
           ),
     );
   }
+}
+
+/// 继续阅读：最近读的一本，点了直接进阅读器（按保存的进度定位）；从阅读器回来自动更新。
+class _ContinueCard extends StatelessWidget {
+  const _ContinueCard();
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: Hive.box('session').listenable(keys: ['history2']),
+    builder: (context, _, _) {
+      final h = ReadingHistory.all().firstOrNull;
+      if (h == null) return const SizedBox.shrink();
+      final theme = Theme.of(context);
+      return Card(
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => context.push(Routes.reader(h.aid, h.cid)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                SizedBox(width: 48, height: 64, child: CoverImage(h.img)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(h.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium),
+                      const SizedBox(height: 4),
+                      Text('读到 ${h.chapter}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _Chips<T> extends StatelessWidget {

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -131,9 +132,26 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   CatChapter? _nextChapter;
   final _nav = ReaderNav();
 
+  // ---- 页眉页脚的时间、电量：每分钟刷新一次，只重建页脚 ----
+  final _status = ValueNotifier<String>('');
+  final _pos = ValueNotifier<int>(0); // 滚动模式页脚用的当前字符偏移
+  Timer? _clock;
+
+  Future<void> _tick() async {
+    final n = DateTime.now();
+    var s = '${n.hour.toString().padLeft(2, '0')}:${n.minute.toString().padLeft(2, '0')}';
+    try {
+      final level = isWebPreview ? -1 : await Battery().batteryLevel;
+      if (level >= 0) s += '  电量 $level%';
+    } catch (_) {} // 没有电池的电脑 / 模拟器（返回 -1）/ 取不到就不显示电量
+    if (mounted) _status.value = s;
+  }
+
   @override
   void initState() {
     super.initState();
+    _tick();
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
     _initial = widget.offset;
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
@@ -147,6 +165,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _clock?.cancel();
+    _status.dispose();
+    _pos.dispose();
     _turnTimer?.cancel();
     _tts.stop();
     WidgetsBinding.instance.removeObserver(this);
@@ -259,6 +280,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     ReadingProgress.save(widget.aid, cid, offset);
     setState(() {
       if (cid != _cid) _offset = offset == kToEnd ? 0 : offset;
+      _pos.value = _offset;
       _cid = cid;
       _initial = null;
       _shown = null;
@@ -274,6 +296,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   void _saveOffset(int offset) {
     _offset = offset;
+    _pos.value = offset;
     ReadingProgress.save(widget.aid, _cid, offset);
     // 朗读时用户自己翻页 / 滚动（不是跟读造成的）：停稳后从新位置的句子接着读
     final turned = offset != _lastPageOffset;
@@ -511,6 +534,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       curl: prefs.mode >= 2,
                       cover: prefs.mode == 3,
                       dual: prefs.dual,
+                      status: _status,
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
@@ -527,19 +551,54 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                     );
             },
           ),
+          if (prefs.mode == 0 && content.hasValue)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                child: ColoredBox(
+                  color: palette.bg,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(prefs.margin, 6, prefs.margin, MediaQuery.viewPaddingOf(context).bottom + 8),
+                    child: ValueListenableBuilder<int>(
+                      valueListenable: _pos,
+                      builder: (_, pos, _) {
+                        final len = content.value!.text.length;
+                        return ReaderFooter(status: _status, right: '${len == 0 ? 0 : (pos * 100 ~/ len).clamp(0, 100)}%', style: TextStyle(fontSize: 11, color: palette.fg.withValues(alpha: 0.5)));
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // 亮度遮罩：盖住正文和页脚，不盖菜单栏，不挡点击
+          if (prefs.dim > 0) Positioned.fill(child: IgnorePointer(child: ColoredBox(color: Colors.black.withValues(alpha: prefs.dim)))),
           if (_bar) ...[
             Positioned(
               top: 0,
               left: 0,
               right: 0,
               child: Material(
-                color: Theme.of(context).colorScheme.surface,
+                color: palette.bg,
                 elevation: 2,
                 child: SafeArea(
                   bottom: false,
-                  child: ListTile(
-                    leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => context.pop()),
-                    title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  child: Row(
+                    children: [
+                      IconButton(icon: Icon(Icons.arrow_back, color: palette.fg), onPressed: () => context.pop()),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(color: palette.fg)),
+                            if (_bookTitle != null) Text(_bookTitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.fg.withValues(alpha: 0.6))),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                    ],
                   ),
                 ),
               ),
@@ -549,18 +608,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               left: 0,
               right: 0,
               child: Material(
-                color: Theme.of(context).colorScheme.surface,
+                color: palette.bg,
                 elevation: 2,
                 child: SafeArea(
                   top: false,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (chapters.length > 1)
-                        Row(
-                          children: [
-                            const SizedBox(width: 16),
-                            Text('${index + 1}/${chapters.length}', style: Theme.of(context).textTheme.bodySmall),
+                      Row(
+                        children: [
+                          IconButton(tooltip: '上一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.chevron_left), onPressed: prev == null ? null : () => _go(prev.cid)),
+                          if (chapters.length > 1) ...[
+                            Text('${index + 1}/${chapters.length}', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.fg)),
                             Expanded(
                               child: Slider(
                                 min: 0,
@@ -574,27 +633,29 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                 },
                               ),
                             ),
-                          ],
-                        ),
+                          ] else
+                            const Spacer(),
+                          IconButton(tooltip: '下一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.chevron_right), onPressed: next == null ? null : () => _go(next.cid)),
+                        ],
+                      ),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          TextButton(onPressed: prev == null ? null : () => _go(prev.cid), child: const Text('上一章')),
-                          TextButton(onPressed: () => _showCatalogue(novel?.catalogue ?? const [], _cid), child: const Text('目录')),
-                          IconButton(tooltip: '书签', icon: Icon(Bookmarks.has(widget.aid, _cid, _offset) ? Icons.bookmark : Icons.bookmark_border), onPressed: _addBookmark),
-                          TextButton(
-                            onPressed: () {
-                              if (_speaking) {
-                                _stopTts();
-                              } else {
-                                content.whenData(_startTts);
-                              }
-                            },
-                            child: Text(_speaking ? '停止' : '朗读'),
-                          ),
-                          IconButton(tooltip: '朗读设置', icon: const Icon(Icons.tune), onPressed: _showTtsSettings),
-                          TextButton(onPressed: _showSettings, child: const Text('设置')),
-                          TextButton(onPressed: next == null ? null : () => _go(next.cid), child: const Text('下一章')),
+                          for (final (icon, label, onTap) in <(IconData, String, VoidCallback)>[
+                            (Icons.menu_book_outlined, '目录', () => _showCatalogue(novel?.catalogue ?? const [], _cid)),
+                            (Bookmarks.has(widget.aid, _cid, _offset) ? Icons.bookmark : Icons.bookmark_border, '书签', _addBookmark),
+                            (_speaking ? Icons.stop_circle_outlined : Icons.record_voice_over_outlined, _speaking ? '停止' : '朗读', () => _speaking ? _stopTts() : content.whenData(_startTts)),
+                            (Icons.tune, '朗读设置', _showTtsSettings),
+                            (Icons.settings_outlined, '设置', _showSettings),
+                          ])
+                            Expanded(
+                              child: InkWell(
+                                onTap: onTap,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 22, color: palette.fg), const SizedBox(height: 2), Text(label, style: TextStyle(fontSize: 11, color: palette.fg))]),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ],
@@ -809,6 +870,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Text('亮度 ${((1 - prefs.dim) * 100).round()}%'),
+                  // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
+                  Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v))),
                   Text('字号 ${prefs.fontSize.round()}'),
                   Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v))),
                   Text('行距 ${prefs.lineHeight.toStringAsFixed(1)}'),
