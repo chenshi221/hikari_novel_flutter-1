@@ -1,5 +1,3 @@
-import 'package:get/get.dart';
-
 class Bookshelf {
   final List<BookshelfNovelInfo> list;
   final String classId;
@@ -14,8 +12,5 @@ class BookshelfNovelInfo {
   final String title;
   final String img;
 
-  final RxBool isSelected;
-
-  BookshelfNovelInfo({required this.bid, required this.aid, required this.url, required this.title, required this.img, bool initSelected = false})
-    : isSelected = initSelected.obs;
+  BookshelfNovelInfo({required this.bid, required this.aid, required this.url, required this.title, required this.img});
 }

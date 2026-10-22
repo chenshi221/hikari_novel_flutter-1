@@ -6,7 +6,7 @@ import 'cache.dart';
 import 'fonts.dart';
 import 'session.dart';
 
-/// 新框架的入口（重构中，与旧 App 并存）。
+/// App 入口（lib/main.dart 只是转到这里）。
 ///
 /// - 原生：`flutter run -t lib/next/main.dart`
 /// - 网页预览：`flutter run -d web-server -t lib/next/main.dart`，并在同一台机器上运行 `tool/preview_proxy.dart`

@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:get/get.dart';
 import 'package:hikari_novel_flutter/models/cat_chapter.dart';
 import 'package:json_annotation/json_annotation.dart';
 
@@ -11,10 +10,7 @@ class CatVolume {
   final String title;
   final List<CatChapter> chapters;
 
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  final RxBool isSelected;
-
-  CatVolume({required this.title, required this.chapters, bool initSelected = false}) : isSelected = initSelected.obs;
+  CatVolume({required this.title, required this.chapters});
 
   static CatVolume get empty => CatVolume(title: "", chapters: []);
 

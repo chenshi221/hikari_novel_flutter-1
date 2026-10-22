@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:get/get_rx/src/rx_types/rx_types.dart';
 import 'package:json_annotation/json_annotation.dart';
 
 part 'cat_chapter.g.dart';
@@ -10,10 +9,7 @@ class CatChapter {
   final String title;
   final String cid;
 
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  final RxBool isSelected;
-
-  CatChapter({required this.title, required this.cid, bool initSelected = false}) : isSelected = initSelected.obs;
+  CatChapter({required this.title, required this.cid});
 
   factory CatChapter.fromJson(Map<String, dynamic> json) => _$CatChapterFromJson(json);
 
