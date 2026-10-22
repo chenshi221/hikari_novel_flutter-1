@@ -8,14 +8,17 @@ import 'package:path_provider/path_provider.dart';
 
 import 'session.dart';
 
-/// 图片缓存：内存里最多留 [_memCap] 张（LRU），磁盘上长期保留，断网后封面和插图还能显示。
+/// 图片缓存：内存里最多留 [_memBytes] 字节（LRU），磁盘上长期保留，断网后封面和插图还能显示。
 /// 网页预览不用它（直接走转发程序）。
 class ImageStore {
   ImageStore(this._ref);
 
   final Ref _ref;
-  static const _memCap = 80;
+  // 按字节算：封面几十 KB、插图几百 KB，按张数算不是存不下封面就是插图占太多内存
+  static const _memBytes = 64 << 20;
   final _mem = <String, Uint8List>{}; // Dart 的 Map 字面量保持插入顺序，当 LRU 用
+  var _memUsed = 0;
+  final _downloaded = <String>{};
   final _inflight = <String, Future<Uint8List>>{};
   Directory? _dir;
 
@@ -35,10 +38,22 @@ class ImageStore {
     return hash(0x811c9dc5) + hash(0x9747b28c);
   }
 
-  Future<Uint8List> load(String rawUrl) {
-    final url = rawUrl.replaceFirst('http://', 'https://');
+  static String _norm(String url) => url.replaceFirst('http://', 'https://');
+
+  /// 内存里有就直接给（同步），没有返回 null。
+  Uint8List? peek(String rawUrl) {
+    final url = _norm(rawUrl);
     final hit = _mem.remove(url);
-    if (hit != null) return Future.value(_mem[url] = hit);
+    return hit == null ? null : _mem[url] = hit;
+  }
+
+  /// 这张图是不是本次运行时从网上下载的（界面据此决定要不要淡入）。
+  bool downloaded(String rawUrl) => _downloaded.contains(_norm(rawUrl));
+
+  Future<Uint8List> load(String rawUrl) {
+    final url = _norm(rawUrl);
+    final hit = peek(url);
+    if (hit != null) return Future.value(hit);
     return _inflight[url] ??= _fetch(url).whenComplete(() => _inflight.remove(url));
   }
 
@@ -51,10 +66,12 @@ class ImageStore {
       final res = await _ref.read(imageDioProvider).get<List<int>>(url);
       bytes = Uint8List.fromList(res.data!);
       await file.writeAsBytes(bytes);
+      _downloaded.add(url);
     }
+    _memUsed += bytes.length - (_mem.remove(url)?.length ?? 0);
     _mem[url] = bytes;
-    while (_mem.length > _memCap) {
-      _mem.remove(_mem.keys.first);
+    while (_memUsed > _memBytes && _mem.length > 1) {
+      _memUsed -= _mem.remove(_mem.keys.first)!.length;
     }
     return bytes;
   }
@@ -64,6 +81,7 @@ class ImageStore {
     if (await dir.exists()) await dir.delete(recursive: true);
     _dir = null;
     _mem.clear();
+    _memUsed = 0;
   }
 
   /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%。

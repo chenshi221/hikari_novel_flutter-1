@@ -54,13 +54,13 @@ class _RecommendTab extends ConsumerWidget {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text(block.title, style: theme.textTheme.titleLarge),
                   ),
-                  // 双排横滑：书少（≤4 本）时一排就够
-                  SizedBox(
-                    height: block.list.length > 4 ? 392 : 190,
-                    child: GridView.builder(
-                      scrollDirection: Axis.horizontal,
+                  // 一个分区通常 6 本：手机上 3 列排两排，宽屏放得下就 6 列一排
+                  LayoutBuilder(
+                    builder: (context, c) => GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: block.list.length > 4 ? 2 : 1, mainAxisSpacing: 12, crossAxisSpacing: 12, mainAxisExtent: 100),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: gridColumns(c.maxWidth) >= 6 ? 6 : 3, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: 0.52),
                       itemCount: block.list.length,
                       itemBuilder: (_, i) => NovelCard(title: block.list[i].title, aid: block.list[i].aid, imageUrl: block.list[i].imageUrl),
                     ),

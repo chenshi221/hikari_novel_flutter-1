@@ -121,13 +121,16 @@ class NetImage extends ConsumerWidget {
     final fallback = error ?? const SizedBox.shrink();
     if (url.isEmpty) return fallback;
     if (isWebPreview) return Image.network(displayImageUrl(url), fit: fit, errorBuilder: (_, _, _) => fallback);
-    return ref
-        .watch(imageBytesProvider(url))
-        .when(data: (b) => Image.memory(b, fit: fit, frameBuilder: _fadeIn, errorBuilder: (_, _, _) => fallback), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+    final store = ref.read(imageStoreProvider);
+    Widget image(Uint8List b, {bool fade = false}) => Image.memory(b, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback);
+    // 内存里有就同步直接画，返回页面时不会先空一帧再出来
+    final hit = store.peek(url);
+    if (hit != null) return image(hit);
+    // 只有这次刚从网上下载的才淡入，从磁盘读的直接显示
+    return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: store.downloaded(url)), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
   }
 }
 
-// 已同步解码出来的（内存缓存命中）直接显示，否则 150ms 淡入
 Widget _fadeIn(BuildContext context, Widget child, int? frame, bool sync) =>
     sync ? child : AnimatedOpacity(opacity: frame == null ? 0 : 1, duration: const Duration(milliseconds: 150), child: child);
 
