@@ -8,6 +8,8 @@ import '../../models/cat_volume.dart';
 import '../cache.dart';
 import '../data.dart';
 import '../library.dart';
+import '../stats.dart';
+import '../volumes.dart';
 import 'categories_page.dart';
 import '../progress.dart';
 import '../read_state.dart';
@@ -19,11 +21,17 @@ import '../widgets.dart';
 final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref, aid) async* {
   final api = ref.watch(apiProvider);
   final saved = await api.saved(aid);
-  if (saved != null) yield saved;
+  if (saved != null) {
+    await Volumes.saveCatalogue(aid, saved.catalogue);
+    yield saved;
+  }
   try {
     final fresh = await api.novel(aid);
     final d = fresh.detail;
     ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
+    await Volumes.saveCatalogue(aid, fresh.catalogue);
+    // 读过的书补记书名（离线时读的统计里没有书名，会显示成"书号"）
+    if (ReadingStats.perBook().containsKey(aid)) await ReadingStats.setMeta(aid, d.title, d.author, d.imgUrl);
     yield fresh;
   } catch (_) {
     if (saved == null) rethrow;
@@ -266,7 +274,24 @@ class _BodyState extends ConsumerState<_Body> {
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             initiallyExpanded: data.catalogue.length == 1 || v.chapters.any((c) => c.cid == progress?.cid || _picked.contains(c.cid)),
-            title: Text(v.title),
+            title: Row(
+              children: [
+                Expanded(child: Text(v.title)),
+                if (Volumes.done(aid).containsKey(v.title))
+                  Tooltip(message: '已读完', child: Icon(Icons.check_circle, size: 18, color: theme.colorScheme.primary))
+                else
+                  IconButton(
+                    tooltip: '标记本卷读完',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.check_circle_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                    onPressed: () async {
+                      // 本卷正文章节全部标为已读，读完日期记为现在；标错了可以长按章节多选、标回未读
+                      await ReadState.setRead(aid, Vol(v.title, [for (final c in v.chapters) c.cid], v.chapters.where((c) => isIllustration(c.title)).firstOrNull?.cid).textCids, true);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+              ],
+            ),
             children: [
               for (final c in _reverse ? v.chapters.reversed : v.chapters)
                 ListTile(

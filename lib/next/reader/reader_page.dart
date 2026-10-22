@@ -83,7 +83,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   void _flushStats() {
     final seconds = _watch.elapsed.inSeconds;
     if (seconds <= 0) return;
-    ReadingStats.addSeconds(widget.aid, seconds);
+    ReadingStats.addSeconds(widget.aid, seconds, cid: _cid);
     final running = _watch.isRunning;
     _watch.reset();
     if (running) _watch.start();
@@ -274,6 +274,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   /// 手动切章会停掉朗读（[keepTts] 是朗读自己读完一章后的自动续读）；往后翻时把离开的这章标为已读。
   void _go(String cid, {int offset = 0, bool keepTts = false}) {
     if (cid == _cid && offset == 0) return;
+    _flushStats(); // 离开这章前把时间记到这章
     if (!keepTts && _speaking) _stopTts();
     final next = _nextChapter;
     if (next != null && cid == next.cid) _markRead();

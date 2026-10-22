@@ -10,6 +10,7 @@ import '../read_state.dart';
 import '../router.dart';
 import '../session.dart';
 import '../updates.dart';
+import '../volumes.dart';
 import '../widgets.dart';
 import 'categories_page.dart';
 
@@ -270,6 +271,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final o = ref.watch(shelfOptionsProvider);
     final query = ref.watch(shelfQueryProvider);
     ref.watch(updateProvider); // 检查完更新后刷新未读数
+    ref.watch(volumeChangesProvider); // 取到卷封面后换上
     final theme = Theme.of(context);
     final inCat = lib.books.values.where((b) => widget.catId.isEmpty ? b.cats.isEmpty : b.cats.contains(widget.catId));
     final books = _arrange(inCat, o, query, widget.catId);
@@ -316,6 +318,13 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     );
   }
 
+  /// 封面用正在读的那卷（没读过用最新一卷）的卷封面；还没取到、或者这卷没插图时用书的封面。
+  String _cover(LibBook b) {
+    final vols = Volumes.of(b.aid);
+    if (vols.isEmpty) return b.img;
+    return ref.read(volumeCoverQueueProvider).get(b.aid, vols[Volumes.shelfVolume(b.aid)]) ?? b.img;
+  }
+
   void _toggle(String aid) => setState(() => _selected.contains(aid) ? _selected.remove(aid) : _selected.add(aid));
 
   void _tap(LibBook b) => _selected.isEmpty ? context.push(Routes.novel(b.aid)) : _toggle(b.aid);
@@ -345,7 +354,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     if (!compact) {
       return GestureDetector(
         onLongPress: () => _toggle(b.aid),
-        child: NovelCard(title: b.title, aid: b.aid, imageUrl: b.img, onTap: () => _tap(b), badge: badge, action: resume),
+        child: NovelCard(title: b.title, aid: b.aid, imageUrl: _cover(b), onTap: () => _tap(b), badge: badge, action: resume),
       );
     }
     // 紧凑：书名压在封面底部的渐变上
@@ -355,7 +364,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
       child: Stack(
         fit: StackFit.expand,
         children: [
-          CoverImage(b.img),
+          CoverImage(_cover(b)),
           DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
@@ -375,7 +384,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final n = _unread(b.aid);
     return ListTile(
       selected: _selected.contains(b.aid),
-      leading: SizedBox(width: 40, height: 54, child: CoverImage(b.img)),
+      leading: SizedBox(width: 40, height: 54, child: CoverImage(_cover(b))),
       title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: Text([if (n > 0) '未读 $n 章', if (ChapterCache.count(b.aid) > 0) '已缓存 ${ChapterCache.count(b.aid)} 章', if (b.done) '已完结', if (p == null) '还没读'].join(' · ')),
       trailing: _selected.contains(b.aid) ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : _resume(b),
@@ -396,7 +405,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     },
     itemBuilder: (context, i) => ListTile(
       key: ValueKey(books[i].aid),
-      leading: SizedBox(width: 40, height: 54, child: CoverImage(books[i].img)),
+      leading: SizedBox(width: 40, height: 54, child: CoverImage(_cover(books[i]))),
       title: Text(books[i].title, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle)),
       onTap: () => context.push(Routes.novel(books[i].aid)),

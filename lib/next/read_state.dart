@@ -1,5 +1,7 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'volumes.dart';
+
 /// 每本书哪些章节读过（读到章末，或者翻到了下一章）、读过多少字，用于详情页的已读/未读和阅读报告。
 class ReadState {
   ReadState._();
@@ -16,6 +18,7 @@ class ReadState {
     if (!set.add(cid)) return;
     await _box.put('read:$aid', set.toList());
     await _box.put('readchars:$aid', readChars(aid) + chars);
+    await Volumes.refreshDone(aid);
   }
 
   /// 手动标记一批章节已读 / 未读（详情页多选）。不改"已读字数"。
@@ -23,7 +26,7 @@ class ReadState {
   static Future<void> setRead(String aid, Iterable<String> cids, bool read) {
     final set = ReadState.read(aid);
     read ? set.addAll(cids) : set.removeAll(cids);
-    return _box.put('read:$aid', set.toList());
+    return _box.put('read:$aid', set.toList()).then((_) => Volumes.refreshDone(aid));
   }
 
   static int readChars(String aid) => (_box.get('readchars:$aid') as int?) ?? 0;
