@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../cover_color.dart';
 import '../router.dart';
 import '../stats.dart';
 import '../volumes.dart';
@@ -136,6 +137,7 @@ class _VolumeTile extends ConsumerWidget {
     final (aid, index, v, at) = entry;
     final info = ReadingStats.info(aid);
     final cover = ref.read(volumeCoverQueueProvider).get(aid, v) ?? info.img;
+    ref.read(coverColorProvider(cover)); // 顺手把背景色算好存下，点进报告时直接用
     final stars = Volumes.rating(aid, v.title);
     final d = DateTime.fromMillisecondsSinceEpoch(at);
     return InkWell(

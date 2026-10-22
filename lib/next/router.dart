@@ -21,6 +21,7 @@ import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stats_page.dart';
 import 'pages/updates_page.dart';
+import 'pages/volumes_page.dart';
 import 'pages/wall_page.dart';
 import 'pages/splash_page.dart';
 import 'reader/reader_page.dart';
@@ -51,6 +52,7 @@ class Routes {
   static String searchAuthor(String author) => '/search?author=${Uri.encodeQueryComponent(author)}';
   static String cacheBook(String aid) => '/cache/$aid';
   static String novel(String aid) => '/novel/$aid';
+  static String volumes(String aid) => '/volumes/$aid';
   static String comments(String aid) => '/novel/$aid/comments';
   static String replies(String aid, String rid) => '/novel/$aid/comments/$rid';
   static String reader(String aid, String cid) => '/reader/$aid/$cid';
@@ -80,6 +82,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!, vol: int.tryParse(state.uri.queryParameters['v'] ?? ''))),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
       GoRoute(path: Routes.wall, builder: (_, _) => const WallPage()),
+      GoRoute(path: '/volumes/:aid', builder: (_, state) => VolumesPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: Routes.categories, builder: (_, _) => const CategoriesPage()),
       GoRoute(path: Routes.sync, builder: (_, _) => const SyncPage()),

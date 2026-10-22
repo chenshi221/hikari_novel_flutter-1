@@ -7,6 +7,7 @@ import 'package:hive_ce/hive.dart';
 import 'package:hikari_novel_flutter/models/cat_chapter.dart';
 import 'package:hikari_novel_flutter/models/cat_volume.dart';
 import 'package:hikari_novel_flutter/next/cover_color.dart';
+import 'package:hikari_novel_flutter/next/image_cache.dart';
 import 'package:hikari_novel_flutter/next/read_state.dart';
 import 'package:hikari_novel_flutter/next/volumes.dart';
 
@@ -49,5 +50,19 @@ void main() {
     // 白底上的一点颜色不会被冲成纯灰
     final mostlyWhite = Uint8List.fromList([for (var i = 0; i < 15; i++) ...[250, 250, 250, 255], 40, 80, 220, 255]);
     expect(HSLColor.fromColor(tintFrom(mostlyWhite)).hue, closeTo(225, 20));
+  });
+
+  test('自选封面的裁剪框：写进地址再读出来；没有裁剪框原样返回', () {
+    const url = 'https://pic.777743.xyz/1/1/1.jpg';
+    expect(splitCrop(url), (url: url, crop: null));
+    final r = splitCrop(withCrop(url, const Rect.fromLTWH(0.5, 0, 0.5, 1)));
+    expect(r.url, url);
+    expect(r.crop, const Rect.fromLTWH(0.5, 0, 0.5, 1));
+  });
+
+  test('cropRgba 只取裁剪框里的像素', () {
+    // 2x2：左边红、右边蓝，取右半边只剩蓝
+    final rgba = Uint8List.fromList([255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255]);
+    expect(cropRgba(rgba, 2, 2, const Rect.fromLTWH(0.5, 0, 0.5, 1)), [0, 0, 255, 255, 0, 0, 255, 255]);
   });
 }

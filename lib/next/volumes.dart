@@ -16,6 +16,8 @@ import 'stats.dart';
 class Vol {
   const Vol(this.title, this.cids, this.illus);
 
+  factory Vol.from(CatVolume v) => Vol(v.title, [for (final c in v.chapters) c.cid], v.chapters.where((c) => isIllustration(c.title)).firstOrNull?.cid);
+
   final String title;
   final List<String> cids;
   final String? illus;
@@ -66,8 +68,15 @@ class Volumes {
   /// 这卷的封面：null 还没取过，'' 这卷没有插图。
   static String? cover(String aid, String title) => _covers(aid)[title];
 
+  /// [url] 可以带裁剪框（见 [withCrop]），自选封面就是这样存的
   static Future<void> setCover(String aid, String title, String url) async {
     await _box.put('vcover2:$aid', {..._covers(aid), title: url});
+    changes.value++;
+  }
+
+  /// 去掉自选的封面，下次显示时重新自动挑
+  static Future<void> resetCover(String aid, String title) async {
+    await _box.put('vcover2:$aid', {..._covers(aid)}..remove(title));
     changes.value++;
   }
 
@@ -160,6 +169,12 @@ class VolumeCoverQueue {
     return url == null || url.isEmpty ? null : url;
   }
 
+  /// 书的封面：第一卷的卷封面（高清）；没有卷信息、还没取到、没插图时用 [fallback]（网站的小封面）。
+  String bookCover(String aid, String fallback) {
+    final vols = Volumes.of(aid);
+    return vols.isEmpty ? fallback : get(aid, vols.first) ?? fallback;
+  }
+
   Future<void> _pump() async {
     if (_running) return;
     _running = true;
@@ -197,16 +212,18 @@ class VolumeCoverQueue {
     }
   }
 
-  /// 只读图片头部拿宽高，不完整解码。图片本来就要显示，下载后存在本机。
-  Future<ui.Size> _size(String url) async {
-    final bytes = await _ref.read(imageStoreProvider).load(url);
-    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-    final desc = await ui.ImageDescriptor.encoded(buffer);
-    final size = ui.Size(desc.width.toDouble(), desc.height.toDouble());
-    desc.dispose();
-    buffer.dispose();
-    return size;
-  }
+  /// 图片本来就要显示，下载后存在本机。
+  Future<ui.Size> _size(String url) async => imageSize(await _ref.read(imageStoreProvider).load(url));
+}
+
+/// 只读图片头部拿宽高，不完整解码。
+Future<ui.Size> imageSize(Uint8List bytes) async {
+  final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+  final desc = await ui.ImageDescriptor.encoded(buffer);
+  final size = ui.Size(desc.width.toDouble(), desc.height.toDouble());
+  desc.dispose();
+  buffer.dispose();
+  return size;
 }
 
 /// 从插图章节的图里挑封面：第一张竖着的（宽不超过高）。第一张常常是连书脊、封底一起的横版展开图，就往后找；

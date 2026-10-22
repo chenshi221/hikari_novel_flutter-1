@@ -14,6 +14,7 @@ import '../stats.dart';
 import '../theme.dart';
 import '../volumes.dart';
 import '../widgets.dart';
+import 'cover_picker_page.dart';
 
 String _date(String key) => key.replaceAll('-', '.');
 
@@ -70,15 +71,16 @@ class _ReportPageState extends ConsumerState<ReportPage> {
     ref.watch(volumeChangesProvider);
     final aid = widget.aid;
     final info = ReadingStats.info(aid);
-    final bookCover = info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(aid);
     final vols = Volumes.of(aid);
     final queue = ref.read(volumeCoverQueueProvider);
+    final bookCover = queue.bookCover(aid, info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(aid));
     String coverOf(int page) => page == 0 ? bookCover : (queue.get(aid, vols[page - 1]) ?? bookCover);
 
     final page = _page.clamp(0, vols.length);
     final v = page == 0 ? null : vols[page - 1];
     final cover = coverOf(page);
-    final base = ref.watch(coverColorProvider(cover)).value ?? Color.lerp(Theme.of(context).colorScheme.primary, Colors.black, 0.55)!;
+    // 算过的颜色当场就用（不先闪一下默认色再渐变）；第一次算之前用中性深灰
+    final base = ref.watch(coverColorProvider(cover)).value ?? savedCoverColor(cover) ?? kNeutralCoverColor;
 
     final rating = v == null ? ReadState.rating(aid) : Volumes.rating(aid, v.title);
     final time = v == null ? (seconds: ReadingStats.perBook()[aid] ?? 0, days: ReadingStats.bookDays(aid)) : Volumes.time(aid, v);
@@ -110,7 +112,8 @@ class _ReportPageState extends ConsumerState<ReportPage> {
               controller: _pager,
               itemCount: vols.length + 1,
               onPageChanged: (i) => setState(() => _page = i),
-              itemBuilder: (context, i) => Center(child: _Book(url: coverOf(i), width: bookWidth)),
+              // 长按某一卷的封面换封面
+              itemBuilder: (context, i) => Center(child: GestureDetector(onLongPress: i == 0 ? null : () => pickVolumeCover(context, aid, vols[i - 1]), child: _Book(url: coverOf(i), width: bookWidth))),
             ),
           ),
           Visibility(
@@ -188,7 +191,10 @@ class _ReportPageState extends ConsumerState<ReportPage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         foregroundColor: Colors.white,
-        actions: [IconButton(tooltip: '保存为图片并分享', icon: const Icon(Icons.ios_share), onPressed: () => _share(info.title))],
+        actions: [
+          if (v != null) IconButton(tooltip: '换这一卷的封面', icon: const Icon(Icons.image_outlined), onPressed: () => pickVolumeCover(context, aid, v)),
+          IconButton(tooltip: '保存为图片并分享', icon: const Icon(Icons.ios_share), onPressed: () => _share(info.title)),
+        ],
       ),
       extendBodyBehindAppBar: true,
       body: SingleChildScrollView(

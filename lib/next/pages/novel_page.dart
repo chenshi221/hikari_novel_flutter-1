@@ -11,6 +11,7 @@ import '../library.dart';
 import '../stats.dart';
 import '../volumes.dart';
 import 'categories_page.dart';
+import 'cover_picker_page.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
@@ -100,6 +101,8 @@ class _BodyState extends ConsumerState<_Body> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final d = data.detail;
+    ref.watch(volumeChangesProvider); // 取到卷封面后换上
+    final cover = ref.read(volumeCoverQueueProvider).bookCover(aid, d.imgUrl);
     final inLib = ref.watch(libraryProvider.select((s) => s.books.containsKey(aid)));
     final progress = ReadingProgress.of(aid);
     final all = data.catalogue.expand((v) => v.chapters).toList();
@@ -121,9 +124,9 @@ class _BodyState extends ConsumerState<_Body> {
               child: GestureDetector(
                 onTap: () => showDialog(
                   context: context,
-                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(d.imgUrl, fit: BoxFit.contain))),
+                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(cover, fit: BoxFit.contain))),
                 ),
-                child: CoverImage(d.imgUrl),
+                child: CoverImage(cover),
               ),
             ),
             const SizedBox(width: 16),
@@ -277,6 +280,12 @@ class _BodyState extends ConsumerState<_Body> {
             title: Row(
               children: [
                 Expanded(child: Text(v.title)),
+                IconButton(
+                  tooltip: '换这一卷的封面',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.image_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                  onPressed: () => pickVolumeCover(context, aid, Vol.from(v)),
+                ),
                 if (Volumes.done(aid).containsKey(v.title))
                   Tooltip(message: '已读完', child: Icon(Icons.check_circle, size: 18, color: theme.colorScheme.primary))
                 else
@@ -286,7 +295,7 @@ class _BodyState extends ConsumerState<_Body> {
                     icon: Icon(Icons.check_circle_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
                     onPressed: () async {
                       // 本卷正文章节全部标为已读，读完日期记为现在；标错了可以长按章节多选、标回未读
-                      await ReadState.setRead(aid, Vol(v.title, [for (final c in v.chapters) c.cid], v.chapters.where((c) => isIllustration(c.title)).firstOrNull?.cid).textCids, true);
+                      await ReadState.setRead(aid, Vol.from(v).textCids, true);
                       if (mounted) setState(() {});
                     },
                   ),

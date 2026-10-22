@@ -124,14 +124,26 @@ class NetImage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final fallback = error ?? const SizedBox.shrink();
     if (url.isEmpty) return fallback;
-    if (isWebPreview) return Image.network(displayImageUrl(url), fit: fit, errorBuilder: (_, _, _) => fallback);
+    final crop = splitCrop(url).crop;
+    if (isWebPreview) return _cropped(Image.network(displayImageUrl(splitCrop(url).url), fit: fit, errorBuilder: (_, _, _) => fallback), crop);
     final store = ref.read(imageStoreProvider);
-    Widget image(Uint8List b, {bool fade = false}) => Image.memory(b, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback);
+    Widget image(Uint8List b, {bool fade = false}) => _cropped(Image.memory(b, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback), crop);
     // 内存里有就同步直接画，返回页面时不会先空一帧再出来
     final hit = store.peek(url);
     if (hit != null) return image(hit);
     // 只有这次刚从网上下载的才淡入，从磁盘读的直接显示
     return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: store.downloaded(url)), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+  }
+
+  /// 只显示图片里裁剪框那一块，再按 [fit] 填进格子
+  Widget _cropped(Widget img, Rect? c) {
+    if (c == null) return img;
+    double align(double start, double size) => size >= 1 ? 0 : start / (1 - size) * 2 - 1;
+    return FittedBox(
+      fit: fit,
+      clipBehavior: Clip.hardEdge,
+      child: ClipRect(child: Align(alignment: Alignment(align(c.left, c.width), align(c.top, c.height)), widthFactor: c.width, heightFactor: c.height, child: img)),
+    );
   }
 }
 

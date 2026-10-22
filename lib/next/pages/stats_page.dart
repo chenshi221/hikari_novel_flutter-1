@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/wenku8/wenku8_parser.dart';
@@ -12,12 +12,14 @@ import '../widgets.dart';
 String _duration(int seconds) => seconds >= 3600 ? '${seconds ~/ 3600} 小时 ${(seconds % 3600) ~/ 60} 分' : '${(seconds / 60).ceil()} 分钟';
 
 /// 阅读统计：总时长、近 7 天柱状图、读得最久的书。
-class StatsPage extends StatelessWidget {
+class StatsPage extends ConsumerWidget {
   const StatsPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    ref.watch(volumeChangesProvider);
+    final queue = ref.read(volumeCoverQueueProvider);
     final perDay = ReadingStats.perDay();
     final perBook = ReadingStats.perBook();
     final total = perDay.values.fold(0, (a, b) => a + b);
@@ -73,7 +75,7 @@ class StatsPage extends StatelessWidget {
                               children: [
                                 Text('${((perDay[ReadingStats.dayKey(d)] ?? 0) / 60).round()}', style: theme.textTheme.labelSmall),
                                 const SizedBox(height: 4),
-                                Container(height: 100 * (perDay[ReadingStats.dayKey(d)] ?? 0) / maxSec + 2, decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(4))),
+                                Container(height: 96 * (perDay[ReadingStats.dayKey(d)] ?? 0) / maxSec + 2, decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: BorderRadius.circular(4))),
                                 const SizedBox(height: 4),
                                 Text('${d.month}/${d.day}', style: theme.textTheme.labelSmall),
                               ],
@@ -91,7 +93,7 @@ class StatsPage extends StatelessWidget {
                   Builder(
                     builder: (context) {
                       final info = ReadingStats.info(e.key);
-                      final img = info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(e.key);
+                      final img = queue.bookCover(e.key, info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(e.key));
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: SizedBox(width: 40, height: 54, child: CoverImage(img)),

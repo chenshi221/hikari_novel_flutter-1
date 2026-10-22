@@ -27,16 +27,35 @@ Color tintFrom(Uint8List rgba) {
 }
 
 /// 封面背景色，按地址存在本机，算过一次就不再解码。
+/// 从 [w]×[h] 的 RGBA 像素里取出 [crop]（0~1 比例）那一块
+Uint8List cropRgba(Uint8List rgba, int w, int h, Rect crop) {
+  final x0 = (crop.left * w).floor().clamp(0, w - 1), y0 = (crop.top * h).floor().clamp(0, h - 1);
+  final x1 = (crop.right * w).ceil().clamp(x0 + 1, w), y1 = (crop.bottom * h).ceil().clamp(y0 + 1, h);
+  return Uint8List.fromList([for (var y = y0; y < y1; y++) ...rgba.sublist((y * w + x0) * 4, (y * w + x1) * 4)]);
+}
+
+/// 封面颜色还没算出来时的背景
+const kNeutralCoverColor = Color(0xFF3A3A3E);
+
+/// 算过的封面颜色（同步读，没算过为 null）
+Color? savedCoverColor(String url) {
+  final v = (Hive.box('session').get('ccolor') as Map?)?[url] as int?;
+  return v == null ? null : Color(v);
+}
+
 final coverColorProvider = FutureProvider.family<Color, String>((ref, url) async {
   final box = Hive.box('session');
-  final saved = (box.get('ccolor') as Map?)?[url] as int?;
-  if (saved != null) return Color(saved);
+  final saved = savedCoverColor(url);
+  if (saved != null) return saved;
+  final crop = splitCrop(url).crop;
   final bytes = await ref.read(imageStoreProvider).load(url);
-  final codec = await ui.instantiateImageCodec(bytes, targetWidth: 24);
+  final codec = await ui.instantiateImageCodec(bytes, targetWidth: crop == null ? 24 : 64);
   final image = (await codec.getNextFrame()).image;
   final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  final (w, h) = (image.width, image.height);
   image.dispose();
-  final color = tintFrom(data!.buffer.asUint8List());
+  final rgba = data!.buffer.asUint8List();
+  final color = tintFrom(crop == null ? rgba : cropRgba(rgba, w, h, crop));
   await box.put('ccolor', {...((box.get('ccolor') as Map?) ?? const {}), url: color.toARGB32()});
   return color;
 });
