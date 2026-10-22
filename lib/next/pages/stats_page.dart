@@ -3,11 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/wenku8/wenku8_parser.dart';
-import '../cache.dart';
 import '../read_state.dart';
 import '../router.dart';
-import '../history.dart';
 import '../stats.dart';
+import '../volumes.dart';
 import '../widgets.dart';
 
 String _duration(int seconds) => seconds >= 3600 ? '${seconds ~/ 3600} 小时 ${(seconds % 3600) ~/ 60} 分' : '${(seconds / 60).ceil()} 分钟';
@@ -25,8 +24,6 @@ class StatsPage extends StatelessWidget {
     final today = perDay[ReadingStats.dayKey(DateTime.now())] ?? 0;
     final days = [for (var i = 6; i >= 0; i--) DateTime.now().subtract(Duration(days: i))];
     final maxSec = days.map((d) => perDay[ReadingStats.dayKey(d)] ?? 0).fold(1, (a, b) => a > b ? a : b);
-    final titles = {for (final e in ReadingHistory.all()) e.aid: e.title, for (final e in ChapterCache.books().entries) e.key: e.value.$1};
-    final covers = {for (final e in ReadingHistory.all()) e.aid: e.img, for (final e in ChapterCache.books().entries) e.key: e.value.$3};
     final top = perBook.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
 
     Widget tile(String label, String value) => Expanded(
@@ -48,6 +45,17 @@ class StatsPage extends StatelessWidget {
                 Row(children: [tile('累计阅读', _duration(total)), const SizedBox(width: 12), tile('今天', _duration(today))]),
                 const SizedBox(height: 12),
                 Row(children: [tile('读过的章节', '${ReadingStats.chapters}'), const SizedBox(width: 12), tile('读过的书', '${perBook.length}')]),
+                const SizedBox(height: 12),
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: ListTile(
+                    leading: const Icon(Icons.auto_stories_outlined),
+                    title: const Text('书籍墙'),
+                    subtitle: Text('读完了 ${Volumes.allDone().length} 卷'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push(Routes.wall),
+                  ),
+                ),
                 const SizedBox(height: 24),
                 Text('近 7 天', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 12),
@@ -82,12 +90,12 @@ class StatsPage extends StatelessWidget {
                 for (final e in top.take(20))
                   Builder(
                     builder: (context) {
-                      final meta = ReadingStats.meta(e.key);
-                      final img = (meta?.img.isNotEmpty ?? false) ? meta!.img : (covers[e.key] ?? Wenku8Parser.coverUrl(e.key));
+                      final info = ReadingStats.info(e.key);
+                      final img = info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(e.key);
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: SizedBox(width: 40, height: 54, child: CoverImage(img)),
-                        title: Text(meta?.title ?? titles[e.key] ?? '书号 ${e.key}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                        title: Text(info.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                         subtitle: Text('${ReadingStats.bookDays(e.key).length} 天 · ${ReadState.read(e.key).length} 章已读'),
                         trailing: Text(_duration(e.value)),
                         onTap: () => context.push(Routes.report(e.key)),
