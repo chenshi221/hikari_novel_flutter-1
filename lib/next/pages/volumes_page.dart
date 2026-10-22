@@ -244,8 +244,10 @@ class _Carousel extends StatelessWidget {
               animation: Listenable.merge([controller, route]),
               builder: (context, _) {
                 final p = page();
-                // 打开时其他卷从封面后面往两边摊开（返回时收回去）
-                final t = Curves.easeOutCubic.transform(const Interval(0.25, 1).transform(route.value));
+                // 打开时其他卷从封面后面往两边摊开；返回时原地很快淡出（往中间收会在封面飞走后露出来）
+                final closing = route.status == AnimationStatus.reverse;
+                final t = closing ? 1.0 : Curves.easeOutCubic.transform(const Interval(0.25, 1).transform(route.value));
+                final fade = closing ? const Interval(0.6, 1).transform(route.value) : t;
                 final shown = [for (var i = math.max(0, p.floor() - 3); i <= math.min(vols.length - 1, p.ceil() + 3); i++) i]
                   ..sort((a, b) => (b - p).abs().compareTo((a - p).abs())); // 远的先画，近的压在上面
                 return Stack(
@@ -269,7 +271,7 @@ class _Carousel extends StatelessWidget {
                           );
                           final f = i == cur ? 1.0 : t; // 最前面那卷是飞过来的封面，不用摊
                           return Opacity(
-                            opacity: (3.2 - a).clamp(0.0, 1.0) * f,
+                            opacity: (3.2 - a).clamp(0.0, 1.0) * (i == cur ? 1.0 : fade),
                             child: Transform.translate(
                               offset: Offset(dx * f, 0),
                               child: Transform.scale(
