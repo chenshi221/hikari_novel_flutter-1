@@ -50,8 +50,8 @@ class Api {
   /// 取页面并解析，带离线备份：
   /// - 联网且解析成功：返回结果并更新备份（解析失败的页面——登录页、错误页、结构变了——绝不写进备份）
   /// - 页面不对（[Wenku8UnexpectedPageException]）：直接抛出，不拿旧备份冒充
-  /// - 网络问题（超时、断网、5xx、Cloudflare）：有备份就用备份
-  Future<T> _cached<T>(String url, T Function(String html) parse, {bool private = false, String? referer}) async {
+  /// - 网络问题（超时、断网、5xx、Cloudflare）：有备份就用备份；[fresh] 时不用备份，直接抛出（和网站书架同步要拿真实的）
+  Future<T> _cached<T>(String url, T Function(String html) parse, {bool private = false, String? referer, bool fresh = false}) async {
     final key = private ? '$_scope|$url' : url;
     final String html;
     try {
@@ -59,7 +59,7 @@ class Api {
     } on Wenku8UnexpectedPageException {
       rethrow;
     } catch (_) {
-      final saved = await PageStore.get(key);
+      final saved = fresh ? null : await PageStore.get(key);
       if (saved == null) rethrow;
       return parse(saved);
     }
@@ -128,17 +128,30 @@ class Api {
 
   Future<List<RecommendBlock>> recommend() => _cached(_urls.home(), Wenku8Parser.recommend);
 
-  Future<NovelPage> novel(String aid) async {
-    final detail = await _cached(_urls.novelDetail(aid), Wenku8Parser.novelDetail);
-    return NovelPage(detail, await catalogue(aid));
+  /// 存过的详情和目录（不联网），没存过或解析失败为 null。详情页先显示它，再联网刷新。
+  Future<NovelPage?> saved(String aid) async {
+    final detail = await PageStore.get(_urls.novelDetail(aid));
+    final cat = await PageStore.get(_urls.catalogue(aid));
+    if (detail == null || cat == null) return null;
+    try {
+      return NovelPage(Wenku8Parser.novelDetail(detail), Wenku8Parser.catalogue(cat));
+    } catch (_) {
+      return null;
+    }
   }
+
+  bool hasDetail(String aid) => PageStore.has(_urls.novelDetail(aid));
+
+  Future<Wenku8NovelDetail> detail(String aid) => _cached(_urls.novelDetail(aid), Wenku8Parser.novelDetail);
+
+  Future<NovelPage> novel(String aid) async => NovelPage(await detail(aid), await catalogue(aid));
 
   /// 只取目录（检查更新用，比 [novel] 少一次请求）。
   Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue, referer: '$_base/book/$aid.htm');
 
   Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
 
-  Future<Bookshelf> bookshelf(int classId) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true);
+  Future<Bookshelf> bookshelf(int classId, {bool fresh = false}) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true, fresh: fresh);
 
   /// 加入默认书架。wenku8 返回"出现错误！"页时说明失败（例如书架满了）。
   Future<void> addToBookshelf(String aid) async {

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../env.dart';
 import '../image_cache.dart';
+import '../library.dart';
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -34,7 +35,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     super.initState();
     // 打开时强制检查一次更新，之后应用在前台时每小时一次（进了后台 Dart 定时器基本不会触发）
     WidgetsBinding.instance.addObserver(this);
-    Future.microtask(_checkUpdates);
+    Future.microtask(_syncAndCheck);
     Sync.auto();
     if (!isWebPreview) ref.read(imageStoreProvider).trim().ignore();
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
@@ -55,11 +56,21 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
       Sync.auto();
     } else if (state == AppLifecycleState.resumed) {
       Sync.auto();
+      ref.read(libraryProvider.notifier).sync(); // 距上次不到 30 分钟会跳过
     }
   }
 
+  /// 本地书架里有书、而且不是离线状态才检查（游客也能用本地书架追更新）。
   void _checkUpdates() {
-    if (ref.read(sessionProvider) is SessionLoggedIn) ref.read(updateProvider.notifier).refresh();
+    final s = ref.read(sessionProvider);
+    final online = s is SessionLoggedOut || (s is SessionLoggedIn && !s.offline);
+    if (online && ref.read(libraryProvider).books.isNotEmpty) ref.read(updateProvider.notifier).refresh();
+  }
+
+  /// 先和网站书架同步（可能导入新书），再检查更新。
+  Future<void> _syncAndCheck() async {
+    await ref.read(libraryProvider.notifier).sync();
+    _checkUpdates();
   }
 
   static const _items = [(Icons.explore_outlined, Icons.explore, '发现'), (Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.update_outlined, Icons.update, '更新'), (Icons.person_outline, Icons.person, '我的')];
@@ -69,7 +80,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     ref.listen(sessionProvider, (prev, next) {
-      if (prev is! SessionLoggedIn && next is SessionLoggedIn && !next.offline) _checkUpdates();
+      if (prev is! SessionLoggedIn && next is SessionLoggedIn && !next.offline) _syncAndCheck();
     });
     ref.watch(updateProvider);
     final session = ref.watch(sessionProvider);

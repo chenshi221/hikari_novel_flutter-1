@@ -1,0 +1,262 @@
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+
+import '../data/wenku8/wenku8_exceptions.dart';
+import 'catalog.dart';
+import 'data.dart';
+import 'session.dart';
+
+/// 本地书架里的一本书。书架页只读本地，网站书架只是定期对一下。
+class LibBook {
+  const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false});
+
+  final String aid;
+  final String title;
+  final String img;
+
+  /// 加入时间（毫秒）
+  final int added;
+
+  /// 所属分类 id，空表示在"默认"里
+  final List<String> cats;
+
+  /// 网站书架里这条记录的 id（在网站上移出要用）；null 表示还没同步到网站，或者只在本地
+  final String? bid;
+
+  /// 已完结（打开过详情页才知道）
+  final bool done;
+
+  Map<String, Object?> toMap() => {'aid': aid, 'title': title, 'img': img, 'added': added, 'cats': cats, 'bid': bid, 'done': done};
+
+  static LibBook fromMap(Map m) => LibBook(
+    aid: m['aid'] as String,
+    title: m['title'] as String,
+    img: (m['img'] as String?) ?? '',
+    added: (m['added'] as int?) ?? 0,
+    cats: ((m['cats'] as List?) ?? const []).cast<String>(),
+    bid: m['bid'] as String?,
+    done: (m['done'] as bool?) ?? false,
+  );
+
+  LibBook copyWith({String? title, String? img, List<String>? cats, String? bid, bool? done}) =>
+      LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done);
+}
+
+class LibCategory {
+  const LibCategory(this.id, this.name);
+
+  final String id;
+  final String name;
+}
+
+/// 网站书架上的一本，[shelf] 是网站的书架分组 0~5。
+typedef RemoteBook = ({String bid, String title, String img, int shelf});
+
+/// 把网站书架对到本地，[ops] 是还没推到网站的本地操作（aid → add / remove）：
+/// - 网站上有、本地没有、也不是本地刚移出的：加进本地；首次导入时网站书架 2~6 的书放进同名分类（`shelfN`）
+/// - 本地同步过（有 bid）、网站上没了、也不是本地刚加入的：说明在网站上被移出了，本地也移出
+/// - 网站整个是空的：多半是页面不对，不按它删本地的书
+Map<String, LibBook> reconcile(Map<String, LibBook> local, Map<String, RemoteBook> remote, Map<String, String> ops, {required int now, bool firstImport = false}) {
+  final out = <String, LibBook>{};
+  for (final b in local.values) {
+    final r = remote[b.aid];
+    if (r != null) {
+      out[b.aid] = b.copyWith(bid: r.bid, img: b.img.isEmpty ? r.img : null);
+    } else if (b.bid == null || remote.isEmpty || ops[b.aid] == 'add') {
+      out[b.aid] = b;
+    }
+  }
+  for (final MapEntry(key: aid, value: r) in remote.entries) {
+    if (out.containsKey(aid) || ops[aid] == 'remove') continue;
+    out[aid] = LibBook(aid: aid, title: r.title, img: r.img, added: now, bid: r.bid, cats: firstImport && r.shelf > 0 ? ['shelf${r.shelf}'] : const []);
+  }
+  return out;
+}
+
+Box get _box => Hive.box('session');
+
+/// 不经 Riverpod 的只读查询（网页备份、图片缓存清理时判断哪些要留着）。
+class LibraryStore {
+  LibraryStore._();
+
+  static Map get _raw => Hive.isBoxOpen('session') ? ((_box.get('lib:books') as Map?) ?? const {}) : const {};
+
+  static bool contains(String aid) => _raw.containsKey(aid);
+
+  static Iterable<String> covers() => _raw.values.map((m) => ((m as Map)['img'] as String?) ?? '').where((e) => e.isNotEmpty);
+}
+
+class LibraryState {
+  const LibraryState(this.books, this.cats);
+
+  final Map<String, LibBook> books;
+  final List<LibCategory> cats;
+}
+
+/// 本地书架：加入 / 移出先改本地，再排队推到网站；[sync] 拉网站书架对一遍。分类只在本地。
+class LibraryController extends Notifier<LibraryState> {
+  bool _syncing = false;
+
+  @override
+  LibraryState build() => LibraryState(
+    {for (final e in ((_box.get('lib:books') as Map?) ?? const {}).entries) e.key as String: LibBook.fromMap(e.value as Map)},
+    [for (final m in ((_box.get('lib:cats') as List?) ?? const []).cast<Map>()) LibCategory(m['id'] as String, m['name'] as String)],
+  );
+
+  Future<void> _save(Map<String, LibBook> books, [List<LibCategory>? cats]) async {
+    await _box.put('lib:books', {for (final b in books.values) b.aid: b.toMap()});
+    if (cats != null) await _box.put('lib:cats', [for (final c in cats) {'id': c.id, 'name': c.name}]);
+    state = LibraryState(books, cats ?? state.cats);
+  }
+
+  Map<String, Map> _ops() => ((_box.get('lib:ops') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, Map.from(v as Map)));
+
+  Future<void> _queue(String aid, Map op) async {
+    final ops = _ops();
+    // 加了又移（或反过来）且还没推到网站：两个操作抵消
+    final prev = ops.remove(aid);
+    if (prev == null || prev['op'] == op['op']) ops[aid] = op;
+    await _box.put('lib:ops', ops);
+  }
+
+  Future<void> add(String aid, String title, String img, {List<String> cats = const []}) async {
+    if (state.books.containsKey(aid)) return;
+    await _save({...state.books, aid: LibBook(aid: aid, title: title, img: img, added: DateTime.now().millisecondsSinceEpoch, cats: cats)});
+    await _queue(aid, {'op': 'add'});
+    unawaited(_push());
+  }
+
+  Future<void> remove(Iterable<String> aids) async {
+    final books = {...state.books};
+    for (final aid in aids) {
+      final b = books.remove(aid);
+      if (b != null) await _queue(aid, {'op': 'remove', 'bid': b.bid});
+    }
+    await _save(books);
+    unawaited(_push());
+  }
+
+  Future<void> setCats(Iterable<String> aids, List<String> cats) =>
+      _save({...state.books, for (final aid in aids) if (state.books[aid] != null) aid: state.books[aid]!.copyWith(cats: cats)});
+
+  /// 打开详情页拿到最新信息时顺手记下（书名、封面、是否完结）。
+  Future<void> noteDetail(String aid, {required String title, required String img, required String status}) async {
+    final b = state.books[aid];
+    if (b == null) return;
+    final next = b.copyWith(title: title, img: img.isEmpty ? null : img, done: status.contains('完'));
+    if (next.title != b.title || next.img != b.img || next.done != b.done) await _save({...state.books, aid: next});
+  }
+
+  Future<void> addCategory(String name) => _save(state.books, [...state.cats, LibCategory('c${DateTime.now().microsecondsSinceEpoch}', name)]);
+
+  Future<void> renameCategory(String id, String name) => _save(state.books, [for (final c in state.cats) c.id == id ? LibCategory(id, name) : c]);
+
+  Future<void> reorderCategories(List<LibCategory> cats) => _save(state.books, cats);
+
+  /// 删除分类：里面的书不删，只是不再属于它（没有别的分类就回到"默认"）。
+  Future<void> deleteCategory(String id) => _save(
+    {for (final b in state.books.values) b.aid: b.cats.contains(id) ? b.copyWith(cats: b.cats.where((c) => c != id).toList()) : b},
+    state.cats.where((c) => c.id != id).toList(),
+  );
+
+  bool get _online {
+    final s = ref.read(sessionProvider);
+    return s is SessionLoggedIn && !s.offline;
+  }
+
+  /// 只推本地排队的操作，不拉网站书架（加入 / 移出后马上调）。
+  Future<void> _push() async {
+    if (!_online || _syncing) return;
+    _syncing = true;
+    try {
+      await _flush(ref.read(apiProvider), null);
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  /// 推送排队的操作。[remote] 不为空时据此跳过网站上已经是那样的、补上缺的 bid，并把结果写回 [remote]。
+  /// 网站拒绝（例如书架满了）：放弃这个操作，书只留在本地；网络问题：停下，留到下次。
+  Future<void> _flush(Api api, Map<String, RemoteBook>? remote) async {
+    final done = <String, Object?>{}; // 处理完的 aid → 当时的操作
+    for (final MapEntry(key: aid, value: op) in _ops().entries) {
+      try {
+        if (op['op'] == 'add') {
+          if (remote == null || !remote.containsKey(aid)) await api.addToBookshelf(aid);
+        } else {
+          final bid = remote?[aid]?.bid ?? op['bid'] as String?;
+          if (bid == null) {
+            if (remote == null) continue; // 不知道 bid：等下次拉到网站书架再说
+          } else if (remote == null || remote.containsKey(aid)) {
+            await api.removeFromBookshelf(bid);
+          }
+          remote?.remove(aid);
+        }
+        done[aid] = op['op'];
+      } on Wenku8UnexpectedPageException {
+        done[aid] = op['op'];
+      } catch (_) {
+        break;
+      }
+    }
+    // 推送期间用户可能又加 / 移了书：重新读一遍，只去掉处理过且没变的
+    final ops = _ops()..removeWhere((aid, op) => done.containsKey(aid) && done[aid] == op['op']);
+    await _box.put('lib:ops', ops);
+  }
+
+  /// 和网站书架同步：拉网站全部 6 个书架 → 推本地排队的操作 → 对一遍。没登录、离线时什么都不做。
+  /// 距上次不到 30 分钟时跳过（[force] 除外）。返回出错信息，成功或跳过返回 null。
+  Future<String?> sync({bool force = false}) async {
+    final s = ref.read(sessionProvider);
+    if (s is! SessionLoggedIn || s.offline || _syncing) return null;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!force && now - ((_box.get('lib:sync') as int?) ?? 0) < 30 * 60 * 1000) return null;
+    _syncing = true;
+    try {
+      final api = ref.read(apiProvider);
+      final remote = <String, RemoteBook>{};
+      for (var shelf = 0; shelf < 6; shelf++) {
+        for (final b in (await api.bookshelf(shelf, fresh: true)).list) {
+          remote.putIfAbsent(b.aid, () => (bid: b.bid, title: b.title, img: b.img, shelf: shelf));
+        }
+      }
+      await _flush(api, remote);
+      final first = _box.get('lib:imported') != s.user.uid;
+      var cats = state.cats;
+      if (first) {
+        // 第一次导入：网站书架 2~6 里有书的，建同名分类，书放进去，以后网站上只用默认书架
+        final used = remote.values.map((r) => r.shelf).where((n) => n > 0).toSet();
+        cats = [...cats, for (final n in used.toList()..sort()) if (!cats.any((c) => c.id == 'shelf$n')) LibCategory('shelf$n', shelfNames[n])];
+      }
+      final ops = {for (final e in _ops().entries) e.key: e.value['op'] as String};
+      await _save(reconcile(state.books, remote, ops, now: now, firstImport: first), cats);
+      await _box.put('lib:imported', s.user.uid);
+      await _box.put('lib:sync', now);
+      unawaited(_prefetch(api));
+      return null;
+    } catch (e) {
+      return e.toString();
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  /// 书架里还没存过详情的书，后台一本本取下来存好（离线也能看简介）；目录由检查更新顺带存。
+  /// 放慢一点免得被网站限流，网络出问题就停。
+  Future<void> _prefetch(Api api) async {
+    for (final b in state.books.values.toList()) {
+      if (api.hasDetail(b.aid)) continue;
+      try {
+        final d = await api.detail(b.aid);
+        await noteDetail(b.aid, title: d.title, img: d.imgUrl, status: d.status);
+      } catch (_) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+    }
+  }
+}
+
+final libraryProvider = NotifierProvider<LibraryController, LibraryState>(LibraryController.new);
