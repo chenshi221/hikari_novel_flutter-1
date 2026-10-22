@@ -26,6 +26,16 @@ class VolumesPage extends ConsumerStatefulWidget {
   ConsumerState<VolumesPage> createState() => _VolumesPageState();
 }
 
+/// 书架封面和轮播最前面那卷之间飞的时候：书架那张垫底，轮播那张跟着动画淡入（返回时淡出），
+/// 停在的卷不是第一卷时封面在飞行中自然换过去。
+Widget volumeHeroShuttle(BuildContext context, Animation<double> animation, HeroFlightDirection direction, BuildContext from, BuildContext to) {
+  final (shelf, carousel) = direction == HeroFlightDirection.push ? (from, to) : (to, from);
+  return Stack(
+    fit: StackFit.expand,
+    children: [(shelf.widget as Hero).child, FadeTransition(opacity: animation, child: (carousel.widget as Hero).child)],
+  );
+}
+
 /// 正在读第几卷：阅读进度所在的那卷；那卷已经读完（比如手动标了读完）就往后找第一卷没读完的。
 /// 没读过、或者从那卷往后全读完了为 -1。
 int readingVolume(String aid) {
@@ -107,7 +117,12 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
               ),
             )
           : const SizedBox(height: 16);
-      final summary = _Summary(aid: aid, vol: v, index: cur, count: vols.length);
+      // 卷名和进度在打开动画的后半段浮上来
+      final shown = CurvedAnimation(parent: ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation, curve: const Interval(0.5, 1, curve: Curves.easeOut));
+      final summary = FadeTransition(
+        opacity: shown,
+        child: SlideTransition(position: Tween(begin: const Offset(0, 0.3), end: Offset.zero).animate(shown), child: _Summary(aid: aid, vol: v, index: cur, count: vols.length)),
+      );
       final details = _Details(
         key: ValueKey(v.title),
         aid: aid,
@@ -221,13 +236,16 @@ class _Carousel extends StatelessWidget {
       builder: (context, c) {
         final h = c.maxHeight * 0.92;
         final w = math.min(h * kCoverAspect, c.maxWidth * 0.72);
+        final route = ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
         return Stack(
           alignment: Alignment.center,
           children: [
             AnimatedBuilder(
-              animation: controller,
+              animation: Listenable.merge([controller, route]),
               builder: (context, _) {
                 final p = page();
+                // 打开时其他卷从封面后面往两边摊开（返回时收回去）
+                final t = Curves.easeOutCubic.transform(const Interval(0.25, 1).transform(route.value));
                 final shown = [for (var i = math.max(0, p.floor() - 3); i <= math.min(vols.length - 1, p.ceil() + 3); i++) i]
                   ..sort((a, b) => (b - p).abs().compareTo((a - p).abs())); // 远的先画，近的压在上面
                 return Stack(
@@ -249,13 +267,14 @@ class _Carousel extends StatelessWidget {
                             untouched: !v.cids.any(read.contains),
                             shade: math.min(a, 1.5) * 0.3,
                           );
+                          final f = i == cur ? 1.0 : t; // 最前面那卷是飞过来的封面，不用摊
                           return Opacity(
-                            opacity: (3.2 - a).clamp(0.0, 1.0),
+                            opacity: (3.2 - a).clamp(0.0, 1.0) * f,
                             child: Transform.translate(
-                              offset: Offset(dx, 0),
+                              offset: Offset(dx * f, 0),
                               child: Transform.scale(
-                                scale: 1 - 0.14 * math.min(a, 2.5),
-                                child: i == cur ? Hero(tag: 'vols:$aid', child: card) : card,
+                                scale: 1 - 0.14 * math.min(a, 2.5) * f,
+                                child: i == cur ? Hero(tag: 'vols:$aid', flightShuttleBuilder: volumeHeroShuttle, child: card) : card,
                               ),
                             ),
                           );

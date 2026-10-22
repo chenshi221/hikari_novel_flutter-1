@@ -444,7 +444,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                     // 远的先画：每张往右错开一点、上下各缩一点，越往后越暗
                     for (var k = behind.length; k >= 1; k--)
                       Positioned(left: _edges / 3 * k, top: 3.0 * k, height: h - 6.0 * k, child: sheet(behind[k - 1], dim: 0.12 * (k - 1))),
-                    SizedBox(width: w, height: h, child: Hero(tag: 'vols:${b.aid}', child: sheet(_cover(b)))),
+                    SizedBox(width: w, height: h, child: Hero(tag: 'vols:${b.aid}', flightShuttleBuilder: volumeHeroShuttle, child: sheet(_cover(b)))),
                     if (badge != null) Positioned(top: 6, right: 6, child: badge),
                     if (vols.length == 1)
                       Positioned(

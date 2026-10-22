@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -82,7 +82,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!, vol: int.tryParse(state.uri.queryParameters['v'] ?? ''))),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
       GoRoute(path: Routes.wall, builder: (_, _) => const WallPage()),
-      GoRoute(path: '/volumes/:aid', builder: (_, state) => VolumesPage(aid: state.pathParameters['aid']!)),
+      // 卷册：整页只淡入淡出，让从书架飞过来的封面和摊开的各卷当主角
+      GoRoute(
+        path: '/volumes/:aid',
+        pageBuilder: (_, state) => CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: const Duration(milliseconds: 450),
+          reverseTransitionDuration: const Duration(milliseconds: 380),
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
+          child: VolumesPage(aid: state.pathParameters['aid']!),
+        ),
+      ),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: Routes.categories, builder: (_, _) => const CategoriesPage()),
       GoRoute(path: Routes.sync, builder: (_, _) => const SyncPage()),
