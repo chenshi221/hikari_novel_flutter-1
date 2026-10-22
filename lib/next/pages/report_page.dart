@@ -112,7 +112,9 @@ class _ReportPageState extends ConsumerState<ReportPage> {
                     Text(title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w600, fontFamilyFallback: kSerifFallback)),
                     if ((meta?.author ?? '').isNotEmpty) ...[const SizedBox(height: 6), Text(meta!.author, style: const TextStyle(color: Colors.white70, fontSize: 16))],
                     const SizedBox(height: 28),
-                    Row(
+                    // 两张卡片等高；在滚动区域里高度没有上限，stretch 必须配 IntrinsicHeight，否则整页布局失败
+                    IntrinsicHeight(
+                      child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Expanded(
@@ -140,14 +142,17 @@ class _ReportPageState extends ConsumerState<ReportPage> {
                         Expanded(flex: 5, child: tile(Icons.hourglass_bottom, '阅读时间', Text(seconds == 0 ? '—' : _duration(seconds), style: big))),
                       ],
                     ),
+                    ),
                     const SizedBox(height: 12),
-                    Row(
+                    IntrinsicHeight(
+                      child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Expanded(child: tile(Icons.text_fields, '已读字数', Text(_chars(ReadState.readChars(aid)), style: big))),
                         const SizedBox(width: 12),
                         Expanded(child: tile(Icons.calendar_today_outlined, '已读天数', Text('${days.length} 天', style: big))),
                       ],
+                    ),
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
