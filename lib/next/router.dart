@@ -21,6 +21,7 @@ import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stats_page.dart';
 import 'pages/updates_page.dart';
+import 'pages/wall_page.dart';
 import 'pages/splash_page.dart';
 import 'reader/reader_page.dart';
 import 'session.dart';
@@ -36,7 +37,8 @@ class Routes {
   static const updates = '/updates';
   static const stats = '/stats';
   static const bookmarks = '/bookmarks';
-  static String report(String aid) => '/report/$aid';
+  static String report(String aid, {int? vol}) => '/report/$aid${vol == null ? '' : '?v=$vol'}';
+  static const wall = '/wall';
   static const rules = '/rules';
   static const categories = '/categories';
   static const sync = '/sync';
@@ -75,8 +77,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.verify, builder: (_, _) => const VerifyPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
       GoRoute(path: Routes.bookmarks, builder: (_, _) => const BookmarksPage()),
-      GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!)),
+      GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!, vol: int.tryParse(state.uri.queryParameters['v'] ?? ''))),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
+      GoRoute(path: Routes.wall, builder: (_, _) => const WallPage()),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: Routes.categories, builder: (_, _) => const CategoriesPage()),
       GoRoute(path: Routes.sync, builder: (_, _) => const SyncPage()),
