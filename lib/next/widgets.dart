@@ -107,7 +107,11 @@ class StatePanel extends ConsumerWidget {
 }
 
 /// 原生 App 里 Image.network 不走代理，所以用 [ImageStore] 取图（内存 LRU + 磁盘缓存）；网页预览走转发程序，直接用 Image.network。
-final imageBytesProvider = FutureProvider.autoDispose.family<Uint8List, String>((ref, url) => ref.read(imageStoreProvider).load(url));
+final imageBytesProvider = FutureProvider.autoDispose.family<Uint8List, String>((ref, url) {
+  final store = ref.read(imageStoreProvider);
+  ref.onDispose(() => store.cancel(url)); // 没人看了（滑出屏幕），还在排队的就别下了
+  return store.load(url);
+});
 
 class NetImage extends ConsumerWidget {
   const NetImage(this.url, {super.key, this.fit = BoxFit.cover, this.error});

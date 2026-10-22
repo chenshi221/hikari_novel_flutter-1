@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -8,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'library.dart';
 import 'session.dart';
+import 'volumes.dart';
 
 /// 图片缓存：内存里最多留 [_memBytes] 字节（LRU），磁盘上长期保留，断网后封面和插图还能显示。
 /// 网页预览不用它（直接走转发程序）。
@@ -21,6 +23,12 @@ class ImageStore {
   var _memUsed = 0;
   final _downloaded = <String>{};
   final _inflight = <String, Future<Uint8List>>{};
+
+  // 网络下载排队：同时最多 [_maxNet] 张，按请求顺序（列表从上到下）。不排队时几十张一起抢带宽，挂代理时谁都快不了，最后一起冒出来。
+  // 滑出屏幕的会被 [cancel] 从队里拿掉，所以排着的基本都是眼前这一屏的。
+  static const _maxNet = 4;
+  int _running = 0;
+  final _waiting = <String, Completer<void>>{}; // Map 保持插入顺序
   Directory? _dir;
 
   Future<Directory> _cacheDir() async => _dir ??= await Directory(p.join((await getApplicationSupportDirectory()).path, 'imgcache')).create(recursive: true);
@@ -55,7 +63,37 @@ class ImageStore {
     final url = _norm(rawUrl);
     final hit = peek(url);
     if (hit != null) return Future.value(hit);
-    return _inflight[url] ??= _fetch(url).whenComplete(() => _inflight.remove(url));
+    final running = _inflight[url];
+    if (running != null) return running;
+    late final Future<Uint8List> f;
+    // 只删自己：被取消后又重新请求时，这里已经换成新的那次了
+    f = _fetch(url).whenComplete(() => identical(_inflight[url], f) ? _inflight.remove(url) : null);
+    return _inflight[url] = f;
+  }
+
+  Future<void> _slot(String url) {
+    if (_running < _maxNet) {
+      _running++;
+      return Future.value();
+    }
+    return (_waiting[url] = Completer<void>()).future;
+  }
+
+  void _release() {
+    if (_waiting.isEmpty) {
+      _running--;
+    } else {
+      _waiting.remove(_waiting.keys.first)!.complete(); // 名额直接交给排在最前面的
+    }
+  }
+
+  /// 不再需要这张图（滑出屏幕、页面关了）：还在排队的就不下了。已经在下的照常下完存起来。
+  void cancel(String rawUrl) {
+    final url = _norm(rawUrl);
+    final c = _waiting.remove(url);
+    if (c == null) return;
+    _inflight.remove(url); // 马上又滑回来时重新排队，别拿到这个被取消的结果
+    c.completeError(const ImageCancelled());
   }
 
   Future<Uint8List> _fetch(String url) async {
@@ -64,8 +102,13 @@ class ImageStore {
     if (await file.exists()) {
       bytes = await file.readAsBytes();
     } else {
-      final res = await _ref.read(imageDioProvider).get<List<int>>(url);
-      bytes = Uint8List.fromList(res.data!);
+      await _slot(url);
+      try {
+        final res = await _ref.read(imageDioProvider).get<List<int>>(url);
+        bytes = Uint8List.fromList(res.data!);
+      } finally {
+        _release();
+      }
       await file.writeAsBytes(bytes);
       _downloaded.add(url);
     }
@@ -85,9 +128,9 @@ class ImageStore {
     _memUsed = 0;
   }
 
-  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%；本地书架里的书的封面不删。
+  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%；本地书架里的书的封面、卷封面不删。
   /// shortcut: 离线缓存的插图也可能被清掉，联网时会重新下载；以后要区分就给离线插图单独目录
-  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes, keep: {for (final url in LibraryStore.covers()) _name(_norm(url))});
+  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes, keep: {for (final url in [...LibraryStore.covers(), ...Volumes.allCovers()]) _name(_norm(url))});
 
   Future<int> diskBytes() async {
     final dir = await _cacheDir();
@@ -117,6 +160,10 @@ Future<void> trimDir(Directory dir, int maxBytes, {Set<String> keep = const {}})
     await f.delete();
     total -= st.size;
   }
+}
+
+class ImageCancelled implements Exception {
+  const ImageCancelled();
 }
 
 final imageStoreProvider = Provider<ImageStore>((ref) => ImageStore(ref));
