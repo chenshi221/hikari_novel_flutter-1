@@ -85,6 +85,8 @@ class LibraryStore {
 
   static bool contains(String aid) => _raw.containsKey(aid);
 
+  static Map? get(String aid) => _raw[aid] as Map?;
+
   static Iterable<String> covers() => _raw.values.map((m) => ((m as Map)['img'] as String?) ?? '').where((e) => e.isNotEmpty);
 }
 

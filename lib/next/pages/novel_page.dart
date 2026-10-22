@@ -8,7 +8,10 @@ import '../../models/cat_volume.dart';
 import '../cache.dart';
 import '../data.dart';
 import '../library.dart';
+import '../stats.dart';
+import '../volumes.dart';
 import 'categories_page.dart';
+import 'cover_picker_page.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
@@ -19,11 +22,17 @@ import '../widgets.dart';
 final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref, aid) async* {
   final api = ref.watch(apiProvider);
   final saved = await api.saved(aid);
-  if (saved != null) yield saved;
+  if (saved != null) {
+    await Volumes.saveCatalogue(aid, saved.catalogue);
+    yield saved;
+  }
   try {
     final fresh = await api.novel(aid);
     final d = fresh.detail;
     ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
+    await Volumes.saveCatalogue(aid, fresh.catalogue);
+    // 读过的书补记书名（离线时读的统计里没有书名，会显示成"书号"）
+    if (ReadingStats.perBook().containsKey(aid)) await ReadingStats.setMeta(aid, d.title, d.author, d.imgUrl);
     yield fresh;
   } catch (_) {
     if (saved == null) rethrow;
@@ -66,6 +75,20 @@ class _BodyState extends ConsumerState<_Body> {
 
   String get aid => widget.aid;
   NovelPage get data => widget.data;
+  late final VolumeCoverQueue _covers; // dispose 里不能再用 ref，先取好
+
+  @override
+  void initState() {
+    super.initState();
+    _covers = ref.read(volumeCoverQueueProvider);
+  }
+
+  @override
+  void dispose() {
+    // 没加入书架的书（从发现页等处点开看看的）：退出时清掉为它挑封面下载的图
+    if (!LibraryStore.contains(aid)) _covers.forget(aid);
+    super.dispose();
+  }
 
   /// 打开别的页面，回来时刷新（阅读进度、已读状态会变）。
   Future<void> _open(String route, {Object? extra}) async {
@@ -92,6 +115,8 @@ class _BodyState extends ConsumerState<_Body> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final d = data.detail;
+    ref.watch(volumeChangesProvider); // 取到卷封面后换上
+    final cover = ref.read(volumeCoverQueueProvider).bookCover(aid, d.imgUrl);
     final inLib = ref.watch(libraryProvider.select((s) => s.books.containsKey(aid)));
     final progress = ReadingProgress.of(aid);
     final all = data.catalogue.expand((v) => v.chapters).toList();
@@ -113,9 +138,9 @@ class _BodyState extends ConsumerState<_Body> {
               child: GestureDetector(
                 onTap: () => showDialog(
                   context: context,
-                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(d.imgUrl, fit: BoxFit.contain))),
+                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(cover, fit: BoxFit.contain))),
                 ),
-                child: CoverImage(d.imgUrl),
+                child: CoverImage(cover),
               ),
             ),
             const SizedBox(width: 16),
@@ -266,7 +291,30 @@ class _BodyState extends ConsumerState<_Body> {
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             initiallyExpanded: data.catalogue.length == 1 || v.chapters.any((c) => c.cid == progress?.cid || _picked.contains(c.cid)),
-            title: Text(v.title),
+            title: Row(
+              children: [
+                Expanded(child: Text(v.title)),
+                IconButton(
+                  tooltip: '换这一卷的封面',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.image_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                  onPressed: () => pickVolumeCover(context, aid, Vol.from(v)),
+                ),
+                if (Volumes.done(aid).containsKey(v.title))
+                  Tooltip(message: '已读完', child: Icon(Icons.check_circle, size: 18, color: theme.colorScheme.primary))
+                else
+                  IconButton(
+                    tooltip: '标记本卷读完',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.check_circle_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
+                    onPressed: () async {
+                      // 本卷正文章节全部标为已读，读完日期记为现在；标错了可以长按章节多选、标回未读
+                      await ReadState.setRead(aid, Vol.from(v).textCids, true);
+                      if (mounted) setState(() {});
+                    },
+                  ),
+              ],
+            ),
             children: [
               for (final c in _reverse ? v.chapters.reversed : v.chapters)
                 ListTile(

@@ -1,5 +1,8 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'cache.dart';
+import 'history.dart';
+import 'library.dart';
 import 'sync.dart';
 
 /// 阅读统计：按天和按书累计阅读秒数，以及读过的章节数（同一章同一天只算一次）。
@@ -43,14 +46,38 @@ class ReadingStats {
     return m is Map ? (title: m['t'] as String, author: (m['a'] as String?) ?? '', img: (m['i'] as String?) ?? '') : null;
   }
 
+  /// 书名、作者、封面：统计里记的没有时（例如离线时读的），依次从本地书架、阅读历史、离线缓存里找；都没有才显示书号。
+  static ({String title, String author, String img}) info(String aid) {
+    final m = meta(aid);
+    if (m != null && m.title.isNotEmpty) return m;
+    final lib = LibraryStore.get(aid);
+    final hist = ReadingHistory.all().where((e) => e.aid == aid).firstOrNull;
+    final cached = ChapterCache.books()[aid];
+    final title = (lib?['title'] as String?) ?? hist?.title ?? cached?.$1;
+    final img = [m?.img, lib?['img'] as String?, hist?.img, cached?.$3].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? '';
+    return (title: title ?? '书号 $aid', author: m?.author ?? '', img: img);
+  }
+
   static Future<void> setMeta(String aid, String title, String author, String img) async {
     final all = Map.of((_box.get('stats:meta') as Map?) ?? const {});
     all[aid] = {'t': title, 'a': author, 'i': img};
     await _box.put('stats:meta', all);
   }
 
-  static Future<void> addSeconds(String aid, int seconds) async {
+  /// 每章每天读了多少秒：cid → 日期 → 秒。按卷统计时长、天数用（这个功能加上之后才开始记）。
+  static Map<String, Map<String, int>> chapterSeconds(String aid) => ((_box.get('stats:ch:$aid') as Map?) ?? const {}).map(
+    (k, v) => MapEntry(k as String, (v as Map).map((d, s) => MapEntry(d as String, s as int))),
+  );
+
+  static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
     if (seconds <= 0) return;
+    if (cid != null) {
+      final ch = chapterSeconds(aid);
+      final today = dayKey(DateTime.now());
+      final days = ch[cid] ??= {};
+      days[today] = (days[today] ?? 0) + seconds;
+      await _box.put('stats:ch:$aid', ch);
+    }
     final today = dayKey(DateTime.now());
     final days = ((_box.get('stats:days:$aid') as List?) ?? const []).cast<String>();
     if (!days.contains(today)) await _box.put('stats:days:$aid', [...days, today]);

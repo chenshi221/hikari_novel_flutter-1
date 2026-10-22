@@ -3,10 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  charset_converter
-  dynamic_color
   flutter_inappwebview_linux
-  sqlite3_flutter_libs
+  flutter_secure_storage_linux
   url_launcher_linux
 )
 

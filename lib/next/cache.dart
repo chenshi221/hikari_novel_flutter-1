@@ -54,6 +54,9 @@ class ChapterCache {
 
   static bool has(String aid, String cid) => _index.containsKey('$aid:$cid');
 
+  /// 缓存的这章有多少字，没缓存为 null。
+  static int? length(String aid, String cid) => _index.get('$aid:$cid') as int?;
+
   static Iterable<String> _keys(String aid) => _index.keys.whereType<String>().where((k) => k.startsWith('$aid:'));
 
   static int count(String aid) => _keys(aid).length;

@@ -3,6 +3,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'data.dart';
 import 'library.dart';
+import 'volumes.dart';
 
 class UpdateEntry {
   const UpdateEntry({required this.aid, required this.title, required this.img, required this.chapter, required this.cid, required this.time});
@@ -83,7 +84,9 @@ class UpdateController extends Notifier<UpdateProgress> {
         final batch = entries.skip(i).take(4);
         final results = await Future.wait(batch.map((e) async {
           try {
-            return (await api.catalogue(e.key)).expand((v) => v.chapters).toList();
+            final cat = await api.catalogue(e.key);
+            await Volumes.saveCatalogue(e.key, cat);
+            return cat.expand((v) => v.chapters).toList();
           } catch (_) {
             return null;
           }

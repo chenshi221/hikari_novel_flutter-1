@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -21,6 +21,8 @@ import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/stats_page.dart';
 import 'pages/updates_page.dart';
+import 'pages/volumes_page.dart';
+import 'pages/wall_page.dart';
 import 'pages/splash_page.dart';
 import 'reader/reader_page.dart';
 import 'session.dart';
@@ -36,7 +38,8 @@ class Routes {
   static const updates = '/updates';
   static const stats = '/stats';
   static const bookmarks = '/bookmarks';
-  static String report(String aid) => '/report/$aid';
+  static String report(String aid, {int? vol}) => '/report/$aid${vol == null ? '' : '?v=$vol'}';
+  static const wall = '/wall';
   static const rules = '/rules';
   static const categories = '/categories';
   static const sync = '/sync';
@@ -49,6 +52,7 @@ class Routes {
   static String searchAuthor(String author) => '/search?author=${Uri.encodeQueryComponent(author)}';
   static String cacheBook(String aid) => '/cache/$aid';
   static String novel(String aid) => '/novel/$aid';
+  static String volumes(String aid) => '/volumes/$aid';
   static String comments(String aid) => '/novel/$aid/comments';
   static String replies(String aid, String rid) => '/novel/$aid/comments/$rid';
   static String reader(String aid, String cid) => '/reader/$aid/$cid';
@@ -75,8 +79,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.verify, builder: (_, _) => const VerifyPage()),
       GoRoute(path: Routes.search, builder: (_, state) => SearchPage(author: state.uri.queryParameters['author'])),
       GoRoute(path: Routes.bookmarks, builder: (_, _) => const BookmarksPage()),
-      GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!)),
+      GoRoute(path: '/report/:aid', builder: (_, state) => ReportPage(aid: state.pathParameters['aid']!, vol: int.tryParse(state.uri.queryParameters['v'] ?? ''))),
       GoRoute(path: Routes.stats, builder: (_, _) => const StatsPage()),
+      GoRoute(path: Routes.wall, builder: (_, _) => const WallPage()),
+      // 卷册：整页只淡入淡出，让从书架飞过来的封面和摊开的各卷当主角
+      GoRoute(
+        path: '/volumes/:aid',
+        pageBuilder: (_, state) => CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: const Duration(milliseconds: 450),
+          reverseTransitionDuration: const Duration(milliseconds: 380),
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
+          child: VolumesPage(aid: state.pathParameters['aid']!),
+        ),
+      ),
       GoRoute(path: Routes.rules, builder: (_, _) => const RulesPage()),
       GoRoute(path: Routes.categories, builder: (_, _) => const CategoriesPage()),
       GoRoute(path: Routes.sync, builder: (_, _) => const SyncPage()),

@@ -6,29 +6,25 @@ import FlutterMacOS
 import Foundation
 
 import battery_plus
-import charset_converter
-import device_info_plus
-import dynamic_color
 import file_picker_darwin
+import flutter_image_compress_macos
 import flutter_inappwebview_macos
+import flutter_secure_storage_darwin
 import flutter_tts
 import package_info_plus
-import sqflite_darwin
-import sqlite3_flutter_libs
+import share_plus
 import url_launcher_macos
 import wakelock_plus
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   BatteryPlusMacosPlugin.register(with: registry.registrar(forPlugin: "BatteryPlusMacosPlugin"))
-  CharsetConverterPlugin.register(with: registry.registrar(forPlugin: "CharsetConverterPlugin"))
-  DeviceInfoPlusMacosPlugin.register(with: registry.registrar(forPlugin: "DeviceInfoPlusMacosPlugin"))
-  DynamicColorPlugin.register(with: registry.registrar(forPlugin: "DynamicColorPlugin"))
   FilePickerPlugin.register(with: registry.registrar(forPlugin: "FilePickerPlugin"))
+  FlutterImageCompressMacosPlugin.register(with: registry.registrar(forPlugin: "FlutterImageCompressMacosPlugin"))
   InAppWebViewFlutterPlugin.register(with: registry.registrar(forPlugin: "InAppWebViewFlutterPlugin"))
+  FlutterSecureStorageDarwinPlugin.register(with: registry.registrar(forPlugin: "FlutterSecureStorageDarwinPlugin"))
   FlutterTtsPlugin.register(with: registry.registrar(forPlugin: "FlutterTtsPlugin"))
   FPPPackageInfoPlusPlugin.register(with: registry.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
-  SqflitePlugin.register(with: registry.registrar(forPlugin: "SqflitePlugin"))
-  Sqlite3FlutterLibsPlugin.register(with: registry.registrar(forPlugin: "Sqlite3FlutterLibsPlugin"))
+  SharePlusMacosPlugin.register(with: registry.registrar(forPlugin: "SharePlusMacosPlugin"))
   UrlLauncherPlugin.register(with: registry.registrar(forPlugin: "UrlLauncherPlugin"))
   WakelockPlusMacosPlugin.register(with: registry.registrar(forPlugin: "WakelockPlusMacosPlugin"))
 }

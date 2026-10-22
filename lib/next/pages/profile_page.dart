@@ -151,6 +151,7 @@ class ProfilePage extends ConsumerWidget {
             ),
           const SizedBox(height: 16),
           entry(Icons.bar_chart_outlined, '阅读统计', Routes.stats),
+          entry(Icons.collections_bookmark_outlined, '书籍墙', Routes.wall),
           entry(Icons.history, '阅读历史', Routes.history),
           entry(Icons.bookmark_border, '书签', Routes.bookmarks),
           entry(Icons.download_outlined, '离线缓存', Routes.cache),
