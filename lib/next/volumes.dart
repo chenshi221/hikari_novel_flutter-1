@@ -74,6 +74,12 @@ class Volumes {
     changes.value++;
   }
 
+  /// 忘掉这本书所有卷的封面记录（没加入书架的书退出详情页时）
+  static Future<void> forgetCovers(String aid) async {
+    await _box.delete('vcover2:$aid');
+    changes.value++;
+  }
+
   /// 去掉自选的封面，下次显示时重新自动挑
   static Future<void> resetCover(String aid, String title) async {
     await _box.put('vcover2:$aid', {..._covers(aid)}..remove(title));
@@ -170,6 +176,19 @@ class VolumeCoverQueue {
     Future.microtask(_pump);
   }
 
+  /// 没加入书架的书退出详情页时：不再取它的封面，删掉挑封面时下载的图（插图章节的前几张）和封面记录，下次打开再取。
+  Future<void> forget(String aid) async {
+    _queue.removeWhere((e) => e.$1 == aid);
+    _bg.removeWhere((e) => e.$1 == aid);
+    final store = _ref.read(imageStoreProvider);
+    for (final v in Volumes.of(aid)) {
+      if (v.illus == null || Volumes.cover(aid, v.title) == null) continue;
+      final content = await ChapterCache.get(aid, v.illus!);
+      if (content != null) await store.remove(content.images.take(_checked));
+    }
+    await Volumes.forgetCovers(aid);
+  }
+
   /// 一卷的封面；这卷没有插图（比如短篇集）或者还没取到时用书的高清封面（第一卷的）。
   String volCover(String aid, Vol v, String fallback) => get(aid, v) ?? bookCover(aid, fallback);
 
@@ -242,10 +261,13 @@ Future<ui.Size> imageSize(Uint8List bytes) async {
   return size;
 }
 
+/// 挑封面时最多看插图章节的前几张
+const _checked = 4;
+
 /// 从插图章节的图里挑封面：第一张竖着的（宽不超过高）。第一张常常是连书脊、封底一起的横版展开图，就往后找；
 /// 前几张都是横的就还用第一张。没有图返回 ''。
 Future<String> chooseCover(List<String> images, Future<ui.Size> Function(String url) sizeOf) async {
-  for (final url in images.take(4)) {
+  for (final url in images.take(_checked)) {
     final s = await sizeOf(url);
     if (s.width <= s.height) return url;
   }

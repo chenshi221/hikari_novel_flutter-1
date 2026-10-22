@@ -16,7 +16,7 @@ import '../widgets.dart';
 import 'cover_picker_page.dart';
 import 'novel_page.dart';
 
-/// 书架"卷册"模式点进来：一本书的各卷叠在一起，左右滑把某一卷转到最前面；点最前面那卷展开它的详情和目录。
+/// 书架"卷册"模式点进来：一本书的各卷叠在一起，左右滑把某一卷转到最前面；点最前面那卷像翻开书一样开始读，点下面的横条展开详情和目录。
 class VolumesPage extends ConsumerStatefulWidget {
   const VolumesPage({super.key, required this.aid});
 
@@ -32,8 +32,19 @@ Widget volumeHeroShuttle(BuildContext context, Animation<double> animation, Hero
   final (shelf, carousel) = direction == HeroFlightDirection.push ? (from, to) : (to, from);
   return Stack(
     fit: StackFit.expand,
-    children: [(shelf.widget as Hero).child, FadeTransition(opacity: animation, child: (carousel.widget as Hero).child)],
+    children: [
+      (shelf.widget as Hero).child,
+      FadeTransition(opacity: animation, child: (carousel.widget as Hero).child),
+    ],
   );
+}
+
+/// 打开这一卷从哪章读：进度在这卷就接着读，不然从第一章没读过的正文开始，全读过就从头。
+String startCid(String aid, Vol v) {
+  final p = ReadingProgress.of(aid);
+  if (p != null && v.cids.contains(p.cid)) return p.cid;
+  final read = ReadState.read(aid);
+  return v.textCids.where((c) => !read.contains(c)).firstOrNull ?? v.cids.first;
 }
 
 /// 正在读第几卷：阅读进度所在的那卷；那卷已经读完（比如手动标了读完）就往后找第一卷没读完的。
@@ -54,6 +65,35 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
   late int _cur = math.max(readingVolume(widget.aid), 0); // 一打开停在正在读的那卷
   late final _pc = PageController(initialPage: _cur, viewportFraction: 0.5);
   bool _open = false;
+  final _coverKey = GlobalKey(); // 最前面那卷的封面，翻开动画从它的位置开始
+  bool _opening = false;
+
+  /// 点最前面那卷：封面绕书脊翻开、放大铺满屏幕，进阅读页。动画放在最上层的 Overlay 里，阅读页推上来以后再淡出。
+  void _openBook(Vol v, String url) {
+    final cid = startCid(widget.aid, v);
+    final box = _coverKey.currentContext?.findRenderObject() as RenderBox?;
+    if (_opening) return;
+    if (box == null || !box.hasSize) {
+      context.push(Routes.reader(widget.aid, cid));
+      return;
+    }
+    _opening = true;
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _OpeningBook(
+        from: box.localToGlobal(Offset.zero) & box.size,
+        url: url,
+        onOpened: () {
+          if (mounted) context.push(Routes.reader(widget.aid, cid));
+        },
+        onDone: () {
+          entry.remove();
+          _opening = false;
+        },
+      ),
+    );
+    Overlay.of(context, rootOverlay: true).insert(entry);
+  }
 
   @override
   void dispose() {
@@ -63,11 +103,11 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
 
   double get _page => _pc.hasClients && _pc.position.haveDimensions ? _pc.page ?? _cur.toDouble() : _cur.toDouble();
 
-  void _tap(int i, Vol v) {
+  void _tap(int i, Vol v, String url) {
     if (i != _cur) {
       _pc.animateToPage(i, duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
     } else {
-      setState(() => _open = !_open);
+      _openBook(v, url);
     }
   }
 
@@ -100,9 +140,11 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
         cur: cur,
         coverOf: coverOf,
         onPage: (i) => setState(() => _cur = i),
-        onTap: _tap,
+        coverKey: _coverKey,
+        onTap: (i, v) => _tap(i, v, coverOf(v)),
         onLongPress: (v) => pickVolumeCover(context, aid, v),
       );
+      final toggle = _DetailsToggle(open: _open, onTap: () => setState(() => _open = !_open));
       final scrubber = vols.length > 6
           ? SliderTheme(
               data: SliderTheme.of(
@@ -118,10 +160,16 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
             )
           : const SizedBox(height: 16);
       // 卷名和进度在打开动画的后半段浮上来
-      final shown = CurvedAnimation(parent: ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation, curve: const Interval(0.5, 1, curve: Curves.easeOut));
+      final shown = CurvedAnimation(
+        parent: ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation,
+        curve: const Interval(0.5, 1, curve: Curves.easeOut),
+      );
       final summary = FadeTransition(
         opacity: shown,
-        child: SlideTransition(position: Tween(begin: const Offset(0, 0.3), end: Offset.zero).animate(shown), child: _Summary(aid: aid, vol: v, index: cur, count: vols.length)),
+        child: SlideTransition(
+          position: Tween(begin: const Offset(0, 0.3), end: Offset.zero).animate(shown),
+          child: _Summary(aid: aid, vol: v, index: cur, count: vols.length),
+        ),
       );
       final details = _Details(
         key: ValueKey(v.title),
@@ -140,6 +188,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
                   child: Column(
                     children: [
                       Expanded(child: carousel),
+                      toggle,
                       scrubber,
                       summary,
                       const SizedBox(height: 24),
@@ -161,6 +210,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
                     height: c.maxHeight * (_open ? 0.42 : 0.68),
                     child: carousel,
                   ),
+                  toggle,
                   scrubber,
                   Expanded(
                     child: AnimatedSwitcher(duration: const Duration(milliseconds: 200), child: _open ? details : summary),
@@ -215,6 +265,7 @@ class _Carousel extends StatelessWidget {
     required this.onPage,
     required this.onTap,
     required this.onLongPress,
+    required this.coverKey,
   });
 
   final String aid;
@@ -226,6 +277,7 @@ class _Carousel extends StatelessWidget {
   final ValueChanged<int> onPage;
   final void Function(int, Vol) onTap;
   final ValueChanged<Vol> onLongPress;
+  final GlobalKey coverKey;
 
   @override
   Widget build(BuildContext context) {
@@ -276,7 +328,13 @@ class _Carousel extends StatelessWidget {
                               offset: Offset(dx * f, 0),
                               child: Transform.scale(
                                 scale: 1 - 0.14 * math.min(a, 2.5) * f,
-                                child: i == cur ? Hero(tag: 'vols:$aid', flightShuttleBuilder: volumeHeroShuttle, child: card) : card,
+                                child: i == cur
+                                    ? Hero(
+                                        tag: 'vols:$aid',
+                                        flightShuttleBuilder: volumeHeroShuttle,
+                                        child: KeyedSubtree(key: coverKey, child: card),
+                                      )
+                                    : card,
                               ),
                             ),
                           );
@@ -395,7 +453,7 @@ class _Summary extends StatelessWidget {
           style: const TextStyle(color: Colors.white70, fontSize: 13),
         ),
         const SizedBox(height: 12),
-        const Text('点封面看这一卷 · 长按换封面', style: TextStyle(color: Colors.white38, fontSize: 12)),
+        const Text('点封面开始读 · 长按换封面', style: TextStyle(color: Colors.white38, fontSize: 12)),
       ],
     ),
   );
@@ -415,6 +473,15 @@ class _Details extends StatefulWidget {
 }
 
 class _DetailsState extends State<_Details> {
+  final _picked = <String>{}; // 长按多选的章节
+
+  void _pick(String cid) => setState(() => _picked.contains(cid) ? _picked.remove(cid) : _picked.add(cid));
+
+  Future<void> _mark(bool read) async {
+    await ReadState.setRead(widget.aid, _picked, read); // 这卷读没读完会跟着重新核对
+    if (mounted) setState(_picked.clear);
+  }
+
   @override
   Widget build(BuildContext context) {
     final aid = widget.aid;
@@ -422,7 +489,7 @@ class _DetailsState extends State<_Details> {
     final read = ReadState.read(aid);
     final p = ReadingProgress.of(aid);
     final inVol = p != null && v.cids.contains(p.cid);
-    final next = inVol ? p.cid : v.textCids.where((c) => !read.contains(c)).firstOrNull ?? v.cids.first;
+    final next = startCid(aid, v);
     final label = inVol ? '继续读' : (v.textCids.every(read.contains) ? '重读这一卷' : '开始读');
     final rating = Volumes.rating(aid, v.title);
     const muted = TextStyle(color: Colors.white60);
@@ -433,73 +500,236 @@ class _DetailsState extends State<_Details> {
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         clipBehavior: Clip.antiAlias,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Column(
           children: [
-            Text(
-              v.title,
-              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                children: [
+                  Text(
+                    v.title,
+                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(_progress(aid, v), style: muted),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      for (var i = 1; i <= 5; i++)
+                        GestureDetector(
+                          onTap: () async {
+                            await Volumes.setRating(aid, v.title, rating == i ? 0 : i); // 再点一次当前星数就取消
+                            if (mounted) setState(() {});
+                          },
+                          child: Icon(i <= rating ? Icons.star_rounded : Icons.star_outline_rounded, color: const Color(0xFFFFC53D), size: 28),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () => context.push(Routes.reader(aid, next)),
+                          icon: const Icon(Icons.play_arrow),
+                          label: Text(label),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.outlined(
+                        tooltip: '换封面',
+                        style: IconButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white38),
+                        ),
+                        onPressed: () => pickVolumeCover(context, aid, v),
+                        icon: const Icon(Icons.image_outlined),
+                      ),
+                      IconButton.outlined(
+                        tooltip: '阅读报告',
+                        style: IconButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white38),
+                        ),
+                        onPressed: () => context.push(Routes.report(aid, vol: widget.index)),
+                        icon: const Icon(Icons.insights),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  for (final (i, cid) in v.cids.indexed)
+                    ListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      leading: _picked.isNotEmpty
+                          ? Icon(_picked.contains(cid) ? Icons.check_box : Icons.check_box_outline_blank, size: 20, color: Colors.white70)
+                          : (read.contains(cid) ? const Icon(Icons.check, size: 16, color: Colors.white38) : const SizedBox(width: 16)),
+                      title: Text(
+                        widget.chapterTitles[cid] ?? '第 ${i + 1} 章',
+                        style: TextStyle(
+                          color: cid == p?.cid ? Colors.white : (read.contains(cid) ? Colors.white38 : Colors.white70),
+                          fontWeight: cid == p?.cid ? FontWeight.w700 : null,
+                        ),
+                      ),
+                      trailing: cid == p?.cid ? const Text('读到这里', style: TextStyle(color: Colors.white, fontSize: 12)) : null,
+                      onTap: _picked.isNotEmpty ? () => _pick(cid) : () => context.push(Routes.reader(aid, cid)),
+                      onLongPress: () => _pick(cid),
+                    ),
+                ],
+              ),
             ),
-            const SizedBox(height: 6),
-            Text(_progress(aid, v), style: muted),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                for (var i = 1; i <= 5; i++)
-                  GestureDetector(
-                    onTap: () async {
-                      await Volumes.setRating(aid, v.title, rating == i ? 0 : i); // 再点一次当前星数就取消
-                      if (mounted) setState(() {});
-                    },
-                    child: Icon(i <= rating ? Icons.star_rounded : Icons.star_outline_rounded, color: const Color(0xFFFFC53D), size: 28),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(onPressed: () => context.push(Routes.reader(aid, next)), icon: const Icon(Icons.play_arrow), label: Text(label)),
-                ),
-                const SizedBox(width: 8),
-                IconButton.outlined(
-                  tooltip: '换封面',
-                  style: IconButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white38),
-                  ),
-                  onPressed: () => pickVolumeCover(context, aid, v),
-                  icon: const Icon(Icons.image_outlined),
-                ),
-                IconButton.outlined(
-                  tooltip: '阅读报告',
-                  style: IconButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white38),
-                  ),
-                  onPressed: () => context.push(Routes.report(aid, vol: widget.index)),
-                  icon: const Icon(Icons.insights),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            for (final (i, cid) in v.cids.indexed)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: read.contains(cid) ? const Icon(Icons.check, size: 16, color: Colors.white38) : const SizedBox(width: 16),
-                title: Text(
-                  widget.chapterTitles[cid] ?? '第 ${i + 1} 章',
-                  style: TextStyle(
-                    color: cid == p?.cid ? Colors.white : (read.contains(cid) ? Colors.white38 : Colors.white70),
-                    fontWeight: cid == p?.cid ? FontWeight.w700 : null,
+            if (_picked.isNotEmpty)
+              ColoredBox(
+                color: Colors.black.withValues(alpha: 0.25),
+                child: SafeArea(
+                  top: false,
+                  child: TextButtonTheme(
+                    data: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: Colors.white)),
+                    child: Row(
+                      children: [
+                        IconButton(tooltip: '取消', color: Colors.white, icon: const Icon(Icons.close), onPressed: () => setState(_picked.clear)),
+                        Expanded(
+                          child: Text('已选 ${_picked.length} 章', style: const TextStyle(color: Colors.white)),
+                        ),
+                        // 从这一卷第一章选到已选的最后一章
+                        TextButton(
+                          onPressed: () => setState(() => _picked.addAll(v.cids.take(v.cids.lastIndexWhere(_picked.contains) + 1))),
+                          child: const Text('选到开头'),
+                        ),
+                        TextButton(onPressed: () => _mark(true), child: const Text('已读')),
+                        TextButton(onPressed: () => _mark(false), child: const Text('未读')),
+                      ],
+                    ),
                   ),
                 ),
-                trailing: cid == p?.cid ? const Text('读到这里', style: TextStyle(color: Colors.white, fontSize: 12)) : null,
-                onTap: () => context.push(Routes.reader(aid, cid)),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 封面下面的横条：展开 / 收起这一卷的详情和目录
+class _DetailsToggle extends StatelessWidget {
+  const _DetailsToggle({required this.open, required this.onTap});
+
+  final bool open;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Material(
+      color: Colors.white.withValues(alpha: 0.12),
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(open ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up, size: 18, color: Colors.white70),
+              const SizedBox(width: 4),
+              Text(open ? '收起' : '详情和目录', style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// 翻开书的动画：封面以左边书脊为轴往外翻开，同时连书页一起放大铺满屏幕；铺满时（[onOpened]）推出阅读页，
+/// 再稍等阅读页就位后淡出（[onDone] 里移除自己）。自带计时器，不跟着下面的页面暂停。
+class _OpeningBook extends StatefulWidget {
+  const _OpeningBook({required this.from, required this.url, required this.onOpened, required this.onDone});
+
+  final Rect from;
+  final String url;
+  final VoidCallback onOpened;
+  final VoidCallback onDone;
+
+  @override
+  State<_OpeningBook> createState() => _OpeningBookState();
+}
+
+class _OpeningBookState extends State<_OpeningBook> with SingleTickerProviderStateMixin {
+  // 0 ~ 0.5 翻开、放大；0.5 推出阅读页；0.78 ~ 1 淡出
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1300));
+  bool _pushed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _c.addListener(() {
+      if (!_pushed && _c.value >= 0.5) {
+        _pushed = true;
+        widget.onOpened();
+      }
+    });
+    _c.forward().whenComplete(widget.onDone);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = Offset.zero & MediaQuery.sizeOf(context);
+    return IgnorePointer(
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final grow = Curves.easeInOutCubic.transform((_c.value / 0.5).clamp(0.0, 1.0));
+          final turn = Curves.easeInCubic.transform((_c.value / 0.46).clamp(0.0, 1.0)); // 0 合着 → 1 翻到垂直看不见
+          final fade = 1 - Curves.easeOut.transform(((_c.value - 0.78) / 0.22).clamp(0.0, 1.0));
+          final r = Rect.lerp(widget.from, screen, grow)!;
+          final radius = BorderRadius.circular(8 * (1 - grow));
+          return Opacity(
+            opacity: fade,
+            child: Stack(
+              children: [
+                // 书页：纸色，书脊那边有一点阴影
+                Positioned.fromRect(
+                  rect: r,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: radius,
+                      gradient: const LinearGradient(colors: [Color(0xFFE2D8C6), Color(0xFFF5EEE1), Color(0xFFF5EEE1)], stops: [0, 0.08, 1]),
+                    ),
+                  ),
+                ),
+                if (turn < 1)
+                  Positioned.fromRect(
+                    rect: r,
+                    child: Transform(
+                      alignment: Alignment.centerLeft,
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 0.0012)
+                        ..rotateY(-turn * math.pi / 2),
+                      child: ClipRRect(
+                        borderRadius: radius,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            NetImage(widget.url),
+                            // 翻得越开越暗，像封面背光
+                            ColoredBox(color: Colors.black.withValues(alpha: 0.45 * turn)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

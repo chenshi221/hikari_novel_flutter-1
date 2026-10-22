@@ -60,6 +60,7 @@ dependencies:
 
   # tts
   flutter_tts: ^4.2.5
+  flutter_image_compress: ^2.5.1
 
 dev_dependencies:
   flutter_test:

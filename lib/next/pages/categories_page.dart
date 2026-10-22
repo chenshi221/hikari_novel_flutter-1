@@ -15,6 +15,13 @@ Future<List<String>?> pickCategories(BuildContext context, List<LibCategory> cat
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // 一个分类都不选就是放在"默认"；勾它会清掉其他分类
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('默认'),
+                value: chosen.isEmpty,
+                onChanged: (v) => setState(chosen.clear),
+              ),
               for (final c in cats)
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,

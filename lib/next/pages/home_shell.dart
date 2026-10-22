@@ -38,7 +38,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_syncAndCheck);
     Sync.auto();
-    if (!isWebPreview) ref.read(imageStoreProvider).trim().ignore();
+    if (!isWebPreview) ref.read(imageStoreProvider).trim().then((_) => ref.read(imageStoreProvider).shrinkOld()).ignore();
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
   }
 

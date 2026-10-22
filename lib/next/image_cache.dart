@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' show Rect;
 
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -107,7 +109,7 @@ class ImageStore {
       try {
         // 封面图床的 https 在国内不开代理时常连不上，http 正常；缓存文件名仍按 https 地址算，旧缓存照用
         final res = await _ref.read(imageDioProvider).get<List<int>>(url.replaceFirst('https://img.wenku8.com/', 'http://img.wenku8.com/'));
-        bytes = Uint8List.fromList(res.data!);
+        bytes = await shrinkImage(Uint8List.fromList(res.data!));
       } finally {
         _release();
       }
@@ -120,6 +122,35 @@ class ImageStore {
       _memUsed -= _mem.remove(_mem.keys.first)!.length;
     }
     return bytes;
+  }
+
+  /// 删掉这些图的缓存（内存和磁盘）
+  Future<void> remove(Iterable<String> urls) async {
+    final dir = await _cacheDir();
+    for (final raw in urls) {
+      final url = _norm(raw);
+      _memUsed -= _mem.remove(url)?.length ?? 0;
+      final f = File(p.join(dir.path, _name(url)));
+      if (await f.exists()) await f.delete();
+    }
+  }
+
+  /// 以前缓存的图在后台压一遍（只做一次），一张一张来，压完一张存一张，保留原来的修改时间（清理时按它排先后）。
+  Future<void> shrinkOld() async {
+    final box = Hive.box('session');
+    if (box.get('imgShrunk') == true) return;
+    final dir = await _cacheDir();
+    await for (final f in dir.list()) {
+      if (f is! File) continue;
+      final before = await f.readAsBytes();
+      final after = await shrinkImage(before);
+      if (!identical(after, before)) {
+        final mtime = (await f.stat()).modified;
+        await f.writeAsBytes(after);
+        await f.setLastModified(mtime);
+      }
+    }
+    await box.put('imgShrunk', true);
   }
 
   Future<void> clearDisk() async {
@@ -143,6 +174,32 @@ class ImageStore {
     return n;
   }
 }
+
+/// 图片存盘前压一下：长边超过 2400 的缩到 2400，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 85，看起来和原图没区别。
+/// 小图（150 KB 以下，比如书的小封面）、动图、已经是 WebP 的不动；压完没小两成以上（源图本来就压得狠）就留原图。
+/// 不支持的平台（Windows、Linux）原样返回。
+Future<Uint8List> shrinkImage(Uint8List b) async {
+  if (b.length < 150 << 10 || _isGif(b) || _isWebp(b)) return b;
+  try {
+    final size = await imageSize(b);
+    final long = size.longestSide;
+    final s = long > 2400 ? 2400 / long : 1.0;
+    final out = await FlutterImageCompress.compressWithList(
+      b,
+      minWidth: (size.width * s).round(),
+      minHeight: (size.height * s).round(),
+      quality: 85,
+      format: Platform.isAndroid || Platform.isIOS ? CompressFormat.webp : CompressFormat.jpeg,
+    );
+    return out.length < b.length * 0.8 ? out : b;
+  } catch (_) {
+    return b;
+  }
+}
+
+bool _isGif(Uint8List b) => b.length > 3 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46;
+
+bool _isWebp(Uint8List b) => b.length > 12 && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46 && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50;
 
 /// 目录总大小超过 [maxBytes] 时，按修改时间从旧到新删文件，直到不超过 [maxBytes] 的 80%。
 /// 文件名在 [keep] 里的不删（但计入总大小）。

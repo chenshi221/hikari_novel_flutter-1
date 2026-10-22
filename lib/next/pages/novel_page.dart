@@ -75,6 +75,20 @@ class _BodyState extends ConsumerState<_Body> {
 
   String get aid => widget.aid;
   NovelPage get data => widget.data;
+  late final VolumeCoverQueue _covers; // dispose 里不能再用 ref，先取好
+
+  @override
+  void initState() {
+    super.initState();
+    _covers = ref.read(volumeCoverQueueProvider);
+  }
+
+  @override
+  void dispose() {
+    // 没加入书架的书（从发现页等处点开看看的）：退出时清掉为它挑封面下载的图
+    if (!LibraryStore.contains(aid)) _covers.forget(aid);
+    super.dispose();
+  }
 
   /// 打开别的页面，回来时刷新（阅读进度、已读状态会变）。
   Future<void> _open(String route, {Object? extra}) async {
