@@ -9,6 +9,8 @@ import 'package:hikari_novel_flutter/models/cat_volume.dart';
 import 'package:hikari_novel_flutter/next/cover_color.dart';
 import 'package:hikari_novel_flutter/next/image_cache.dart';
 import 'package:hikari_novel_flutter/next/read_state.dart';
+import 'package:hikari_novel_flutter/next/pages/volumes_page.dart';
+import 'package:hikari_novel_flutter/next/progress.dart';
 import 'package:hikari_novel_flutter/next/volumes.dart';
 
 CatVolume vol(String t, List<String> chapters) => CatVolume(title: t, chapters: [for (final c in chapters) CatChapter(title: c.startsWith('i') ? '插图' : '第$c章', cid: c)]);
@@ -64,5 +66,16 @@ void main() {
     // 2x2：左边红、右边蓝，取右半边只剩蓝
     final rgba = Uint8List.fromList([255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255]);
     expect(cropRgba(rgba, 2, 2, const Rect.fromLTWH(0.5, 0, 0.5, 1)), [0, 0, 255, 255, 0, 0, 255, 255]);
+  });
+
+  test('正在读第几卷：进度所在的卷读完了（手动标的）就往后找没读完的，全读完为 -1', () async {
+    await Volumes.saveCatalogue('2', [vol('一', ['a']), vol('二', ['b']), vol('三', ['c'])]);
+    expect(readingVolume('2'), -1); // 没读过
+    await ReadingProgress.save('2', 'a', 0);
+    expect(readingVolume('2'), 0);
+    await ReadState.setRead('2', ['a'], true);
+    expect(readingVolume('2'), 1);
+    await ReadState.setRead('2', ['b', 'c'], true);
+    expect(readingVolume('2'), -1);
   });
 }

@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../cache.dart';
-import '../cover_color.dart';
 import '../library.dart';
 import '../progress.dart';
 import '../read_state.dart';
@@ -72,8 +71,8 @@ class _OptionsController extends Notifier<ShelfOptions> {
   }
 }
 
-/// 卷册模式封面右边留给书页侧边的宽度（最多 3 条，每条错开 4）
-const _edges = 12.0;
+/// 卷册模式封面右边留给后面几卷封面边的宽度（最多 3 张，每张错开 5）
+const _edges = 15.0;
 
 final shelfOptionsProvider = NotifierProvider<_OptionsController, ShelfOptions>(_OptionsController.new);
 
@@ -312,8 +311,8 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
           final w = (c.maxWidth - 32 - 14 * (n - 1)) / n;
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            // 一格 = 封面（右边留出书页侧边的位置）+ 下面两行字和进度条
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: w / ((w - _edges) / kCoverAspect + 56)),
+            // 一格 = 封面（右边留出后面几卷的边）+ 下面两行字
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: w / ((w - _edges) / kCoverAspect + 46)),
             itemCount: books.length,
             itemBuilder: (context, i) => _stackTile(books[i]),
           );
@@ -409,14 +408,15 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     );
   }
 
-  /// 卷册：一本书一张封面，右边露出几条书页侧边（颜色取自封面，卷越多条数越多，单卷没有），书名、读到第几卷、进度条在封面下面。
+  /// 卷册：第一卷封面在最前，右边露出后面几卷真封面的一窄条边（卷越多条数越多，单卷没有），书名和读到第几卷在封面下面。
   Widget _stackTile(LibBook b) {
     final vols = Volumes.of(b.aid);
     final at = readingVolume(b.aid);
-    final done = Volumes.done(b.aid).length;
+    final allDone = vols.isNotEmpty && vols.every((v) => Volumes.done(b.aid).containsKey(v.title));
     final badge = _badge(b);
-    final cover = _cover(b);
     final edges = vols.length <= 1 ? 0 : (vols.length <= 4 ? 1 : (vols.length <= 9 ? 2 : 3));
+    final queue = ref.read(volumeCoverQueueProvider);
+    final behind = [for (final v in vols.skip(1).take(edges)) queue.get(b.aid, v) ?? b.img];
     final theme = Theme.of(context);
     return GestureDetector(
       onTap: () => _selected.isEmpty ? context.push(Routes.volumes(b.aid)) : _toggle(b.aid),
@@ -429,48 +429,34 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
               builder: (context, c) {
                 final w = math.min(c.maxWidth - _edges, c.maxHeight * kCoverAspect);
                 final h = w / kCoverAspect;
-                return Consumer(
-                  builder: (context, ref, _) {
-                    final tint = ref.watch(coverColorProvider(cover)).value ?? savedCoverColor(cover) ?? kNeutralCoverColor;
-                    return Stack(
-                      clipBehavior: Clip.none, // 书页侧边在封面右边、Stack 外面
-                      children: [
-                        // 远的先画：每条往右错开 4、上下各缩 3，越往后越深
-                        for (var k = edges; k >= 1; k--)
-                          Positioned(
-                            left: _edges / 3 * k,
-                            top: 3.0 * k,
-                            child: Container(
-                              width: w,
-                              height: h - 6.0 * k,
-                              decoration: BoxDecoration(color: Color.lerp(tint, Colors.black, 0.12 * (k - 1)), borderRadius: BorderRadius.circular(6)),
-                            ),
-                          ),
-                        SizedBox(
-                          width: w,
-                          height: h,
-                          child: Hero(
-                            tag: 'vols:${b.aid}',
-                            child: Container(
-                              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 6, offset: const Offset(1, 2))]),
-                              child: CoverImage(cover),
-                            ),
-                          ),
+                Widget sheet(String url, {double dim = 0}) => Container(
+                  width: w,
+                  height: h,
+                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 3, offset: const Offset(1, 0))]),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Stack(fit: StackFit.expand, children: [CoverImage(url), if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim))]),
+                  ),
+                );
+                return Stack(
+                  clipBehavior: Clip.none, // 后面几卷的边在封面右边、Stack 外面
+                  children: [
+                    // 远的先画：每张往右错开一点、上下各缩一点，越往后越暗
+                    for (var k = behind.length; k >= 1; k--)
+                      Positioned(left: _edges / 3 * k, top: 3.0 * k, height: h - 6.0 * k, child: sheet(behind[k - 1], dim: 0.12 * (k - 1))),
+                    SizedBox(width: w, height: h, child: Hero(tag: 'vols:${b.aid}', child: sheet(_cover(b)))),
+                    if (badge != null) Positioned(top: 6, right: 6, child: badge),
+                    if (vols.length == 1)
+                      Positioned(
+                        left: 6,
+                        top: h - 6 - 20,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(4)),
+                          child: const Text('单卷', style: TextStyle(color: Colors.white, fontSize: 11)),
                         ),
-                        if (badge != null) Positioned(top: 6, right: 6, child: badge),
-                        if (vols.length == 1)
-                          Positioned(
-                            left: 6,
-                            top: h - 6 - 20,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(4)),
-                              child: const Text('单卷', style: TextStyle(color: Colors.white, fontSize: 11)),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
+                      ),
+                  ],
                 );
               },
             ),
@@ -478,18 +464,10 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
           const SizedBox(height: 6),
           Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
           Text(
-            vols.isEmpty ? '还没有分卷信息' : [if (at >= 0) '读到第 ${at + 1} 卷', '共 ${vols.length} 卷'].join(' · '),
+            vols.isEmpty ? '还没有分卷信息' : [if (allDone) '已读完' else if (at >= 0) '读到第 ${at + 1} 卷', '共 ${vols.length} 卷'].join(' · '),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 4),
-          Padding(
-            padding: const EdgeInsets.only(right: _edges),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(value: vols.isEmpty ? 0 : done / vols.length, minHeight: 3, backgroundColor: theme.colorScheme.surfaceContainerHighest),
-            ),
           ),
         ],
       ),

@@ -26,10 +26,18 @@ class VolumesPage extends ConsumerStatefulWidget {
   ConsumerState<VolumesPage> createState() => _VolumesPageState();
 }
 
-/// 正在读的是第几卷，没读过为 -1
+/// 正在读第几卷：阅读进度所在的那卷；那卷已经读完（比如手动标了读完）就往后找第一卷没读完的。
+/// 没读过、或者从那卷往后全读完了为 -1。
 int readingVolume(String aid) {
   final p = ReadingProgress.of(aid);
-  return p == null ? -1 : Volumes.indexOf(aid, p.cid);
+  final i = p == null ? -1 : Volumes.indexOf(aid, p.cid);
+  if (i < 0) return -1;
+  final vols = Volumes.of(aid);
+  final done = Volumes.done(aid);
+  for (var j = i; j < vols.length; j++) {
+    if (!done.containsKey(vols[j].title)) return j;
+  }
+  return -1;
 }
 
 class _VolumesPageState extends ConsumerState<VolumesPage> {
