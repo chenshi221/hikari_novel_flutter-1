@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../cache.dart';
+import '../cover_color.dart';
 import '../library.dart';
 import '../progress.dart';
 import '../read_state.dart';
@@ -70,6 +71,9 @@ class _OptionsController extends Notifier<ShelfOptions> {
     state = v;
   }
 }
+
+/// 卷册模式封面右边留给书页侧边的宽度（最多 3 条，每条错开 4）
+const _edges = 12.0;
 
 final shelfOptionsProvider = NotifierProvider<_OptionsController, ShelfOptions>(_OptionsController.new);
 
@@ -303,12 +307,17 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
       body = ListView.builder(padding: const EdgeInsets.only(bottom: 24), itemCount: books.length, itemBuilder: (context, i) => _listTile(books[i]));
     } else if (o.display == 3) {
       body = LayoutBuilder(
-        builder: (context, c) => GridView.builder(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: (c.maxWidth / 170).floor().clamp(2, 6), mainAxisSpacing: 18, crossAxisSpacing: 14, childAspectRatio: 0.73),
-          itemCount: books.length,
-          itemBuilder: (context, i) => _stackTile(books[i]),
-        ),
+        builder: (context, c) {
+          final n = (c.maxWidth / 140).floor().clamp(2, 8);
+          final w = (c.maxWidth - 32 - 14 * (n - 1)) / n;
+          return GridView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            // 一格 = 封面（右边留出书页侧边的位置）+ 下面两行字和进度条
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: w / ((w - _edges) / kCoverAspect + 56)),
+            itemCount: books.length,
+            itemBuilder: (context, i) => _stackTile(books[i]),
+          );
+        },
       );
     } else {
       body = LayoutBuilder(
@@ -400,89 +409,89 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     );
   }
 
-  /// 卷册：第一卷封面在最前，后面错开露出两卷的边，像一摞书；底部压书名、读到第几卷、读完了几卷的进度条。
+  /// 卷册：一本书一张封面，右边露出几条书页侧边（颜色取自封面，卷越多条数越多，单卷没有），书名、读到第几卷、进度条在封面下面。
   Widget _stackTile(LibBook b) {
     final vols = Volumes.of(b.aid);
-    final queue = ref.read(volumeCoverQueueProvider);
-    final behind = [for (final v in vols.skip(1).take(2)) queue.get(b.aid, v) ?? b.img];
     final at = readingVolume(b.aid);
     final done = Volumes.done(b.aid).length;
     final badge = _badge(b);
+    final cover = _cover(b);
+    final edges = vols.length <= 1 ? 0 : (vols.length <= 4 ? 1 : (vols.length <= 9 ? 2 : 3));
+    final theme = Theme.of(context);
     return GestureDetector(
       onTap: () => _selected.isEmpty ? context.push(Routes.volumes(b.aid)) : _toggle(b.aid),
       onLongPress: () => _toggle(b.aid),
-      child: LayoutBuilder(
-        builder: (context, c) {
-          final step = c.maxWidth * 0.07;
-          final w = c.maxWidth - step * 2;
-          final h = math.min(w / kCoverAspect, c.maxHeight - step * 2);
-          Widget card(String url, {double dim = 0}) => Container(
-            width: w,
-            height: h,
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 8, offset: const Offset(0, 3))]),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(fit: StackFit.expand, children: [CoverImage(url), if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim))]),
-            ),
-          );
-          return Stack(
-            children: [
-              for (var i = behind.length; i >= 1; i--) Positioned(left: step * i, top: step * (2 - i), child: card(behind[i - 1], dim: 0.15 * i)),
-              Positioned(
-                left: 0,
-                top: step * 2,
-                child: Hero(
-                  tag: 'vols:${b.aid}',
-                  child: SizedBox(
-                    width: w,
-                    height: h,
-                    child: Stack(
-                      fit: StackFit.expand,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final w = math.min(c.maxWidth - _edges, c.maxHeight * kCoverAspect);
+                final h = w / kCoverAspect;
+                return Consumer(
+                  builder: (context, ref, _) {
+                    final tint = ref.watch(coverColorProvider(cover)).value ?? savedCoverColor(cover) ?? kNeutralCoverColor;
+                    return Stack(
+                      clipBehavior: Clip.none, // 书页侧边在封面右边、Stack 外面
                       children: [
-                        card(_cover(b)),
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            gradient: const LinearGradient(begin: Alignment(0, 0.1), end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black87]),
+                        // 远的先画：每条往右错开 4、上下各缩 3，越往后越深
+                        for (var k = edges; k >= 1; k--)
+                          Positioned(
+                            left: _edges / 3 * k,
+                            top: 3.0 * k,
+                            child: Container(
+                              width: w,
+                              height: h - 6.0 * k,
+                              decoration: BoxDecoration(color: Color.lerp(tint, Colors.black, 0.12 * (k - 1)), borderRadius: BorderRadius.circular(6)),
+                            ),
                           ),
-                        ),
-                        Positioned(
-                          left: 8,
-                          right: 8,
-                          bottom: 8,
-                          child: Material(
-                            type: MaterialType.transparency,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.25)),
-                                const SizedBox(height: 2),
-                                Text(
-                                  vols.isEmpty ? '还没有分卷信息' : (at >= 0 ? '读到第 ${at + 1} 卷 / 共 ${vols.length} 卷' : '共 ${vols.length} 卷'),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Colors.white70, fontSize: 11),
-                                ),
-                                if (vols.isNotEmpty) ...[
-                                  const SizedBox(height: 5),
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(2),
-                                    child: LinearProgressIndicator(value: done / vols.length, minHeight: 3, color: Colors.white, backgroundColor: Colors.white24),
-                                  ),
-                                ],
-                              ],
+                        SizedBox(
+                          width: w,
+                          height: h,
+                          child: Hero(
+                            tag: 'vols:${b.aid}',
+                            child: Container(
+                              decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 6, offset: const Offset(1, 2))]),
+                              child: CoverImage(cover),
                             ),
                           ),
                         ),
                         if (badge != null) Positioned(top: 6, right: 6, child: badge),
+                        if (vols.length == 1)
+                          Positioned(
+                            left: 6,
+                            top: h - 6 - 20,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(4)),
+                              child: const Text('单卷', style: TextStyle(color: Colors.white, fontSize: 11)),
+                            ),
+                          ),
                       ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+          Text(
+            vols.isEmpty ? '还没有分卷信息' : [if (at >= 0) '读到第 ${at + 1} 卷', '共 ${vols.length} 卷'].join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(right: _edges),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(value: vols.isEmpty ? 0 : done / vols.length, minHeight: 3, backgroundColor: theme.colorScheme.surfaceContainerHighest),
+            ),
+          ),
+        ],
       ),
     );
   }
