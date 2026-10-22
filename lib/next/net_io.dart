@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:native_dio_adapter/native_dio_adapter.dart';
@@ -10,10 +11,34 @@ import 'package:native_dio_adapter/native_dio_adapter.dart';
 /// - 苹果端关掉系统的 cookie 处理：cookie 由 Dio 的 cookie jar 自己管，免得两边各发一份
 HttpClientAdapter? nativeAdapter(HttpClientAdapter Function() fallback) {
   if (!(Platform.isAndroid || Platform.isIOS || Platform.isMacOS)) return null;
-  return NativeAdapter(
+  return _SplitCookies(NativeAdapter(
     createFallbackAdapter: (_, _) => fallback(),
     createCupertinoConfiguration: () => URLSessionConfiguration.ephemeralSessionConfiguration()
       ..httpShouldSetCookies = false
       ..httpCookieAcceptPolicy = NSHTTPCookieAcceptPolicy.NSHTTPCookieAcceptPolicyNever,
-  );
+  ));
 }
+
+/// 系统网络栈经 http 包转过来时，多条 Set-Cookie 被合成一条逗号拼接的。cookie jar 按一条解析会失败
+/// （带 `expires=Thu, 01 Jan …` 的整个请求被当成出错）或存错，登录后的书架这类页面就取不到。这里拆回多条。
+class _SplitCookies implements HttpClientAdapter {
+  _SplitCookies(this._inner);
+
+  final HttpClientAdapter _inner;
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+    final res = await _inner.fetch(options, requestStream, cancelFuture);
+    final v = res.headers['set-cookie'];
+    if (v != null) res.headers['set-cookie'] = splitSetCookie(v);
+    return res;
+  }
+
+  @override
+  void close({bool force = false}) => _inner.close(force: force);
+}
+
+// 和 http 包 headersSplitValues 拆 set-cookie 的规则一样：逗号后面紧跟 `名字=` 才算下一条，expires 里的逗号不拆
+final _setCookieSplitter = RegExp(r"[ \t]*,[ \t]*(?=[!#$%&'*+\-.^_`|~0-9A-Za-z]+=)");
+
+List<String> splitSetCookie(List<String> values) => [for (final v in values) ...v.split(_setCookieSplitter)];
