@@ -230,7 +230,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     }
     final err = await ref.read(libraryProvider.notifier).sync(force: true);
     if (!mounted) return;
-    if (err != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同步网站书架失败：$err')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err == null ? '已和网站书架同步，书架共 ${ref.read(libraryProvider).books.length} 本' : '同步网站书架失败：$err')));
     ref.read(updateProvider.notifier).refresh();
   }
 

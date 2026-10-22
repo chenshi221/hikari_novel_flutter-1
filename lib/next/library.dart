@@ -207,10 +207,12 @@ class LibraryController extends Notifier<LibraryState> {
   }
 
   /// 和网站书架同步：拉网站全部 6 个书架 → 推本地排队的操作 → 对一遍。没登录、离线时什么都不做。
-  /// 距上次不到 30 分钟时跳过（[force] 除外）。返回出错信息，成功或跳过返回 null。
+  /// 距上次不到 30 分钟时跳过（[force] 除外）。返回出错信息，成功或跳过返回 null；[force]（用户下拉）时跳过也说明原因。
   Future<String?> sync({bool force = false}) async {
     final s = ref.read(sessionProvider);
-    if (s is! SessionLoggedIn || s.offline || _syncing) return null;
+    if (s is! SessionLoggedIn) return null;
+    if (s.offline) return force ? '现在是离线模式（没连上网站），点顶部的提示重新连接后再下拉' : null;
+    if (_syncing) return force ? '正在同步，稍等一下' : null;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (!force && now - ((_box.get('lib:sync') as int?) ?? 0) < 30 * 60 * 1000) return null;
     _syncing = true;
