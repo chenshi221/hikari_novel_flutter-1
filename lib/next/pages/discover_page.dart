@@ -54,17 +54,15 @@ class _RecommendTab extends ConsumerWidget {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text(block.title, style: theme.textTheme.titleLarge),
                   ),
+                  // 双排横滑：书少（≤4 本）时一排就够
                   SizedBox(
-                    height: 190,
-                    child: ListView.separated(
+                    height: block.list.length > 4 ? 392 : 190,
+                    child: GridView.builder(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: block.list.length > 4 ? 2 : 1, mainAxisSpacing: 12, crossAxisSpacing: 12, mainAxisExtent: 100),
                       itemCount: block.list.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 12),
-                      itemBuilder: (_, i) => SizedBox(
-                        width: 100,
-                        child: NovelCard(title: block.list[i].title, aid: block.list[i].aid, imageUrl: block.list[i].imageUrl),
-                      ),
+                      itemBuilder: (_, i) => NovelCard(title: block.list[i].title, aid: block.list[i].aid, imageUrl: block.list[i].imageUrl),
                     ),
                   ),
                 ],
