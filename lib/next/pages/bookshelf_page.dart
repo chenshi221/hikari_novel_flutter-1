@@ -318,11 +318,11 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     );
   }
 
-  /// 封面用正在读的那卷（没读过用最新一卷）的卷封面；还没取到、或者这卷没插图时用书的封面。
+  /// 封面用第一卷的卷封面；还没取到、或者没插图时用书的封面。
   String _cover(LibBook b) {
     final vols = Volumes.of(b.aid);
     if (vols.isEmpty) return b.img;
-    return ref.read(volumeCoverQueueProvider).get(b.aid, vols[Volumes.shelfVolume(b.aid)]) ?? b.img;
+    return ref.read(volumeCoverQueueProvider).get(b.aid, vols.first) ?? b.img;
   }
 
   void _toggle(String aid) => setState(() => _selected.contains(aid) ? _selected.remove(aid) : _selected.add(aid));

@@ -31,10 +31,13 @@ void main() {
     expect(Volumes.done('1'), isEmpty);
   });
 
-  test('书架显示的卷：没读过用最新一卷', () async {
-    await Volumes.saveCatalogue('2', [vol('一', ['x']), vol('二', ['y'])]);
-    expect(Volumes.shelfVolume('2'), 1);
-    expect(Volumes.indexOf('2', 'x'), 0);
+  test('卷封面：第一张是横版展开图（连书脊、封底）就用后面第一张竖着的', () async {
+    final sizes = {'spread': const Size(2000, 700), 'cover': const Size(700, 1000), 'insert': const Size(700, 1000)};
+    Future<Size> sizeOf(String url) async => sizes[url]!;
+    expect(await chooseCover(['spread', 'cover', 'insert'], sizeOf), 'cover');
+    expect(await chooseCover(['cover', 'spread'], sizeOf), 'cover');
+    expect(await chooseCover(['spread'], sizeOf), 'spread'); // 全是横的就还用第一张
+    expect(await chooseCover([], sizeOf), '');
   });
 
   test('封面背景色：取主色调、压低饱和度、调暗', () {

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -5,6 +7,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../models/cat_volume.dart';
 import 'cache.dart';
 import 'data.dart';
+import 'image_cache.dart';
 import 'progress.dart';
 import 'read_state.dart';
 import 'stats.dart';
@@ -25,7 +28,8 @@ bool isIllustration(String title) => title.contains('插图') || title.contains(
 
 /// 分卷数据，全部存在本机（不用每次都请求网页）：
 /// - `vols:aid` 卷列表（目录加载时记下，书架、报告页同步就能用）
-/// - `vcover:aid` 卷名 → 封面地址（插图章节的第一张图；'' 表示这卷没有插图）
+/// - `vcover2:aid` 卷名 → 封面地址（插图章节里第一张竖着的图，见 [chooseCover]；'' 表示这卷没有插图）
+///   （`vcover:` 是旧版直接取第一张图的记录，作废不用）
 /// - `vdone:aid` 卷名 → 读完的时间（毫秒）
 /// - `vrate:aid` 卷名 → 星级
 class Volumes {
@@ -57,26 +61,18 @@ class Volumes {
 
   // ---- 封面 ----
 
-  static Map<String, String> _covers(String aid) => ((_box.get('vcover:$aid') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, v as String));
+  static Map<String, String> _covers(String aid) => ((_box.get('vcover2:$aid') as Map?) ?? const {}).map((k, v) => MapEntry(k as String, v as String));
 
   /// 这卷的封面：null 还没取过，'' 这卷没有插图。
   static String? cover(String aid, String title) => _covers(aid)[title];
 
   static Future<void> setCover(String aid, String title, String url) async {
-    await _box.put('vcover:$aid', {..._covers(aid), title: url});
+    await _box.put('vcover2:$aid', {..._covers(aid), title: url});
     changes.value++;
   }
 
-  /// 书架上显示哪一卷：正在读的那卷，没读过就用最新一卷。
-  static int shelfVolume(String aid) {
-    final vols = of(aid);
-    final p = ReadingProgress.of(aid);
-    final i = p == null ? -1 : indexOf(aid, p.cid);
-    return i >= 0 ? i : vols.length - 1;
-  }
-
   /// 图片缓存清理时要留着的封面
-  static Iterable<String> allCovers() => _box.keys.whereType<String>().where((k) => k.startsWith('vcover:')).expand((k) => (_box.get(k) as Map).values.cast<String>()).where((e) => e.isNotEmpty);
+  static Iterable<String> allCovers() => _box.keys.whereType<String>().where((k) => k.startsWith('vcover2:')).expand((k) => (_box.get(k) as Map).values.cast<String>()).where((e) => e.isNotEmpty);
 
   // ---- 读完 ----
 
@@ -187,12 +183,40 @@ class VolumeCoverQueue {
           await ChapterCache.put(aid, v.illus!, content);
           await Future<void>.delayed(const Duration(milliseconds: 1500));
         }
-        await Volumes.setCover(aid, title, content.images.firstOrNull ?? '');
+        final String url;
+        try {
+          url = await chooseCover(content.images, _size);
+        } catch (_) {
+          _queue.clear(); // 图片下不下来，多半是网络问题，下次再说
+          return;
+        }
+        await Volumes.setCover(aid, title, url);
       }
     } finally {
       _running = false;
     }
   }
+
+  /// 只读图片头部拿宽高，不完整解码。图片本来就要显示，下载后存在本机。
+  Future<ui.Size> _size(String url) async {
+    final bytes = await _ref.read(imageStoreProvider).load(url);
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    final desc = await ui.ImageDescriptor.encoded(buffer);
+    final size = ui.Size(desc.width.toDouble(), desc.height.toDouble());
+    desc.dispose();
+    buffer.dispose();
+    return size;
+  }
+}
+
+/// 从插图章节的图里挑封面：第一张竖着的（宽不超过高）。第一张常常是连书脊、封底一起的横版展开图，就往后找；
+/// 前几张都是横的就还用第一张。没有图返回 ''。
+Future<String> chooseCover(List<String> images, Future<ui.Size> Function(String url) sizeOf) async {
+  for (final url in images.take(4)) {
+    final s = await sizeOf(url);
+    if (s.width <= s.height) return url;
+  }
+  return images.firstOrNull ?? '';
 }
 
 final volumeCoverQueueProvider = Provider<VolumeCoverQueue>(VolumeCoverQueue.new);
