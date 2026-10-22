@@ -67,7 +67,7 @@ class ImageStore {
     if (running != null) return running;
     late final Future<Uint8List> f;
     // 只删自己：被取消后又重新请求时，这里已经换成新的那次了
-    f = _fetch(url).whenComplete(() => identical(_inflight[url], f) ? _inflight.remove(url) : null);
+    f = _fetch(url).whenComplete(() { if (identical(_inflight[url], f)) _inflight.remove(url); });
     return _inflight[url] = f;
   }
 
@@ -104,7 +104,8 @@ class ImageStore {
     } else {
       await _slot(url);
       try {
-        final res = await _ref.read(imageDioProvider).get<List<int>>(url);
+        // 封面图床的 https 在国内不开代理时常连不上，http 正常；缓存文件名仍按 https 地址算，旧缓存照用
+        final res = await _ref.read(imageDioProvider).get<List<int>>(url.replaceFirst('https://img.wenku8.com/', 'http://img.wenku8.com/'));
         bytes = Uint8List.fromList(res.data!);
       } finally {
         _release();

@@ -101,10 +101,14 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
             color: Theme.of(context).colorScheme.surfaceContainer,
             child: InkWell(
               onTap: () => needsVerify ? context.push(Routes.verify) : ref.read(sessionProvider.notifier).restore(),
-              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Row(children: [const Icon(Icons.cloud_off_outlined, size: 16), const SizedBox(width: 8), Expanded(child: Text(needsVerify ? '被网站的验证拦住了，点这里去验证' : '离线模式，显示的是已保存的内容，点这里重新连接', style: const TextStyle(fontSize: 12)))])),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6), child: Row(children: [const Icon(Icons.cloud_off_outlined, size: 16), const SizedBox(width: 8), Expanded(child: Text(needsVerify ? '被网站的验证拦住了，点这里去验证' : '离线模式，显示的是已保存的内容，点这里重新连接', style: const TextStyle(fontSize: 12)))])),
+              ),
             ),
           ),
-        Expanded(child: shell),
+        // 提示条已经让开了状态栏，下面的页面就别再留一次
+        Expanded(child: MediaQuery.removePadding(context: context, removeTop: offline, child: shell)),
       ],
     );
     final wide = MediaQuery.sizeOf(context).width >= 720;
