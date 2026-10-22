@@ -357,6 +357,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       ),
       ContextMenuButtonItem(label: '替换/屏蔽', onPressed: () => _replaceFromSelection(state)),
       ContextMenuButtonItem(label: '高亮', onPressed: () => _highlightSelection(state)),
+      ContextMenuButtonItem(label: '变色', onPressed: () => _colorSelection(state)),
       ContextMenuButtonItem(
         label: '加书签',
         onPressed: () {
@@ -394,6 +395,44 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (mounted) await _editNote(rule);
   }
 
+  /// 变色选中的文字：只改字的颜色、不带备注（比如给人物名分色）。同一本书里相同的文字共用一条规则，再选一次可以换色、取消。
+  Future<void> _colorSelection(SelectableRegionState state) async {
+    final text = (_selected ?? '').trim();
+    state.hideToolbar();
+    if (text.isEmpty) return;
+    final pattern = _patternOf(text);
+    final rules = ReplaceRules.all();
+    final old = rules.where((r) => r.kind == RuleKind.color && r.pattern == pattern && r.aid == widget.aid).firstOrNull;
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('变色：${text.length > 12 ? '${text.substring(0, 12)}…' : text}'),
+        content: Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final c in ruleColors)
+              GestureDetector(
+                onTap: () => Navigator.pop(context, c),
+                child: Container(width: 32, height: 32, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: old?.color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface))),
+              ),
+          ],
+        ),
+        actions: [
+          if (old != null) TextButton(onPressed: () => Navigator.pop(context, -1), child: const Text('取消变色')),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        ],
+      ),
+    );
+    if (picked == null) return;
+    await ReplaceRules.save(
+      old == null
+          ? [...rules, ReplaceRule(pattern: pattern, replacement: '', kind: RuleKind.color, color: picked, id: 'c${DateTime.now().microsecondsSinceEpoch}', aid: widget.aid)]
+          : [for (final r in rules) if (!identical(r, old)) r else if (picked != -1) r.copyWith(color: picked)],
+    );
+    ref.invalidate(chapterProvider);
+  }
+
   Widget _selectable(Widget child) => SelectionArea(onSelectionChanged: (c) => _selected = c?.plainText, contextMenuBuilder: _selectionMenu, child: child);
 
   /// 点高亮文字：显示并修改备注，也可以换颜色、取消高亮。
@@ -409,7 +448,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: controller, autofocus: true, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
+                TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 8,
@@ -479,6 +518,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       autofocus: true,
       onKeyEvent: (_, e) => _onKey(e, prev, next, prefs.mode),
       child: Scaffold(
+        resizeToAvoidBottomInset: false, // 键盘盖在上面，不把正文压矮（压矮会重新分页、跳页）
       backgroundColor: palette.bg,
       body: Stack(
         children: [

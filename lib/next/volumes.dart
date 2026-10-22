@@ -157,7 +157,21 @@ class VolumeCoverQueue {
 
   final Ref _ref;
   final _queue = <(String, String)>[];
+  final _bg = <(String, String)>[]; // 后台慢慢取的，排在眼前要看的后面
   bool _running = false;
+
+  /// 后台把这些书所有卷的封面都取下来（打开 App、同步完书架后调用），不用等翻到才取。
+  void prefetchAll(Iterable<String> aids) {
+    for (final aid in aids) {
+      for (final v in Volumes.of(aid)) {
+        if (Volumes.cover(aid, v.title) == null && !_bg.contains((aid, v.title))) _bg.add((aid, v.title));
+      }
+    }
+    Future.microtask(_pump);
+  }
+
+  /// 一卷的封面；这卷没有插图（比如短篇集）或者还没取到时用书的高清封面（第一卷的）。
+  String volCover(String aid, Vol v, String fallback) => get(aid, v) ?? bookCover(aid, fallback);
 
   /// 这卷的封面，还没取过就排队去取（返回 null）；没有插图也返回 null。
   String? get(String aid, Vol v) {
@@ -179,8 +193,8 @@ class VolumeCoverQueue {
     if (_running) return;
     _running = true;
     try {
-      while (_queue.isNotEmpty) {
-        final (aid, title) = _queue.removeLast();
+      while (_queue.isNotEmpty || _bg.isNotEmpty) {
+        final (aid, title) = _queue.isNotEmpty ? _queue.removeLast() : _bg.removeAt(0);
         final v = Volumes.of(aid).where((v) => v.title == title).firstOrNull;
         if (v == null || Volumes.cover(aid, title) != null) continue;
         if (v.illus == null) {
@@ -193,6 +207,7 @@ class VolumeCoverQueue {
             content = await _ref.read(apiProvider).chapter(aid, v.illus!);
           } catch (_) {
             _queue.clear();
+            _bg.clear(); // 网络出问题就先停，下次打开 App 再接着取
             return;
           }
           await ChapterCache.put(aid, v.illus!, content);
@@ -203,6 +218,7 @@ class VolumeCoverQueue {
           url = await chooseCover(content.images, _size);
         } catch (_) {
           _queue.clear(); // 图片下不下来，多半是网络问题，下次再说
+          _bg.clear();
           return;
         }
         await Volumes.setCover(aid, title, url);

@@ -14,6 +14,7 @@ import '../sync.dart';
 import '../theme.dart';
 import '../theme_art.dart';
 import '../updates.dart';
+import '../volumes.dart';
 
 /// 主界面框架：窄屏底部导航，宽屏（平板、电脑、网页）左侧导航。
 class HomeShell extends ConsumerStatefulWidget {
@@ -71,6 +72,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   Future<void> _syncAndCheck() async {
     await ref.read(libraryProvider.notifier).sync();
     _checkUpdates();
+    if (!isWebPreview) ref.read(volumeCoverQueueProvider).prefetchAll(ref.read(libraryProvider).books.keys);
   }
 
   static const _items = [(Icons.explore_outlined, Icons.explore, '发现'), (Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.update_outlined, Icons.update, '更新'), (Icons.person_outline, Icons.person, '我的')];

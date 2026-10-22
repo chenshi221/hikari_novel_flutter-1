@@ -416,7 +416,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final badge = _badge(b);
     final edges = vols.length <= 1 ? 0 : (vols.length <= 4 ? 1 : (vols.length <= 9 ? 2 : 3));
     final queue = ref.read(volumeCoverQueueProvider);
-    final behind = [for (final v in vols.skip(1).take(edges)) queue.get(b.aid, v) ?? b.img];
+    final behind = [for (final v in vols.skip(1).take(edges)) queue.volCover(b.aid, v, b.img)];
     final theme = Theme.of(context);
     return GestureDetector(
       onTap: () => _selected.isEmpty ? context.push(Routes.volumes(b.aid)) : _toggle(b.aid),

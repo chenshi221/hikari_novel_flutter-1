@@ -70,7 +70,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
     final title = novel?.detail.title ?? (LibraryStore.get(aid)?['title'] as String?) ?? ReadingStats.info(aid).title;
     final fallback = novel?.detail.imgUrl ?? (LibraryStore.get(aid)?['img'] as String?) ?? '';
     final queue = ref.read(volumeCoverQueueProvider);
-    String coverOf(Vol v) => queue.get(aid, v) ?? fallback;
+    String coverOf(Vol v) => queue.volCover(aid, v, fallback);
 
     final cur = math.min(_cur, math.max(vols.length - 1, 0));
     final cover = vols.isEmpty ? fallback : coverOf(vols[cur]);

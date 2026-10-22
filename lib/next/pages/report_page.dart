@@ -74,7 +74,7 @@ class _ReportPageState extends ConsumerState<ReportPage> {
     final vols = Volumes.of(aid);
     final queue = ref.read(volumeCoverQueueProvider);
     final bookCover = queue.bookCover(aid, info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(aid));
-    String coverOf(int page) => page == 0 ? bookCover : (queue.get(aid, vols[page - 1]) ?? bookCover);
+    String coverOf(int page) => page == 0 ? bookCover : queue.volCover(aid, vols[page - 1], bookCover);
 
     final page = _page.clamp(0, vols.length);
     final v = page == 0 ? null : vols[page - 1];
