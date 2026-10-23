@@ -17,6 +17,7 @@ import '../data.dart';
 import '../env.dart';
 import '../fonts.dart';
 import '../history.dart';
+import '../net_state.dart';
 import '../pages/novel_page.dart';
 import '../pages/rules_page.dart' show showRuleDialog;
 import '../progress.dart';
@@ -151,6 +152,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   // ---- 屏幕常亮、全屏：只在设置变了的时候通知系统 ----
   bool? _keepOn;
   bool? _full;
+  double? _bright;
+  static const _screen = MethodChannel('hikari/screen');
 
   void _applyChrome(ReaderPrefs p) {
     if (_keepOn != p.keepScreenOn) {
@@ -160,6 +163,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (_full != p.fullscreen) {
       _full = p.fullscreen;
       _setUi();
+    }
+    // 自定义亮度：-1 是交还给系统（原生那边只有安卓实现，别的平台调用失败就算了）
+    final want = p.customBrightness ? p.brightness : -1.0;
+    if (_bright != want) {
+      _bright = want;
+      _screen.invokeMethod('setBrightness', {'value': want}).ignore();
     }
   }
 
@@ -182,8 +191,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   void initState() {
     super.initState();
     _vol.setMethodCallHandler((call) async {
-      if (call.method == 'volumeDown') _nav.next?.call();
-      if (call.method == 'volumeUp') _nav.prev?.call();
+      final inv = ref.read(readerPrefsProvider).volumeInvert;
+      if (call.method == (inv ? 'volumeUp' : 'volumeDown')) _nav.next?.call();
+      if (call.method == (inv ? 'volumeDown' : 'volumeUp')) _nav.prev?.call();
     });
     _tick();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
@@ -199,6 +209,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _screen.invokeMethod('setBrightness', {'value': -1.0}).ignore();
     _syncVolumeKeys(false);
     _vol.setMethodCallHandler(null);
     _clock?.cancel();
@@ -310,6 +321,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   /// 手动切章会停掉朗读（[keepTts] 是朗读自己读完一章后的自动续读）；往后翻时把离开的这章标为已读。
   void _go(String cid, {int offset = 0, bool keepTts = false}) {
     if (cid == _cid && offset == 0) return;
+    if (cid != _cid && ref.read(readerPrefsProvider).chapterToast) {
+      final t = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).where((c) => c.cid == cid).firstOrNull?.title;
+      if (t != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t), duration: const Duration(seconds: 2)));
+    }
     _flushStats(); // 离开这章前把时间记到这章
     if (!keepTts && _speaking) _stopTts();
     final next = _nextChapter;
@@ -531,14 +546,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final chapters = novel?.catalogue.expand((v) => v.chapters).toList() ?? const <CatChapter>[];
     final index = chapters.indexWhere((c) => c.cid == _cid);
     final prev = index > 0 ? chapters[index - 1] : null;
-    final next = index >= 0 && index < chapters.length - 1 ? chapters[index + 1] : null;
+    // 开了"跳过已读章节"：下一章是后面第一个没读过的（全读过就没有下一章）
+    final readSet = prefs.skipRead ? ReadState.read(widget.aid) : const <String>{};
+    final next = index < 0
+        ? null
+        : (prefs.skipRead ? chapters.skip(index + 1).where((c) => !readSet.contains(c.cid)).firstOrNull : (index < chapters.length - 1 ? chapters[index + 1] : null));
     _nextChapter = next;
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
     // 章节一加载好就预加载后面几章（用 read 触发，且每章只触发一次）
     if (index >= 0 && content.hasValue) {
-      for (final ahead in chapters.skip(index + 1).take(_prefetch)) {
+      for (final ahead in chapters.skip(index + 1).take(prefs.prefetch)) {
         if (_preloaded.add(ahead.cid)) {
-          Future.microtask(() {
+          Future.microtask(() async {
+            // 只在 Wi-Fi 下预加载：现在不是就先不加载，以后再翻到这章时重新判断
+            if (prefs.prefetchWifi && !await onWifi()) return _preloaded.remove(ahead.cid);
             if (mounted) ref.read(chapterProvider((widget.aid, ahead.cid)));
           });
         }
@@ -558,7 +579,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       child: Scaffold(
         resizeToAvoidBottomInset: false, // 键盘盖在上面，不把正文压矮（压矮会重新分页、跳页）
       backgroundColor: palette.bg,
-      body: Stack(
+      body: _filtered(prefs, Stack(
         children: [
           content.when(
             loading: () => Center(child: CircularProgressIndicator(color: palette.fg)),
@@ -617,6 +638,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       dual: prefs.dual,
                       status: _status,
                       showFooter: prefs.showStatus,
+                      animate: prefs.pageAnim,
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
@@ -749,12 +771,27 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
             ),
           ],
         ],
-      ),
+      )),
       ),
     );
   }
 
-  static const _prefetch = 2;
+  /// 灰度、反色、暖色滤镜：套在整个阅读界面外面（盖在文字和背景上，不改排版）
+  Widget _filtered(ReaderPrefs p, Widget child) {
+    var w = child;
+    if (p.warm > 0) {
+      // 暖色：压低蓝色和一点绿色，像护眼模式
+      w = ColorFiltered(colorFilter: ColorFilter.matrix([1, 0, 0, 0, 0, 0, 1 - 0.6 * p.warm, 0, 0, 0, 0, 0, 1 - 1.4 * p.warm, 0, 0, 0, 0, 0, 1, 0]), child: w);
+    }
+    if (p.grayscale) {
+      w = ColorFiltered(colorFilter: const ColorFilter.matrix([0.2126, 0.7152, 0.0722, 0, 0, 0.2126, 0.7152, 0.0722, 0, 0, 0.2126, 0.7152, 0.0722, 0, 0, 0, 0, 0, 1, 0]), child: w);
+    }
+    if (p.invert) {
+      w = ColorFiltered(colorFilter: const ColorFilter.matrix([-1, 0, 0, 0, 255, 0, -1, 0, 0, 255, 0, 0, -1, 0, 255, 0, 0, 0, 1, 0]), child: w);
+    }
+    return w;
+  }
+
   final _preloaded = <String>{};
 
   /// 目录（按卷分层，当前章所在的卷默认展开）、本书的书签、人物备注。
@@ -1027,6 +1064,27 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       ],
                     ),
                   ],
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('翻到下一章时跳过已读章节'), value: prefs.skipRead, onChanged: (v) => set(prefs.copyWith(skipRead: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('切章时提示章节名'), value: prefs.chapterToast, onChanged: (v) => set(prefs.copyWith(chapterToast: v))),
+                  if (prefs.mode == 1) SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('翻页动画'), subtitle: const Text('滑动模式翻页时的过渡'), value: prefs.pageAnim, onChanged: (v) => set(prefs.copyWith(pageAnim: v))),
+                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && prefs.volumeKeys)
+                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('音量键方向反过来'), subtitle: const Text('开了以后：上音量键下一页，下音量键上一页'), value: prefs.volumeInvert, onChanged: (v) => set(prefs.copyWith(volumeInvert: v))),
+                  title('往后预加载'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final n in const [0, 1, 2, 3, 5]) ChoiceChip(label: Text(n == 0 ? '关' : '$n 章'), selected: prefs.prefetch == n, onSelected: (_) => set(prefs.copyWith(prefetch: n))),
+                    ],
+                  ),
+                  if (prefs.prefetch > 0) SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('只在 Wi-Fi 下预加载'), value: prefs.prefetchWifi, onChanged: (v) => set(prefs.copyWith(prefetchWifi: v))),
+                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
+                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('自定义屏幕亮度'), subtitle: const Text('可以比系统亮度更亮，退出阅读后恢复'), value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
+                    if (prefs.customBrightness) Slider(min: 0.02, max: 1.0, value: prefs.brightness.clamp(0.02, 1.0), onChanged: (v) => set(prefs.copyWith(brightness: v))),
+                  ],
+                  title('暖色滤镜 ${(prefs.warm * 200).round()}%'),
+                  Slider(min: 0, max: 0.5, divisions: 10, value: prefs.warm, onChanged: (v) => set(prefs.copyWith(warm: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('灰度'), value: prefs.grayscale, onChanged: (v) => set(prefs.copyWith(grayscale: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('反色'), value: prefs.invert, onChanged: (v) => set(prefs.copyWith(invert: v))),
                 ],
               ),
             ),

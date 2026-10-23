@@ -46,6 +46,8 @@ dependencies:
 
   # 电量显示
   battery_plus: ^7.0.0
+  connectivity_plus: ^7.0.0
+  local_auth: ^3.0.0
 
   # 文件选择器
   file_picker: ^13.0.0

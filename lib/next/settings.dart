@@ -56,7 +56,7 @@ void applyOrientation(int v) => SystemChrome.setPreferredOrientations(switch (v)
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0, this.volumeKeys = true, this.tapZone = 0, this.tapInvert = 0, this.keepScreenOn = true, this.fullscreen = true, this.showStatus = true});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0, this.volumeKeys = true, this.tapZone = 0, this.tapInvert = 0, this.keepScreenOn = true, this.fullscreen = true, this.showStatus = true, this.skipRead = false, this.chapterToast = false, this.warm = 0, this.grayscale = false, this.invert = false, this.customBrightness = false, this.brightness = 0.5, this.volumeInvert = false, this.pageAnim = true, this.prefetch = 2, this.prefetchWifi = false});
 
   final double fontSize;
   final double lineHeight;
@@ -112,7 +112,32 @@ class ReaderPrefs {
   /// 显示页脚（时间、电量、页码 / 进度）
   final bool showStatus;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual, double? dim, bool? volumeKeys, int? tapZone, int? tapInvert, bool? keepScreenOn, bool? fullscreen, bool? showStatus}) => ReaderPrefs(
+  /// 翻到下一章时跳过已读的章节
+  final bool skipRead;
+
+  /// 切章时提示章节名
+  final bool chapterToast;
+
+  /// 暖色滤镜强度 0~0.5，0 为关
+  final double warm;
+  final bool grayscale;
+  final bool invert;
+
+  /// 自定义屏幕亮度（可以比系统亮度更亮）和它的值 0.02~1
+  final bool customBrightness;
+  final double brightness;
+
+  /// 音量键方向反过来：下音量键上一页
+  final bool volumeInvert;
+
+  /// 左右滑动翻页时的动画
+  final bool pageAnim;
+
+  /// 往后预加载几章（0 不预加载），以及只在 Wi-Fi 下预加载
+  final int prefetch;
+  final bool prefetchWifi;
+
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual, double? dim, bool? volumeKeys, int? tapZone, int? tapInvert, bool? keepScreenOn, bool? fullscreen, bool? showStatus, bool? skipRead, bool? chapterToast, double? warm, bool? grayscale, bool? invert, bool? customBrightness, double? brightness, bool? volumeInvert, bool? pageAnim, int? prefetch, bool? prefetchWifi}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
@@ -132,6 +157,17 @@ class ReaderPrefs {
     keepScreenOn: keepScreenOn ?? this.keepScreenOn,
     fullscreen: fullscreen ?? this.fullscreen,
     showStatus: showStatus ?? this.showStatus,
+    skipRead: skipRead ?? this.skipRead,
+    chapterToast: chapterToast ?? this.chapterToast,
+    warm: warm ?? this.warm,
+    grayscale: grayscale ?? this.grayscale,
+    invert: invert ?? this.invert,
+    customBrightness: customBrightness ?? this.customBrightness,
+    brightness: brightness ?? this.brightness,
+    volumeInvert: volumeInvert ?? this.volumeInvert,
+    pageAnim: pageAnim ?? this.pageAnim,
+    prefetch: prefetch ?? this.prefetch,
+    prefetchWifi: prefetchWifi ?? this.prefetchWifi,
   );
 }
 
@@ -157,10 +193,21 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     keepScreenOn: (_box.get('r.keepScreenOn') as bool?) ?? true,
     fullscreen: (_box.get('r.fullscreen') as bool?) ?? true,
     showStatus: (_box.get('r.showStatus') as bool?) ?? true,
+    skipRead: (_box.get('r.skipRead') as bool?) ?? false,
+    chapterToast: (_box.get('r.chapterToast') as bool?) ?? false,
+    warm: (_box.get('r.warm') as num?)?.toDouble() ?? 0,
+    grayscale: (_box.get('r.grayscale') as bool?) ?? false,
+    invert: (_box.get('r.invert') as bool?) ?? false,
+    customBrightness: (_box.get('r.customBrightness') as bool?) ?? false,
+    brightness: (_box.get('r.brightness') as num?)?.toDouble() ?? 0.5,
+    volumeInvert: (_box.get('r.volumeInvert') as bool?) ?? false,
+    pageAnim: (_box.get('r.pageAnim') as bool?) ?? true,
+    prefetch: (_box.get('r.prefetch') as int?) ?? 2,
+    prefetchWifi: (_box.get('r.prefetchWifi') as bool?) ?? false,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim, 'r.volumeKeys': next.volumeKeys, 'r.tapZone': next.tapZone, 'r.tapInvert': next.tapInvert, 'r.keepScreenOn': next.keepScreenOn, 'r.fullscreen': next.fullscreen, 'r.showStatus': next.showStatus});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim, 'r.volumeKeys': next.volumeKeys, 'r.tapZone': next.tapZone, 'r.tapInvert': next.tapInvert, 'r.keepScreenOn': next.keepScreenOn, 'r.fullscreen': next.fullscreen, 'r.showStatus': next.showStatus, 'r.skipRead': next.skipRead, 'r.chapterToast': next.chapterToast, 'r.warm': next.warm, 'r.grayscale': next.grayscale, 'r.invert': next.invert, 'r.customBrightness': next.customBrightness, 'r.brightness': next.brightness, 'r.volumeInvert': next.volumeInvert, 'r.pageAnim': next.pageAnim, 'r.prefetch': next.prefetch, 'r.prefetchWifi': next.prefetchWifi});
     state = next;
   }
 }

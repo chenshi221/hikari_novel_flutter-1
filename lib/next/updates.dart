@@ -1,8 +1,14 @@
+import 'package:battery_plus/battery_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'app_prefs.dart';
 import 'data.dart';
 import 'library.dart';
+import 'progress.dart';
+import 'read_state.dart';
 import 'volumes.dart';
 
 class UpdateEntry {
@@ -65,14 +71,56 @@ class UpdateController extends Notifier<UpdateProgress> {
   @override
   UpdateProgress build() => const UpdateProgress();
 
-  /// 检查本地书架里所有书。第一次只记录当前章节数作为基准，不产生更新。
-  Future<void> refresh() async {
+  /// 自动检查是否该跑了：设了"不自动"、没到间隔、不在 Wi-Fi / 没充电（设置里勾了限制时）都不跑。手动检查不受这些限制。
+  Future<bool> _autoAllowed() async {
+    final hours = AppPrefs.read(P.updInterval, 1);
+    if (hours == 0) return false;
+    if (UpdateStore.lastCheck != 0 && DateTime.now().millisecondsSinceEpoch - UpdateStore.lastCheck < hours * 3600 * 1000) return false;
+    if (kIsWeb) return true;
+    try {
+      if (AppPrefs.read(P.updWifi, false)) {
+        final c = await Connectivity().checkConnectivity();
+        if (!c.contains(ConnectivityResult.wifi) && !c.contains(ConnectivityResult.ethernet)) return false;
+      }
+      if (AppPrefs.read(P.updCharging, false)) {
+        final b = await Battery().batteryState;
+        if (b != BatteryState.charging && b != BatteryState.full) return false;
+      }
+    } catch (_) {} // 查不出来就当满足，别让更新一直不跑
+    return true;
+  }
+
+  /// 设置里"只更新哪些书"的条件：跳过已完结 / 没开始读 / 还有未读的，以及只更新 / 不更新某些分类（[only] 指定书时不看分类）。
+  bool _wanted(LibBook b, Map<String, int> known) {
+    if (AppPrefs.read(P.updSkipDone, false) && b.done) return false;
+    final started = ReadingProgress.of(b.aid) != null || ReadState.read(b.aid).isNotEmpty;
+    if (AppPrefs.read(P.updSkipNotStarted, false) && !started) return false;
+    final total = known[b.aid] ?? 0;
+    if (AppPrefs.read(P.updSkipUnread, false) && total > 0 && total - ReadState.read(b.aid).length > 0) return false;
+    return true;
+  }
+
+  bool _catOk(LibBook b) {
+    final include = AppPrefs.readList(P.updInclude);
+    final exclude = AppPrefs.readList(P.updExclude);
+    if (include.isNotEmpty && !b.cats.any(include.contains)) return false;
+    return !b.cats.any(exclude.contains);
+  }
+
+  /// 检查本地书架里的书。第一次只记录当前章节数作为基准，不产生更新。
+  /// [force] 为 false 是自动检查（要看间隔和网络限制）；[only] 只检查这几本（检查某个分类）。
+  Future<void> refresh({bool force = true, Set<String>? only}) async {
     if (state.running) return;
+    if (!force && !await _autoAllowed()) return;
     final api = ref.read(apiProvider);
     state = const UpdateProgress(running: true);
     try {
-      final books = {for (final b in ref.read(libraryProvider).books.values) b.aid: (title: b.title, img: b.img)};
+      final all = ref.read(libraryProvider).books.values.toList();
       final known = UpdateStore.knownCounts();
+      final books = {
+        for (final b in all)
+          if ((only == null ? _catOk(b) : only.contains(b.aid)) && _wanted(b, known)) b.aid: (title: b.title, img: b.img),
+      };
       final feed = UpdateStore.feed().map((e) => {'aid': e.aid, 'title': e.title, 'img': e.img, 'chapter': e.chapter, 'cid': e.cid, 'time': e.time.millisecondsSinceEpoch}).toList();
       final at = <String, int>{};
       final fresh = <Map>[];
@@ -107,7 +155,8 @@ class UpdateController extends Notifier<UpdateProgress> {
         done += batch.length;
         state = UpdateProgress(running: true, done: done, total: books.length);
       }
-      known.removeWhere((aid, _) => !books.containsKey(aid));
+      final inLibrary = all.map((b) => b.aid).toSet();
+      known.removeWhere((aid, _) => !inLibrary.contains(aid)); // 被跳过的书留着基准，只去掉已不在书架的
       await UpdateStore.save(known, [...fresh.reversed, ...feed], at: at);
       state = UpdateProgress(done: done, total: books.length);
     } catch (e) {

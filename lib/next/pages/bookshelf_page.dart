@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import '../app_prefs.dart';
+import '../bookmarks.dart';
 import '../cache.dart';
 import '../library.dart';
 import '../progress.dart';
@@ -27,6 +29,8 @@ enum ShelfSort {
   lastRead('最近阅读'),
   updated('最近更新'),
   unread('未读章数'),
+  total('总章数'),
+  random('随机'),
   custom('自定义');
 
   const ShelfSort(this.label);
@@ -34,24 +38,50 @@ enum ShelfSort {
   final String label;
 }
 
-/// 书架的排序、筛选、显示方式，记在本地。
+/// 书架的排序、筛选、显示方式，记在本地。筛选是三态：0 不限 1 必须满足 2 必须不满足（Mihon 那样）。
 class ShelfOptions {
-  const ShelfOptions({this.sort = ShelfSort.added, this.display = 0, this.unread = false, this.cached = false, this.done = false});
+  const ShelfOptions({this.sort = ShelfSort.added, this.reverse = false, this.display = 3, this.unread = 0, this.started = 0, this.cached = 0, this.bookmarked = 0, this.completed = 0});
 
   final ShelfSort sort;
+
+  /// 排序方向反过来（每种排序都有自己默认的方向）
+  final bool reverse;
 
   /// 0 网格 1 紧凑网格 2 列表 3 卷册（一本书画成一摞卷）
   final int display;
 
-  /// 筛选：只看有未读 / 有缓存 / 已完结
-  final bool unread;
-  final bool cached;
-  final bool done;
+  /// 筛选：有未读 / 已开始读 / 有缓存 / 有书签 / 已完结
+  final int unread;
+  final int started;
+  final int cached;
+  final int bookmarked;
+  final int completed;
 
-  bool get filtering => unread || cached || done;
+  bool get filtering => unread + started + cached + bookmarked + completed > 0;
 
-  ShelfOptions copyWith({ShelfSort? sort, int? display, bool? unread, bool? cached, bool? done}) =>
-      ShelfOptions(sort: sort ?? this.sort, display: display ?? this.display, unread: unread ?? this.unread, cached: cached ?? this.cached, done: done ?? this.done);
+  ShelfOptions copyWith({ShelfSort? sort, bool? reverse, int? display, int? unread, int? started, int? cached, int? bookmarked, int? completed}) => ShelfOptions(
+    sort: sort ?? this.sort,
+    reverse: reverse ?? this.reverse,
+    display: display ?? this.display,
+    unread: unread ?? this.unread,
+    started: started ?? this.started,
+    cached: cached ?? this.cached,
+    bookmarked: bookmarked ?? this.bookmarked,
+    completed: completed ?? this.completed,
+  );
+
+  Map<String, Object> toMap() => {'sort': sort.index, 'reverse': reverse, 'display': display, 'unread': unread, 'started': started, 'cached': cached, 'bookmarked': bookmarked, 'completed': completed};
+
+  static ShelfOptions fromMap(Map m) => ShelfOptions(
+    sort: ShelfSort.values[((m['sort'] as int?) ?? 0).clamp(0, ShelfSort.values.length - 1)],
+    reverse: (m['reverse'] as bool?) ?? false,
+    display: (m['display'] as int?) ?? 3,
+    unread: (m['unread'] as int?) ?? 0,
+    started: (m['started'] as int?) ?? 0,
+    cached: (m['cached'] as int?) ?? 0,
+    bookmarked: (m['bookmarked'] as int?) ?? 0,
+    completed: (m['completed'] as int?) ?? 0,
+  );
 }
 
 class _OptionsController extends Notifier<ShelfOptions> {
@@ -59,25 +89,31 @@ class _OptionsController extends Notifier<ShelfOptions> {
 
   @override
   ShelfOptions build() {
+    final saved = _box.get('shelfOpts');
+    if (saved is Map) return ShelfOptions.fromMap(saved);
+    // 旧版本分开存的：排序、显示方式、三个开关筛选
     final f = ((_box.get('shelfFilter') as List?) ?? const []).cast<String>();
     final sort = (_box.get('shelfSort') as int?) ?? 0;
-    // 卷册是默认显示方式；以前存过别的显示方式的，迁移时也改成卷册（只做一次，之后用户自己选的照旧）
-    var display = (_box.get('shelfDisplay') as int?) ?? 3;
-    if (_box.get('shelfDisplayMigrated') != true) {
-      display = 3;
-      _box.putAll({'shelfDisplay': 3, 'shelfDisplayMigrated': true});
-    }
-    return ShelfOptions(sort: ShelfSort.values[sort.clamp(0, ShelfSort.values.length - 1)], display: display, unread: f.contains('unread'), cached: f.contains('cached'), done: f.contains('done'));
+    return ShelfOptions(
+      sort: ShelfSort.values[sort.clamp(0, ShelfSort.values.length - 1)],
+      display: (_box.get('shelfDisplay') as int?) ?? 3,
+      unread: f.contains('unread') ? 1 : 0,
+      cached: f.contains('cached') ? 1 : 0,
+      completed: f.contains('done') ? 1 : 0,
+    );
   }
 
   void set(ShelfOptions v) {
-    _box.putAll({
-      'shelfSort': v.sort.index,
-      'shelfDisplay': v.display,
-      'shelfFilter': [if (v.unread) 'unread', if (v.cached) 'cached', if (v.done) 'done'],
-    });
+    _box.put('shelfOpts', v.toMap());
     state = v;
   }
+}
+
+/// 这个标签页用的筛选 / 排序 / 显示：开了"每个标签单独设置"就用它自己存的，没存过用全局的。
+ShelfOptions shelfOptionsFor(ShelfOptions base, String tabId) {
+  if (!AppPrefs.read(P.perCat, false)) return base;
+  final m = AppPrefs.read<Object?>('shelf.tab.$tabId', null);
+  return m is Map ? ShelfOptions.fromMap(m) : base;
 }
 
 /// 卷册模式封面右边留给后面几卷封面边的宽度（最多 3 张，每张错开 5）
@@ -97,6 +133,22 @@ class _QueryController extends Notifier<String> {
 
 final shelfQueryProvider = NotifierProvider<_QueryController, String>(_QueryController.new);
 
+/// 三态筛选：0 不限，1 必须满足，2 必须不满足
+bool _tri(int state, bool Function() test) => state == 0 || test() == (state == 1);
+
+/// 某个标签页里的书：默认是全部，连载 / 完结按状态分（同名的自建分类并进来），其余是自建分类里的。
+Iterable<LibBook> _booksIn(LibraryState lib, String tabId) {
+  bool inNamed(LibBook b, String name) => lib.cats.any((c) => c.name == name && b.cats.contains(c.id));
+  return lib.books.values.where((b) => switch (tabId) {
+    '' => true,
+    _ongoingTab => !b.done && !inNamed(b, '完结') || inNamed(b, '连载'),
+    _doneTab => b.done || inNamed(b, '完结'),
+    final id => b.cats.contains(id),
+  });
+}
+
+bool _started(String aid) => ReadingProgress.of(aid) != null || ReadState.read(aid).isNotEmpty;
+
 /// 未读章数：上次检查更新时记下的总章数减去读过的章数。
 int _unread(String aid) {
   final total = UpdateStore.knownCounts()[aid] ?? 0;
@@ -107,7 +159,7 @@ List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, Str
   final q = query.toLowerCase();
   final out = list
       .where((b) => q.isEmpty || b.title.toLowerCase().contains(q))
-      .where((b) => (!o.unread || _unread(b.aid) > 0) && (!o.cached || ChapterCache.count(b.aid) > 0) && (!o.done || b.done))
+      .where((b) => _tri(o.unread, () => _unread(b.aid) > 0) && _tri(o.started, () => _started(b.aid)) && _tri(o.cached, () => ChapterCache.count(b.aid) > 0) && _tri(o.bookmarked, () => Bookmarks.all(b.aid).isNotEmpty) && _tri(o.completed, () => b.done))
       .toList();
   switch (o.sort) {
     case ShelfSort.added:
@@ -120,6 +172,11 @@ List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, Str
       out.sort((a, b) => UpdateStore.updatedAt(b.aid).compareTo(UpdateStore.updatedAt(a.aid)));
     case ShelfSort.unread:
       out.sort((a, b) => _unread(b.aid).compareTo(_unread(a.aid)));
+    case ShelfSort.total:
+      out.sort((a, b) => (UpdateStore.knownCounts()[b.aid] ?? 0).compareTo(UpdateStore.knownCounts()[a.aid] ?? 0));
+    case ShelfSort.random:
+      final seed = AppPrefs.read('shelf.seed', 1);
+      out.sort((a, b) => Object.hash(a.aid, seed).compareTo(Object.hash(b.aid, seed)));
     case ShelfSort.custom:
       final order = ((Hive.box('session').get('shelfOrder:lib:$catId') as List?) ?? const []).cast<String>();
       int rank(LibBook b) {
@@ -129,7 +186,7 @@ List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, Str
 
       out.sort((a, b) => rank(a).compareTo(rank(b)));
   }
-  return out;
+  return o.reverse ? out.reversed.toList() : out;
 }
 
 /// 书架：本地书库，分类是本地的（Mihon 那样），网站书架只在下拉刷新、打开 App 时同步一次。
@@ -198,7 +255,8 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   }
 
   /// 标签栏：点一下切换，长按拖动调整顺序
-  PreferredSizeWidget _tabStrip(List<LibCategory> tabs, TabController tc) {
+  PreferredSizeWidget _tabStrip(List<LibCategory> tabs, TabController tc, LibraryState lib) {
+    final counts = AppPrefs.read(P.tabCounts, false);
     final theme = Theme.of(context);
     return PreferredSize(
       preferredSize: const Size.fromHeight(44),
@@ -232,7 +290,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                   alignment: Alignment.center,
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(border: Border(bottom: BorderSide(width: 2.5, color: selected ? theme.colorScheme.primary : Colors.transparent))),
-                  child: Text(c.name, style: TextStyle(fontSize: 15, fontWeight: selected ? FontWeight.w700 : null, color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
+                  child: Text(counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name, style: TextStyle(fontSize: 15, fontWeight: selected ? FontWeight.w700 : null, color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
                 ),
               ),
             );
@@ -243,39 +301,99 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     );
   }
 
+  String get _curTab => _ids.isEmpty || _tc == null ? '' : _ids[_tc!.index.clamp(0, _ids.length - 1)];
+
   void _showOptions() {
+    final tabId = _curTab;
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (context) => Consumer(
         builder: (context, ref, _) {
-          final o = ref.watch(shelfOptionsProvider);
-          void set(ShelfOptions v) => ref.read(shelfOptionsProvider.notifier).set(v);
+          ref.watch(appPrefsProvider);
+          final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), tabId);
+          final perCat = AppPrefs.read(P.perCat, false);
+          void set(ShelfOptions v) => perCat ? ref.read(appPrefsProvider.notifier).set('shelf.tab.$tabId', v.toMap()) : ref.read(shelfOptionsProvider.notifier).set(v);
           final theme = Theme.of(context);
           Widget title(String t) => Padding(padding: const EdgeInsets.fromLTRB(4, 12, 4, 8), child: Text(t, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary)));
+          Widget tri(String label, int v, ShelfOptions Function(int) apply) => FilterChip(
+            avatar: v == 0 ? null : Icon(v == 1 ? Icons.check : Icons.block, size: 16),
+            label: Text(label, style: v == 2 ? const TextStyle(decoration: TextDecoration.lineThrough) : null),
+            selected: v != 0,
+            showCheckmark: false,
+            onSelected: (_) => set(apply((v + 1) % 3)), // 不限 → 必须满足 → 必须不满足
+          );
+          final tabName = _tabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == tabId, orElse: () => const LibCategory('', '默认')).name;
           return SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (perCat) Text('以下设置只对「$tabName」生效', style: theme.textTheme.bodySmall),
                   title('筛选'),
+                  Text('点一下：必须满足；再点一下：必须不满足；再点：不限', style: theme.textTheme.bodySmall),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
+                    runSpacing: 4,
                     children: [
-                      FilterChip(label: const Text('有未读'), selected: o.unread, onSelected: (v) => set(o.copyWith(unread: v))),
-                      FilterChip(label: const Text('有缓存'), selected: o.cached, onSelected: (v) => set(o.copyWith(cached: v))),
-                      FilterChip(label: const Text('已完结'), selected: o.done, onSelected: (v) => set(o.copyWith(done: v))),
+                      tri('有未读', o.unread, (v) => o.copyWith(unread: v)),
+                      tri('已开始读', o.started, (v) => o.copyWith(started: v)),
+                      tri('有缓存', o.cached, (v) => o.copyWith(cached: v)),
+                      tri('有书签', o.bookmarked, (v) => o.copyWith(bookmarked: v)),
+                      tri('已完结', o.completed, (v) => o.copyWith(completed: v)),
                     ],
                   ),
                   title('排序'),
-                  Wrap(spacing: 8, runSpacing: 8, children: [for (final s in ShelfSort.values) ChoiceChip(label: Text(s.label), selected: o.sort == s, onSelected: (_) => set(o.copyWith(sort: s)))]),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final s in ShelfSort.values)
+                        ChoiceChip(
+                          avatar: o.sort == s && s != ShelfSort.custom && s != ShelfSort.random ? Icon(o.reverse ? Icons.arrow_upward : Icons.arrow_downward, size: 16) : null,
+                          label: Text(s.label),
+                          selected: o.sort == s,
+                          showCheckmark: false,
+                          // 再点一次当前的排序：方向反过来；随机再点一次换一批
+                          onSelected: (_) {
+                            if (s == ShelfSort.random) ref.read(appPrefsProvider.notifier).set('shelf.seed', DateTime.now().millisecondsSinceEpoch & 0xFFFF);
+                            set(o.sort == s ? o.copyWith(reverse: !o.reverse) : o.copyWith(sort: s, reverse: false));
+                          },
+                        ),
+                    ],
+                  ),
                   title('显示'),
                   SegmentedButton<int>(
                     segments: const [ButtonSegment(value: 0, label: Text('网格')), ButtonSegment(value: 1, label: Text('紧凑')), ButtonSegment(value: 2, label: Text('列表')), ButtonSegment(value: 3, label: Text('卷册'))],
                     selected: {o.display},
                     onSelectionChanged: (v) => set(o.copyWith(display: v.first)),
+                  ),
+                  title('更多'),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.casino_outlined),
+                    title: const Text('随机打开一本'),
+                    onTap: () {
+                      final books = _booksIn(ref.read(libraryProvider), tabId).toList();
+                      if (books.isEmpty) return;
+                      final b = books[math.Random().nextInt(books.length)];
+                      Navigator.pop(context);
+                      this.context.push(o.display == 3 ? Routes.volumes(b.aid) : Routes.novel(b.aid));
+                    },
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.refresh),
+                    title: Text('检查「$tabName」的更新'),
+                    onTap: () {
+                      final aids = _booksIn(ref.read(libraryProvider), tabId).map((b) => b.aid).toSet();
+                      Navigator.pop(context);
+                      ref.read(updateProvider.notifier).refresh(only: aids);
+                      ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text('正在检查 ${aids.length} 本的更新')));
+                    },
                   ),
                 ],
               ),
@@ -289,9 +407,10 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   @override
   Widget build(BuildContext context) {
     final lib = ref.watch(libraryProvider);
-    final o = ref.watch(shelfOptionsProvider);
+    ref.watch(appPrefsProvider);
     final tabs = _tabs(lib.cats);
     final tc = _controller([for (final c in tabs) c.id]);
+    final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), _curTab);
     final appBar = AppBar(
       title: _searching
           ? TextField(
@@ -312,7 +431,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         IconButton(tooltip: '筛选、排序、显示', icon: Icon(Icons.filter_list, color: o.filtering ? Theme.of(context).colorScheme.primary : null), onPressed: _showOptions),
         IconButton(tooltip: '管理分类', icon: const Icon(Icons.label_outline), onPressed: () => context.push(Routes.categories)),
       ],
-      bottom: _tabStrip(tabs, tc),
+      bottom: _tabStrip(tabs, tc, lib),
     );
     return PopScope(
       canPop: !_searching,
@@ -413,19 +532,13 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
   Widget build(BuildContext context) {
     super.build(context);
     final lib = ref.watch(libraryProvider);
-    final o = ref.watch(shelfOptionsProvider);
+    ref.watch(appPrefsProvider); // 书架设置（角标、列数、每个标签单独设置）变了就重建
+    final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), widget.catId);
     final query = ref.watch(shelfQueryProvider);
     ref.watch(updateProvider); // 检查完更新后刷新未读数
     ref.watch(volumeChangesProvider); // 取到卷封面后换上
     final theme = Theme.of(context);
-    // 同名的自建分类并进自动标签：书在那个分类里，或者本身符合
-    bool inNamed(LibBook b, String name) => lib.cats.any((c) => c.name == name && b.cats.contains(c.id));
-    final inCat = lib.books.values.where((b) => switch (widget.catId) {
-      '' => true,
-      _ongoingTab => !b.done && !inNamed(b, '完结') || inNamed(b, '连载'),
-      _doneTab => b.done || inNamed(b, '完结'),
-      final id => b.cats.contains(id),
-    });
+    final inCat = _booksIn(lib, widget.catId);
     final books = _arrange(inCat, o, query, widget.catId);
 
     final Widget body;
@@ -440,7 +553,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     } else if (o.display == 3) {
       body = LayoutBuilder(
         builder: (context, c) {
-          final n = (c.maxWidth / 140).floor().clamp(2, 8);
+          final n = _cols(context) ?? (c.maxWidth / 140).floor().clamp(2, 8);
           final w = (c.maxWidth - 32 - 14 * (n - 1)) / n;
           return GridView.builder(
             scrollCacheExtent: const ScrollCacheExtent.viewport(0.5), // 上下各多备半屏，滑到时封面已经解码好
@@ -458,8 +571,8 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
           scrollCacheExtent: const ScrollCacheExtent.viewport(0.5),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           gridDelegate: o.display == 1
-              ? SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: (c.maxWidth / 104).floor().clamp(3, 10), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.72)
-              : novelGridDelegate(c.maxWidth),
+              ? SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: _cols(context) ?? (c.maxWidth / 104).floor().clamp(3, 10), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.72)
+              : (_cols(context) == null ? novelGridDelegate(c.maxWidth) : SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: _cols(context)!, mainAxisSpacing: 20, crossAxisSpacing: 14, childAspectRatio: 0.52)),
           itemCount: books.length,
           itemBuilder: (context, i) => _gridTile(books[i], compact: o.display == 1),
         ),
@@ -513,7 +626,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
   /// 封面右下角的"继续阅读"：直接回到上次读的位置（读过才有）。
   Widget? _resume(LibBook b) {
     final p = ReadingProgress.of(b.aid);
-    if (p == null || _selected.isNotEmpty) return null;
+    if (p == null || _selected.isNotEmpty || !AppPrefs.read(P.resumeButton, true)) return null;
     return IconButton.filledTonal(
       tooltip: '继续阅读',
       visualDensity: VisualDensity.compact,
@@ -525,8 +638,23 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
 
   Widget? _badge(LibBook b) {
     if (_selected.contains(b.aid)) return Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary);
-    final n = _unread(b.aid);
-    return n > 0 ? Badge(label: Text('$n')) : null;
+    final n = AppPrefs.read(P.unreadBadge, true) ? _unread(b.aid) : 0;
+    final c = AppPrefs.read(P.cacheBadge, false) ? ChapterCache.count(b.aid) : 0;
+    if (n == 0 && c == 0) return null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (c > 0) Badge(label: Text('$c'), backgroundColor: Theme.of(context).colorScheme.secondary),
+        if (c > 0 && n > 0) const SizedBox(width: 3),
+        if (n > 0) Badge(label: Text('$n')),
+      ],
+    );
+  }
+
+  /// 自己设了列数就用它（竖屏、横屏分开设），0 是自动
+  int? _cols(BuildContext context) {
+    final n = AppPrefs.read(MediaQuery.orientationOf(context) == Orientation.landscape ? P.colsLandscape : P.colsPortrait, 0);
+    return n == 0 ? null : n;
   }
 
   Widget _gridTile(LibBook b, {required bool compact}) {

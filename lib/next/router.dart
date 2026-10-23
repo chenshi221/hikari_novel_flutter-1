@@ -46,6 +46,7 @@ class Routes {
   static const profile = '/profile';
   static const search = '/search';
   static const settings = '/settings';
+  static String settingsSection(String name) => '/settings/$name';
   static const history = '/history';
   static const cache = '/cache';
 
@@ -100,6 +101,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.history, builder: (_, _) => const HistoryPage()),
       GoRoute(path: Routes.cache, builder: (_, _) => const CachePage()),
       GoRoute(path: Routes.settings, builder: (_, _) => const SettingsPage()),
+      GoRoute(path: '/settings/:section', builder: (_, state) => SettingsSectionPage(section: SettingsSection.values.firstWhere((s) => s.name == state.pathParameters['section'], orElse: () => SettingsSection.appearance))),
       GoRoute(path: '/novel/:aid', builder: (_, state) => NovelPageView(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments', builder: (_, state) => CommentsPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: '/novel/:aid/comments/:rid', builder: (_, state) => RepliesPage(aid: state.pathParameters['aid']!, rid: state.pathParameters['rid']!)),
