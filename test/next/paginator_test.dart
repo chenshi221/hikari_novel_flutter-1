@@ -1,6 +1,7 @@
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hikari_novel_flutter/next/reader/paginator.dart';
+import 'package:hikari_novel_flutter/next/reader/reader_body.dart' show readerStrut;
 import 'package:hikari_novel_flutter/next/reader/reader_page.dart' show formatChapter;
 
 void main() {
@@ -37,4 +38,19 @@ void main() {
     expect(formatChapter('   第一段\n\n  第二段  \n\n'), '　　第一段\n　　第二段');
     expect(formatChapter(''), '');
   });
+
+  test('固定行高：带颜色的文字所在的行和别的行一样高，每页行数和切页时算的一致', () {
+    final strut = readerStrut(style);
+    final plain = TextPainter(text: TextSpan(text: List.filled(80, '一二三四五六七八九十').join(), style: style), textDirection: TextDirection.ltr, strutStyle: strut)..layout(maxWidth: 200);
+    final colored = TextPainter(
+      text: TextSpan(style: style, children: [const TextSpan(text: '一二三四五六'), TextSpan(text: '七八九十一二三四五六七八九十', style: style.copyWith(color: const Color(0xFFE53935), backgroundColor: const Color(0x22E53935))), TextSpan(text: List.filled(60, '一二三四五六七八九十').join())]),
+      textDirection: TextDirection.ltr,
+      strutStyle: strut,
+    )..layout(maxWidth: 200);
+    final a = plain.computeLineMetrics().map((l) => l.height.toStringAsFixed(2)).toSet();
+    final b = colored.computeLineMetrics().map((l) => l.height.toStringAsFixed(2)).toSet();
+    expect(a, hasLength(1));
+    expect(b, a);
+  });
 }
+

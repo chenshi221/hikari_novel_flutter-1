@@ -15,6 +15,8 @@ class AppPrefs extends Notifier<int> {
   /// 存的是列表时按字符串列表读（Hive 读出来是 `List<dynamic>`）
   static List<String> readList(String key) => ((_box.get('p.$key') as List?) ?? const []).cast<String>();
 
+  static Future<void> write(String key, Object? value) => _box.put('p.$key', value);
+
   @override
   int build() => 0;
 

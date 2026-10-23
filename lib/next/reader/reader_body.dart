@@ -39,6 +39,9 @@ TextStyle readerStyle(ReaderPrefs prefs, Color color, {String? family, List<Stri
   leadingDistribution: TextLeadingDistribution.proportional,
 );
 
+/// 正文每一行固定高度（字号 × 行距）：变色、高亮的字所在的行不会再比别的行高，切页和显示的行高才对得上。
+StrutStyle readerStrut(TextStyle s) => StrutStyle.fromTextStyle(s, forceStrutHeight: true);
+
 /// 键盘（和其他外部操作）驱动翻页 / 滚动：正文组件把自己的动作挂到这里。
 class ReaderNav {
   VoidCallback? next;
@@ -339,7 +342,7 @@ class _ScrollBodyState extends State<ScrollBody> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text.rich(widget.spanOf(0, c.text.length), key: _textKey, textScaler: TextScaler.noScaling),
+                Text.rich(widget.spanOf(0, c.text.length), key: _textKey, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
                 for (final url in c.images) Padding(padding: const EdgeInsets.only(top: 16), child: NetImage(url, fit: BoxFit.contain)),
                 if (widget.onNext != null) Padding(padding: const EdgeInsets.only(top: 32), child: OutlinedButton(onPressed: widget.onNext, child: const Text('下一章'))),
               ],
@@ -522,7 +525,7 @@ class _PagedBodyState extends State<PagedBody> {
     final view = MediaQuery.viewPaddingOf(context);
     return Stack(
       children: [
-        Padding(padding: pad, child: Text.rich(widget.spanOf(_starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling)),
+        Padding(padding: pad, child: Text.rich(widget.spanOf(_starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style))),
         Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
         if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/$_total · ${(i + 1) * 100 ~/ _total}%', style: faint)),
       ],
@@ -572,7 +575,7 @@ class _PagedBodyState extends State<PagedBody> {
           final keep = _sig == null ? widget.startOffset : _cur;
           _sig = sig;
           _cols = cols;
-          _starts = _hasText ? paginate(_c.text, widget.style, size) : const [0];
+          _starts = _hasText ? paginate(_c.text, widget.style, size, strut: readerStrut(widget.style)) : const [0];
           _controller?.dispose();
           _controller = null;
           _page = _pageOf(keep);

@@ -3,9 +3,11 @@ import 'package:flutter/painting.dart';
 /// 把一章文字按页面大小切页，返回每页第一个字符的偏移（第一页恒为 0）。
 ///
 /// 只负责排版，不关心界面：翻页、进度保存、改字号后重新切页都只用这一个函数。
-List<int> paginate(String text, TextStyle style, Size size, {TextDirection textDirection = TextDirection.ltr}) {
+/// [strut] 要和实际显示正文时用的一样：变色、高亮的文字所在的行会比普通行高一点，不统一行高的话，
+/// 切页时量出来每页装得下的行数，和显示出来的对不上，最后一行就被页脚盖住。
+List<int> paginate(String text, TextStyle style, Size size, {TextDirection textDirection = TextDirection.ltr, StrutStyle? strut}) {
   if (text.isEmpty) return [0];
-  final painter = TextPainter(text: TextSpan(text: text, style: style), textDirection: textDirection)..layout(maxWidth: size.width);
+  final painter = TextPainter(text: TextSpan(text: text, style: style), textDirection: textDirection, strutStyle: strut)..layout(maxWidth: size.width);
   final starts = <int>[0];
   var pageTop = 0.0;
   for (final line in painter.computeLineMetrics()) {
