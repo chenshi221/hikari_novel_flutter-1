@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -310,6 +311,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
           final n = (c.maxWidth / 140).floor().clamp(2, 8);
           final w = (c.maxWidth - 32 - 14 * (n - 1)) / n;
           return GridView.builder(
+            scrollCacheExtent: const ScrollCacheExtent.viewport(0.5), // 上下各多备半屏，滑到时封面已经解码好
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             // 一格 = 封面（右边留出后面几卷的边）+ 下面两行字
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: w / ((w - _edges) / kCoverAspect + 46)),
@@ -321,6 +323,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     } else {
       body = LayoutBuilder(
         builder: (context, c) => GridView.builder(
+          scrollCacheExtent: const ScrollCacheExtent.viewport(0.5),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           gridDelegate: o.display == 1
               ? SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: (c.maxWidth / 104).floor().clamp(3, 10), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.72)
@@ -414,9 +417,8 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final at = readingVolume(b.aid);
     final allDone = vols.isNotEmpty && vols.every((v) => Volumes.done(b.aid).containsKey(v.title));
     final badge = _badge(b);
-    final edges = vols.length <= 1 ? 0 : (vols.length <= 4 ? 1 : (vols.length <= 9 ? 2 : 3));
     final queue = ref.read(volumeCoverQueueProvider);
-    final behind = [for (final v in vols.skip(1).take(edges)) queue.volCover(b.aid, v, b.img)];
+    final behind = [for (final v in vols.skip(1).take(stackEdges(vols.length))) queue.volCover(b.aid, v, b.img)];
     final theme = Theme.of(context);
     return GestureDetector(
       onTap: () => _selected.isEmpty ? context.push(Routes.volumes(b.aid)) : _toggle(b.aid),
@@ -429,22 +431,15 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
               builder: (context, c) {
                 final w = math.min(c.maxWidth - _edges, c.maxHeight * kCoverAspect);
                 final h = w / kCoverAspect;
-                Widget sheet(String url, {double dim = 0}) => Container(
-                  width: w,
-                  height: h,
-                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 3, offset: const Offset(1, 0))]),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Stack(fit: StackFit.expand, children: [CoverImage(url), if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim))]),
-                  ),
-                );
                 return Stack(
                   clipBehavior: Clip.none, // 后面几卷的边在封面右边、Stack 外面
                   children: [
-                    // 远的先画：每张往右错开一点、上下各缩一点，越往后越暗
-                    for (var k = behind.length; k >= 1; k--)
-                      Positioned(left: _edges / 3 * k, top: 3.0 * k, height: h - 6.0 * k, child: sheet(behind[k - 1], dim: 0.12 * (k - 1))),
-                    SizedBox(width: w, height: h, child: Hero(tag: 'vols:${b.aid}', flightShuttleBuilder: volumeHeroShuttle, child: sheet(_cover(b)))),
+                    // 整叠放进 Hero：点开时一起飞过去放大
+                    SizedBox(
+                      width: w,
+                      height: h,
+                      child: Hero(tag: 'vols:${b.aid}', flightShuttleBuilder: volumeHeroShuttle, child: VolumeStack(cover: _cover(b), behind: behind)),
+                    ),
                     if (badge != null) Positioned(top: 6, right: 6, child: badge),
                     if (vols.length == 1)
                       Positioned(

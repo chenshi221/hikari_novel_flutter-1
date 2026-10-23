@@ -60,10 +60,16 @@
 
 ## 🖼️ 截图
 
-> 下面是原项目的界面截图，新界面的截图还没补。
+发现 · 书架（卷册模式） · 一本书的各卷
 
 <div align="center">
   <img src="./readme/1.jpg" width="30%"> <img src="./readme/2.jpg" width="30%"> <img src="./readme/3.jpg" width="30%">
+</div>
+
+阅读 · 书籍墙 · 阅读统计
+
+<div align="center">
+  <img src="./readme/4.jpg" width="30%"> <img src="./readme/5.jpg" width="30%"> <img src="./readme/6.jpg" width="30%">
 </div>
 
 ## 💻 编译

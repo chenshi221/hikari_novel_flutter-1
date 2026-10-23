@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -59,6 +60,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
             ],
           ),
+          if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) ...[
+            const SizedBox(height: 16),
+            Text('屏幕方向', style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            SegmentedButton<int>(
+              segments: const [ButtonSegment(value: 0, label: Text('竖屏')), ButtonSegment(value: 1, label: Text('自动旋转')), ButtonSegment(value: 2, label: Text('横屏'))],
+              selected: {ref.watch(orientationProvider)},
+              onSelectionChanged: (s) => ref.read(orientationProvider.notifier).set(s.first),
+            ),
+          ],
           section('阅读'),
           SegmentedButton<int>(
             segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真')), ButtonSegment(value: 3, label: Text('覆盖'))],

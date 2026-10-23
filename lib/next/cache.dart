@@ -63,6 +63,9 @@ class ChapterCache {
 
   static Future<void> setMeta(String aid, String title, int total, String img, String firstCid) => _index.put('meta:$aid', {'title': title, 'total': total, 'img': img, 'first': firstCid});
 
+  /// 这本书下载过离线缓存（缓存页里列着的）
+  static bool offline(String aid) => _index.containsKey('meta:$aid');
+
   /// 有缓存的书：aid → (书名, 总章数, 封面地址, 第一章 cid)
   static Map<String, (String, int, String, String)> books() => {
     for (final k in _index.keys.whereType<String>().where((k) => k.startsWith('meta:')))

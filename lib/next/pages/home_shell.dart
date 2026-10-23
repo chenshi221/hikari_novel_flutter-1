@@ -38,7 +38,11 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_syncAndCheck);
     Sync.auto();
-    if (!isWebPreview) ref.read(imageStoreProvider).trim().then((_) => ref.read(imageStoreProvider).shrinkOld()).ignore();
+    if (!isWebPreview) {
+      final store = ref.read(imageStoreProvider);
+      // 先删挑封面剩下的图，再压剩下的，省得压了又删
+      store.trim().then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).ignore();
+    }
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
   }
 
