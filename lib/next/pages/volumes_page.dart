@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/cat_volume.dart';
+import '../cache.dart';
 import '../cover_color.dart';
 import '../library.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
 import '../stats.dart';
+import '../swipe.dart';
 import '../volumes.dart';
 import '../widgets.dart';
 import 'cover_picker_page.dart';
@@ -117,6 +119,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
   late final _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
   Animation<double>? _route;
   bool _open = false;
+  bool _list = false; // 展开"全部卷"列表（和详情二选一）
   final _coverKey = GlobalKey(); // 最前面那卷的封面，翻开动画从它的位置开始
   OverlayEntry? _opening; // 正在放的翻开动画
 
@@ -229,7 +232,28 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         onTap: (i, v) => _tap(i, v, coverOf(v)),
         onLongPress: (v) => pickVolumeCover(context, aid, v),
       );
-      final toggle = _DetailsToggle(open: _open, onTap: () => setState(() => _open = !_open));
+      final toggle = _DetailsToggle(
+        open: _open,
+        list: _list,
+        onTap: () => setState(() {
+          _open = !_open;
+          _list = false;
+        }),
+        onList: () => setState(() {
+          _list = !_list;
+          _open = false;
+        }),
+      );
+      final volList = _VolList(
+        aid: aid,
+        vols: vols,
+        cur: cur,
+        coverOf: coverOf,
+        onPick: (i) {
+          setState(() => _list = false);
+          _pc.animateToPage(i, duration: Duration(milliseconds: math.min(250 + 40 * (i - cur).abs(), 700)), curve: Curves.easeInOutCubic);
+        },
+      );
       final scrubber = vols.length > 6
           ? SliderTheme(
               data: SliderTheme.of(
@@ -261,11 +285,18 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         aid: aid,
         vol: v,
         index: cur,
+        book: title,
+        onCache: (cid) {
+          final chs = [for (final cv in novel?.catalogue ?? const <CatVolume>[]) ...cv.chapters];
+          final c = chs.where((c) => c.cid == cid).firstOrNull;
+          if (c != null && novel != null) ref.read(downloadProvider.notifier).start(aid, novel.detail.title, [c], total: chs.length, img: novel.detail.imgUrl, firstCid: chs.first.cid);
+        },
         chapterTitles: {
           for (final cv in novel?.catalogue ?? const <CatVolume>[])
             for (final c in cv.chapters) c.cid: c.title,
         },
       );
+      final Widget? panel = _open ? details : (_list ? volList : null);
       body = wide
           ? Row(
               children: [
@@ -282,7 +313,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
                 ),
                 AnimatedSize(
                   duration: const Duration(milliseconds: 250),
-                  child: _open ? SizedBox(width: 400, child: details) : const SizedBox(height: double.infinity),
+                  child: panel != null ? SizedBox(width: 400, child: panel) : const SizedBox(height: double.infinity),
                 ),
               ],
             )
@@ -292,13 +323,13 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 280),
                     curve: Curves.easeOutCubic,
-                    height: c.maxHeight * (_open ? 0.42 : 0.68),
+                    height: c.maxHeight * (panel != null ? 0.42 : 0.68),
                     child: carousel,
                   ),
                   toggle,
                   scrubber,
                   Expanded(
-                    child: AnimatedSwitcher(duration: const Duration(milliseconds: 200), child: _open ? details : summary),
+                    child: AnimatedSwitcher(duration: const Duration(milliseconds: 200), layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]), child: panel ?? summary),
                   ),
                 ],
               ),
@@ -306,12 +337,12 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
     }
 
     return PopScope(
-      canPop: !_open,
+      canPop: !_open && !_list,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
           _closeBook();
         } else {
-          setState(() => _open = false); // 返回键先收起详情
+          setState(() => _open = _list = false); // 返回键先收起详情
         }
       },
       child: TweenAnimationBuilder<Color?>(
@@ -539,12 +570,18 @@ class _Summary extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 24),
     child: Column(
       children: [
-        Text(
-          vol.title,
-          textAlign: TextAlign.center,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
+        // 固定两行的高度：卷名一行还是两行，下面的字都不动
+        SizedBox(
+          height: 50,
+          child: Center(
+            child: Text(
+              vol.title,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700, height: 1.25),
+            ),
+          ),
         ),
         const SizedBox(height: 6),
         Text(
@@ -561,12 +598,14 @@ class _Summary extends StatelessWidget {
 
 /// 展开后的这一卷：进度、评分、继续读、换封面、阅读报告，以及这一卷的目录。
 class _Details extends StatefulWidget {
-  const _Details({super.key, required this.aid, required this.vol, required this.index, required this.chapterTitles});
+  const _Details({super.key, required this.aid, required this.vol, required this.index, required this.chapterTitles, required this.book, required this.onCache});
 
   final String aid;
   final Vol vol;
   final int index;
   final Map<String, String> chapterTitles;
+  final String book;
+  final void Function(String cid) onCache;
 
   @override
   State<_Details> createState() => _DetailsState();
@@ -576,6 +615,14 @@ class _DetailsState extends State<_Details> {
   final _picked = <String>{}; // 长按多选的章节
 
   void _pick(String cid) => setState(() => _picked.contains(cid) ? _picked.remove(cid) : _picked.add(cid));
+
+  /// 只选了一章时：整本书里它前面的章节全标为已读（跨卷）
+  Future<void> _markBefore() async {
+    final all = [for (final v in Volumes.of(widget.aid)) ...v.cids];
+    final i = all.indexWhere(_picked.contains);
+    if (i > 0) await ReadState.setRead(widget.aid, all.take(i), true);
+    if (mounted) setState(_picked.clear);
+  }
 
   Future<void> _mark(bool read) async {
     await ReadState.setRead(widget.aid, _picked, read); // 这卷读没读完会跟着重新核对
@@ -658,7 +705,16 @@ class _DetailsState extends State<_Details> {
                   ),
                   const SizedBox(height: 16),
                   for (final (i, cid) in v.cids.indexed)
-                    ListTile(
+                    ChapterSwipe(
+                      aid: aid,
+                      book: widget.book,
+                      cid: cid,
+                      title: widget.chapterTitles[cid] ?? '第 ${i + 1} 章',
+                      enabled: _picked.isEmpty,
+                      backdrop: Color.alphaBlend(Colors.black.withValues(alpha: 0.18), Scaffold.maybeOf(context)?.widget.backgroundColor ?? Colors.black),
+                      onChanged: () => setState(() {}),
+                      onCache: () => widget.onCache(cid),
+                      child: ListTile(
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       leading: _picked.isNotEmpty
@@ -674,7 +730,7 @@ class _DetailsState extends State<_Details> {
                       trailing: cid == p?.cid ? const Text('读到这里', style: TextStyle(color: Colors.white, fontSize: 12)) : null,
                       onTap: _picked.isNotEmpty ? () => _pick(cid) : () => context.push(Routes.reader(aid, cid)),
                       onLongPress: () => _pick(cid),
-                    ),
+                    )),
                 ],
               ),
             ),
@@ -696,6 +752,7 @@ class _DetailsState extends State<_Details> {
                           onPressed: () => setState(() => _picked.addAll(v.cids.take(v.cids.lastIndexWhere(_picked.contains) + 1))),
                           child: const Text('选到开头'),
                         ),
+                        if (_picked.length == 1) TextButton(onPressed: _markBefore, child: const Text('前面已读')),
                         TextButton(onPressed: () => _mark(true), child: const Text('已读')),
                         TextButton(onPressed: () => _mark(false), child: const Text('未读')),
                       ],
@@ -710,36 +767,91 @@ class _DetailsState extends State<_Details> {
   }
 }
 
-/// 封面下面的横条：展开 / 收起这一卷的详情和目录
+/// 封面下面的两个横条：展开 / 收起这一卷的详情和目录，或者全部卷的列表
 class _DetailsToggle extends StatelessWidget {
-  const _DetailsToggle({required this.open, required this.onTap});
+  const _DetailsToggle({required this.open, required this.list, required this.onTap, required this.onList});
 
   final bool open;
+  final bool list;
   final VoidCallback onTap;
+  final VoidCallback onList;
 
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 10),
-    child: Material(
-      color: Colors.white.withValues(alpha: 0.12),
-      shape: const StadiumBorder(),
-      child: InkWell(
-        customBorder: const StadiumBorder(),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(open ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up, size: 18, color: Colors.white70),
-              const SizedBox(width: 4),
-              Text(open ? '收起' : '详情和目录', style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            ],
-          ),
+  Widget _pill(bool expanded, String text, VoidCallback onTap) => Material(
+    color: Colors.white.withValues(alpha: 0.12),
+    shape: const StadiumBorder(),
+    child: InkWell(
+      customBorder: const StadiumBorder(),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(expanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up, size: 18, color: Colors.white70),
+            const SizedBox(width: 4),
+            Text(text, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          ],
         ),
       ),
     ),
   );
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 10,
+      runSpacing: 8,
+      children: [_pill(open, open ? '收起' : '详情和目录', onTap), _pill(list, list ? '收起' : '全部卷', onList)],
+    ),
+  );
+}
+
+/// 全部卷的列表：点一行，轮播翻到那一卷
+class _VolList extends StatelessWidget {
+  const _VolList({required this.aid, required this.vols, required this.cur, required this.coverOf, required this.onPick});
+
+  final String aid;
+  final List<Vol> vols;
+  final int cur;
+  final String Function(Vol) coverOf;
+  final ValueChanged<int> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final done = Volumes.done(aid);
+    final reading = readingVolume(aid);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.18),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        clipBehavior: Clip.antiAlias,
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: vols.length,
+          itemBuilder: (context, i) {
+            final v = vols[i];
+            final status = done.containsKey(v.title) ? '已读完' : (i == reading ? '在读' : null);
+            return ListTile(
+              dense: true,
+              selected: i == cur,
+              selectedTileColor: Colors.white.withValues(alpha: 0.12),
+              leading: SizedBox(
+                width: 34,
+                height: 34 / kCoverAspect,
+                child: ClipRRect(borderRadius: BorderRadius.circular(3), child: NetImage(coverOf(v))),
+              ),
+              title: Text(v.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: i == cur ? Colors.white : Colors.white70, fontWeight: i == cur ? FontWeight.w700 : null)),
+              trailing: status == null ? null : Text(status, style: TextStyle(color: status == '在读' ? Colors.white : Colors.white54, fontSize: 12)),
+              onTap: () => onPick(i),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 /// 翻开书的动画：封面以左边书脊为轴往外翻开，同时连书页一起放大铺满屏幕；铺满时（[onOpened]）推出阅读页，

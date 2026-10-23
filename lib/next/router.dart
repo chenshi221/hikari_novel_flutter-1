@@ -71,7 +71,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final checking = ref.read(sessionProvider) is SessionChecking;
       final onSplash = state.matchedLocation == Routes.splash;
       if (checking) return onSplash ? null : Routes.splash;
-      return onSplash ? Routes.discover : null;
+      return onSplash ? Routes.bookshelf : null;
     },
     routes: [
       GoRoute(path: Routes.splash, builder: (_, _) => const SplashPage()),

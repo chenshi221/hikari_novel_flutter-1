@@ -1,5 +1,7 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'incognito.dart';
+
 class HistoryEntry {
   const HistoryEntry({required this.aid, required this.title, required this.img, required this.cid, required this.chapter, required this.time});
 
@@ -29,6 +31,7 @@ class ReadingHistory {
   }).toList();
 
   static Future<void> record(String aid, String title, String img, String cid, String chapter) {
+    if (Incognito.on) return Future.value();
     final rest = ((_box.get('history2') as List?) ?? const []).cast<Map>().where((e) => e['aid'] != aid);
     return _box.put('history2', [
       {'aid': aid, 'title': title, 'img': img, 'cid': cid, 'chapter': chapter, 'time': DateTime.now().millisecondsSinceEpoch},

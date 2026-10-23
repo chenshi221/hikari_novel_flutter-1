@@ -15,6 +15,7 @@ import 'cover_picker_page.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
+import '../swipe.dart';
 import '../session.dart';
 import '../widgets.dart';
 
@@ -300,24 +301,42 @@ class _BodyState extends ConsumerState<_Body> {
                   icon: Icon(Icons.image_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
                   onPressed: () => pickVolumeCover(context, aid, Vol.from(v)),
                 ),
-                if (Volumes.done(aid).containsKey(v.title))
-                  Tooltip(message: '已读完', child: Icon(Icons.check_circle, size: 18, color: theme.colorScheme.primary))
-                else
-                  IconButton(
-                    tooltip: '标记本卷读完',
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(Icons.check_circle_outline, size: 18, color: theme.colorScheme.onSurfaceVariant),
-                    onPressed: () async {
-                      // 本卷正文章节全部标为已读，读完日期记为现在；标错了可以长按章节多选、标回未读
-                      await ReadState.setRead(aid, Vol.from(v).textCids, true);
-                      if (mounted) setState(() {});
-                    },
-                  ),
+                Builder(
+                  builder: (context) {
+                    final isDone = Volumes.done(aid).containsKey(v.title);
+                    return IconButton(
+                      tooltip: isDone ? '取消本卷已读' : '标记本卷读完',
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(isDone ? Icons.check_circle : Icons.check_circle_outline, size: 18, color: isDone ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant),
+                      onPressed: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: Text(isDone ? '取消「${v.title}」的已读？' : '把「${v.title}」标为已读？'),
+                            content: Text(isDone ? '这一卷的正文章节会全部标回未读。' : '这一卷的正文章节会全部标为已读。'),
+                            actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('确定'))],
+                          ),
+                        );
+                        if (ok != true) return;
+                        await ReadState.setRead(aid, Vol.from(v).textCids, !isDone);
+                        if (mounted) setState(() {});
+                      },
+                    );
+                  },
+                ),
               ],
             ),
             children: [
               for (final c in _reverse ? v.chapters.reversed : v.chapters)
-                ListTile(
+                ChapterSwipe(
+                  aid: aid,
+                  book: data.detail.title,
+                  cid: c.cid,
+                  title: c.title,
+                  enabled: _picked.isEmpty,
+                  onChanged: () => setState(() {}),
+                  onCache: () => ref.read(downloadProvider.notifier).start(aid, data.detail.title, [c], total: data.catalogue.expand((v) => v.chapters).length, img: data.detail.imgUrl, firstCid: data.catalogue.expand((v) => v.chapters).first.cid),
+                  child: ListTile(
                   dense: true,
                   selected: _picked.contains(c.cid),
                   leading: _picked.isNotEmpty
@@ -332,7 +351,7 @@ class _BodyState extends ConsumerState<_Body> {
                   trailing: c.cid == progress?.cid ? Text('读到这里', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)) : (ChapterCache.has(aid, c.cid) ? Icon(Icons.download_done, size: 16, color: theme.colorScheme.onSurfaceVariant) : null),
                   onTap: _picked.isNotEmpty ? () => _pick(c.cid) : () => _open(Routes.reader(aid, c.cid)),
                   onLongPress: () => _pick(c.cid),
-                ),
+                )),
             ],
           ),
       ],
@@ -356,6 +375,7 @@ class _BodyState extends ConsumerState<_Body> {
                   Expanded(child: Text('已选 ${_picked.length} 章', maxLines: 1, overflow: TextOverflow.ellipsis)),
                   // 从第一章选到已选的最后一章，方便"之前的全部标为已读"
                   TextButton(onPressed: () => setState(() => _picked.addAll(all.take(all.lastIndexWhere((c) => _picked.contains(c.cid)) + 1).map((c) => c.cid))), child: const Text('选到开头')),
+                  if (_picked.length == 1) TextButton(onPressed: _markBefore, child: const Text('前面已读')),
                   TextButton(onPressed: () => _markPicked(true), child: const Text('已读')),
                   TextButton(onPressed: () => _markPicked(false), child: const Text('未读')),
                   TextButton(
@@ -376,6 +396,14 @@ class _BodyState extends ConsumerState<_Body> {
   }
 
   void _pick(String cid) => setState(() => _picked.contains(cid) ? _picked.remove(cid) : _picked.add(cid));
+
+  /// 只选了一章时：它前面的所有章节标为已读（Mihon 的"标记前面的为已读"）
+  Future<void> _markBefore() async {
+    final all = data.catalogue.expand((v) => v.chapters).toList();
+    final i = all.indexWhere((c) => _picked.contains(c.cid));
+    if (i > 0) await ReadState.setRead(aid, all.take(i).map((c) => c.cid), true);
+    if (mounted) setState(_picked.clear);
+  }
 
   Future<void> _markPicked(bool read) async {
     await ReadState.setRead(aid, _picked, read);

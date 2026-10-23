@@ -2,6 +2,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import 'cache.dart';
 import 'history.dart';
+import 'incognito.dart';
 import 'library.dart';
 import 'sync.dart';
 
@@ -70,7 +71,7 @@ class ReadingStats {
   );
 
   static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
-    if (seconds <= 0) return;
+    if (seconds <= 0 || Incognito.on) return;
     if (cid != null) {
       final ch = chapterSeconds(aid);
       final today = dayKey(DateTime.now());
@@ -91,6 +92,7 @@ class ReadingStats {
   }
 
   static Future<void> addChapter(String aid, String cid) async {
+    if (Incognito.on) return;
     final seen = ((_box.get('stats:seen') as List?) ?? const []).cast<String>();
     final key = '${dayKey(DateTime.now())}:$aid:$cid';
     if (seen.contains(key)) return;

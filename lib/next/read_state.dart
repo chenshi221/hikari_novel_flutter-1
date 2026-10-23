@@ -1,5 +1,6 @@
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
+import 'incognito.dart';
 import 'volumes.dart';
 
 /// 每本书哪些章节读过（读到章末，或者翻到了下一章）、读过多少字，用于详情页的已读/未读和阅读报告。
@@ -14,6 +15,7 @@ class ReadState {
 
   /// 标记已读；第一次标记时把字数计入这本书的"已读字数"。
   static Future<void> mark(String aid, String cid, int chars) async {
+    if (Incognito.on) return;
     final set = read(aid);
     if (!set.add(cid)) return;
     await _box.put('read:$aid', set.toList());

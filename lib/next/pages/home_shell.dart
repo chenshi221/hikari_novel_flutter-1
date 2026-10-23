@@ -6,7 +6,9 @@ import 'package:go_router/go_router.dart';
 
 import '../env.dart';
 import '../image_cache.dart';
+import '../incognito.dart';
 import '../library.dart';
+import '../pages/bookshelf_page.dart' show shelfSelecting;
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -94,6 +96,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     final offline = (session is SessionLoggedIn && session.offline) || needsVerify;
     final unread = UpdateStore.unread();
     final palette = appPalettes[ref.watch(paletteProvider)];
+    final incognito = ref.watch(incognitoProvider);
     Widget icon(int i, bool selected) {
       final (outlined, filled, label) = _items[i];
       final art = ThemeArt.navIcon(palette, i, selected: selected) ?? Icon(selected ? filled : outlined);
@@ -113,13 +116,36 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
               ),
             ),
           ),
+        if (incognito)
+          Material(
+            color: Theme.of(context).colorScheme.tertiaryContainer,
+            child: InkWell(
+              onTap: () => ref.read(incognitoProvider.notifier).set(false),
+              child: SafeArea(
+                bottom: false,
+                top: !offline,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Row(children: [const Icon(Icons.visibility_off_outlined, size: 16), const SizedBox(width: 8), const Expanded(child: Text('无痕模式：不记录阅读进度和历史，点这里关闭', style: TextStyle(fontSize: 12)))]),
+                ),
+              ),
+            ),
+          ),
         // 提示条已经让开了状态栏，下面的页面就别再留一次
-        Expanded(child: MediaQuery.removePadding(context: context, removeTop: offline, child: shell)),
+        Expanded(child: MediaQuery.removePadding(context: context, removeTop: offline || incognito, child: shell)),
       ],
     );
     final wide = MediaQuery.sizeOf(context).width >= 720;
+    // 不在书架页时按返回先回书架，在书架页才退出（Mihon 的做法）
+    Widget back(Widget child) => PopScope(
+      canPop: shell.currentIndex == 1,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _go(1);
+      },
+      child: child,
+    );
     if (wide) {
-      return Scaffold(
+      return back(Scaffold(
         body: Row(
           children: [
             NavigationRail(
@@ -136,21 +162,27 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
             Expanded(child: body),
           ],
         ),
-      );
+      ));
     }
-    return Scaffold(
+    return back(Scaffold(
       body: body,
-      bottomNavigationBar: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Divider(),
-          NavigationBar(
-            selectedIndex: shell.currentIndex,
-            onDestinationSelected: _go,
-            destinations: [for (final (i, item) in _items.indexed) NavigationDestination(icon: icon(i, false), selectedIcon: icon(i, true), label: item.$3)],
-          ),
-        ],
+      // 书架多选时收起底部导航，让位给多选的操作条
+      bottomNavigationBar: ValueListenableBuilder<bool>(
+        valueListenable: shelfSelecting,
+        builder: (context, selecting, _) => selecting && shell.currentIndex == 1
+            ? const SizedBox.shrink()
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Divider(),
+                  NavigationBar(
+                    selectedIndex: shell.currentIndex,
+                    onDestinationSelected: _go,
+                    destinations: [for (final (i, item) in _items.indexed) NavigationDestination(icon: icon(i, false), selectedIcon: icon(i, true), label: item.$3)],
+                  ),
+                ],
+              ),
       ),
-    );
+    ));
   }
 }
