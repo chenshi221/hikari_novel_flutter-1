@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:battery_plus/battery_plus.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -147,15 +148,48 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     if (mounted) _status.value = s;
   }
 
+  // ---- 屏幕常亮、全屏：只在设置变了的时候通知系统 ----
+  bool? _keepOn;
+  bool? _full;
+
+  void _applyChrome(ReaderPrefs p) {
+    if (_keepOn != p.keepScreenOn) {
+      _keepOn = p.keepScreenOn;
+      WakelockPlus.toggle(enable: p.keepScreenOn);
+    }
+    if (_full != p.fullscreen) {
+      _full = p.fullscreen;
+      _setUi();
+    }
+  }
+
+  /// 全屏时菜单栏出来才显示状态栏；没开全屏就一直显示
+  void _setUi() => SystemChrome.setEnabledSystemUIMode(_full == true && !_bar ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge);
+
+  // ---- 音量键翻页：安卓原生那边拦下音量键后通过这个通道回调 ----
+  static const _vol = MethodChannel('hikari/reader_volume_keys');
+  bool _volOn = false;
+
+  /// 开着、而且不在朗读时才拦音量键（朗读时让它调音量）；只在状态变化时通知原生。
+  void _syncVolumeKeys(bool want) {
+    want = want && !kIsWeb && defaultTargetPlatform == TargetPlatform.android && !_speaking;
+    if (want == _volOn) return;
+    _volOn = want;
+    _vol.invokeMethod('setEnabled', {'enabled': want}).ignore();
+  }
+
   @override
   void initState() {
     super.initState();
+    _vol.setMethodCallHandler((call) async {
+      if (call.method == 'volumeDown') _nav.next?.call();
+      if (call.method == 'volumeUp') _nav.prev?.call();
+    });
     _tick();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
     _initial = widget.offset;
     WidgetsBinding.instance.addObserver(this);
-    WakelockPlus.enable();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _applyChrome(ref.read(readerPrefsProvider));
     _tts.setCompletionHandler(() {
       if (DateTime.now().difference(_jumped).inMilliseconds < 400) return;
       _si++;
@@ -165,6 +199,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _syncVolumeKeys(false);
+    _vol.setMethodCallHandler(null);
     _clock?.cancel();
     _status.dispose();
     _pos.dispose();
@@ -267,7 +303,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
 
   void _toggleBar() {
     setState(() => _bar = !_bar);
-    SystemChrome.setEnabledSystemUIMode(_bar ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky);
+    _setUi();
   }
 
   /// 跳到某章的某个位置。[offset] 默认章首；往前翻章时传 [kToEnd]，落在上一章的最后一页。
@@ -488,6 +524,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     final prefs = ref.watch(readerPrefsProvider);
+    _syncVolumeKeys(prefs.volumeKeys);
+    _applyChrome(prefs);
     final palette = _paletteOf(prefs, Theme.of(context).colorScheme);
     final novel = ref.watch(novelProvider(widget.aid)).value;
     final chapters = novel?.catalogue.expand((v) => v.chapters).toList() ?? const <CatChapter>[];
@@ -560,6 +598,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       onNext: next == null ? null : () => _go(next.cid),
                       wrap: _selectable,
                       onTapZone: _toggleBar,
+                      tapZone: prefs.tapZone,
+                      tapInvert: prefs.tapInvert,
                       onMark: onMark,
                       follow: reading?.$1,
                       nav: _nav,
@@ -576,6 +616,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       cover: prefs.mode == 3,
                       dual: prefs.dual,
                       status: _status,
+                      showFooter: prefs.showStatus,
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
@@ -585,6 +626,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       onNext: next == null ? null : () => _go(next.cid),
                       wrap: _selectable,
                       onTapZone: _toggleBar,
+                      tapZone: prefs.tapZone,
+                      tapInvert: prefs.tapInvert,
                       onMark: onMark,
                       follow: reading?.$1,
                       nav: _nav,
@@ -592,7 +635,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                     );
             },
           ),
-          if (prefs.mode == 0 && content.hasValue)
+          if (prefs.mode == 0 && prefs.showStatus && content.hasValue)
             Positioned(
               left: 0,
               right: 0,
@@ -904,6 +947,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         builder: (context, ref, _) {
           final prefs = ref.watch(readerPrefsProvider);
           void set(ReaderPrefs p) => ref.read(readerPrefsProvider.notifier).update(p);
+          Widget title(String t) => Padding(padding: const EdgeInsets.only(top: 12, bottom: 6), child: Text(t));
           return SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -911,7 +955,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('亮度 ${((1 - prefs.dim) * 100).round()}%'),
+                  Text('亮度${((1 - prefs.dim) * 100).round()}%'),
                   // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
                   Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v))),
                   Text('字号 ${prefs.fontSize.round()}'),
@@ -955,6 +999,34 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                     onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
                   ),
                   SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('宽屏双页'), subtitle: const Text('窗口宽度 ≥ 900 时，左右翻页模式一屏显示两页'), value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
+                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('音量键翻页'), subtitle: const Text('下音量键下一页，上音量键上一页；朗读时仍调音量'), value: prefs.volumeKeys, onChanged: (v) => set(prefs.copyWith(volumeKeys: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('保持屏幕常亮'), value: prefs.keepScreenOn, onChanged: (v) => set(prefs.copyWith(keepScreenOn: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('全屏阅读'), subtitle: const Text('隐藏状态栏，点菜单时才出来'), value: prefs.fullscreen, onChanged: (v) => set(prefs.copyWith(fullscreen: v))),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('显示页脚'), subtitle: const Text('时间、电量、页码 / 进度'), value: prefs.showStatus, onChanged: (v) => set(prefs.copyWith(showStatus: v))),
+                  title('点击分区'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final (i, name) in ['默认', 'L 型', 'Kindle 式', '边缘式', '只呼出菜单'].indexed) ChoiceChip(label: Text(name), selected: prefs.tapZone == i, onSelected: (_) => set(prefs.copyWith(tapZone: i))),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      const ['翻页模式：点左右两边翻页，点中间呼出菜单；滚动模式：点哪里都呼出菜单', '上面和左中上一页，下面和右中下一页，中间呼出菜单', '上面一排呼出菜单，左边上一页，其余下一页', '左右两边下一页，底部中间上一页，中间呼出菜单', '点哪里都只呼出菜单，用音量键或滑动翻页'][prefs.tapZone],
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  if (prefs.tapZone != 4) ...[
+                    title('点击反转'),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final (i, name) in ['不反转', '水平', '垂直', '两者'].indexed) ChoiceChip(label: Text(name), selected: prefs.tapInvert == i, onSelected: (_) => set(prefs.copyWith(tapInvert: i))),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),

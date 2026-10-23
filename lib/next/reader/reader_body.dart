@@ -127,6 +127,36 @@ class _TapDetectorState extends State<TapDetector> {
   );
 }
 
+enum TapAction { prev, next, menu }
+
+/// 点击分区（Mihon 的几种方案）：[zone] 0 默认 1 L 型 2 Kindle 式 3 边缘式 4 只呼出菜单；
+/// [invert] 0 不反转 1 水平 2 垂直 3 两者（反转 = 把点的位置镜像一下）。
+/// 默认方案：翻页模式点左右两边翻页，滚动模式（[paged] 为 false）点哪里都呼出菜单，和以前一样。
+TapAction tapActionAt(int zone, int invert, Offset local, Size size, {required bool paged}) {
+  var x = (local.dx / size.width).clamp(0.0, 1.0);
+  var y = (local.dy / size.height).clamp(0.0, 1.0);
+  if (invert == 1 || invert == 3) x = 1 - x;
+  if (invert == 2 || invert == 3) y = 1 - y;
+  const a = 1 / 3, b = 2 / 3;
+  switch (zone) {
+    case 1: // 上和左中是上一页，下和右中是下一页
+      if (y < a || (x < a && y < b)) return TapAction.prev;
+      if (y >= b || x >= b) return TapAction.next;
+      return TapAction.menu;
+    case 2: // 上面一排呼出菜单，左边上一页，其余下一页
+      if (y < a) return TapAction.menu;
+      return x < a ? TapAction.prev : TapAction.next;
+    case 3: // 左右两边下一页，底部中间上一页
+      if (x < a || x >= b) return TapAction.next;
+      return y >= b ? TapAction.prev : TapAction.menu;
+    case 4:
+      return TapAction.menu;
+    default:
+      if (!paged) return TapAction.menu;
+      return x < 0.3 ? TapAction.prev : (x > 0.7 ? TapAction.next : TapAction.menu);
+  }
+}
+
 /// 页脚：左边时间和电量（[status] 每分钟刷新，只重建这一行，不影响正文和分页），右边页码 / 进度。
 class ReaderFooter extends StatelessWidget {
   const ReaderFooter({super.key, required this.right, required this.style, this.status});
@@ -179,8 +209,12 @@ class ScrollBody extends StatefulWidget {
     this.follow,
     this.nav,
     required this.hasSelection,
+    this.tapZone = 0,
+    this.tapInvert = 0,
   });
 
+  final int tapZone;
+  final int tapInvert;
   final Chapter chapter;
   final SpanOf spanOf;
   final TextStyle style;
@@ -288,7 +322,15 @@ class _ScrollBodyState extends State<ScrollBody> {
         hasSelection: widget.hasSelection,
         onTap: (local, size, global) {
           final m = markAt(c, _textKey, 0, global);
-          m != null ? widget.onMark(m) : widget.onTapZone();
+          if (m != null) return widget.onMark(m);
+          switch (tapActionAt(widget.tapZone, widget.tapInvert, local, size, paged: false)) {
+            case TapAction.prev:
+              _page(-1);
+            case TapAction.next:
+              _page(1);
+            case TapAction.menu:
+              widget.onTapZone();
+          }
         },
         child: widget.wrap(
           SingleChildScrollView(
@@ -335,7 +377,14 @@ class PagedBody extends StatefulWidget {
     this.nav,
     required this.hasSelection,
     this.status,
+    this.tapZone = 0,
+    this.tapInvert = 0,
+    this.showFooter = true,
   });
+
+  final int tapZone;
+  final int tapInvert;
+  final bool showFooter;
 
   final Chapter chapter;
   final SpanOf spanOf;
@@ -471,7 +520,7 @@ class _PagedBodyState extends State<PagedBody> {
       children: [
         Padding(padding: pad, child: Text.rich(widget.spanOf(_starts[i], end), key: live ? _keyFor(i) : null, textScaler: TextScaler.noScaling)),
         Positioned(top: view.top + 10, left: widget.margin, right: widget.margin, child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: faint)),
-        Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/$_total · ${(i + 1) * 100 ~/ _total}%', style: faint)),
+        if (widget.showFooter) Positioned(bottom: view.bottom + 10, left: widget.margin, right: widget.margin, child: ReaderFooter(status: widget.status, right: '${i + 1}/$_total · ${(i + 1) * 100 ~/ _total}%', style: faint)),
       ],
     );
   }
@@ -482,13 +531,13 @@ class _PagedBodyState extends State<PagedBody> {
       final m = p < _textPages ? markAt(_c, _keyFor(p), _starts[p], global) : null;
       if (m != null) return widget.onMark(m);
     }
-    final x = local.dx / size.width;
-    if (x < 0.3) {
-      _step(-1);
-    } else if (x > 0.7) {
-      _step(1);
-    } else {
-      widget.onTapZone();
+    switch (tapActionAt(widget.tapZone, widget.tapInvert, local, size, paged: true)) {
+      case TapAction.prev:
+        _step(-1);
+      case TapAction.next:
+        _step(1);
+      case TapAction.menu:
+        widget.onTapZone();
     }
   }
 

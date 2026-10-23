@@ -56,7 +56,7 @@ void applyOrientation(int v) => SystemChrome.setPreferredOrientations(switch (v)
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
-  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0});
+  const ReaderPrefs({this.fontSize = 19, this.lineHeight = 1.8, this.theme = 0, this.mode = 0, this.ttsRate = 0.5, this.margin = 22, this.font = 0, this.ttsPitch = 1.0, this.ttsVoice = '', this.ttsHighlight = true, this.ttsAutoNext = true, this.dual = true, this.dim = 0, this.volumeKeys = true, this.tapZone = 0, this.tapInvert = 0, this.keepScreenOn = true, this.fullscreen = true, this.showStatus = true});
 
   final double fontSize;
   final double lineHeight;
@@ -94,7 +94,25 @@ class ReaderPrefs {
   /// 阅读亮度遮罩的不透明度 0~0.7，0 为不遮
   final double dim;
 
-  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual, double? dim}) => ReaderPrefs(
+  /// 音量键翻页（只有安卓有用）：下音量键下一页，上音量键上一页
+  final bool volumeKeys;
+
+  /// 点击分区：0 默认（翻页模式左右两边翻页，滚动模式点哪里都呼出菜单） 1 L 型 2 Kindle 式 3 边缘式 4 只呼出菜单
+  final int tapZone;
+
+  /// 点击反转：0 不反转 1 水平 2 垂直 3 两者
+  final int tapInvert;
+
+  /// 阅读时保持屏幕常亮
+  final bool keepScreenOn;
+
+  /// 阅读时隐藏状态栏（全屏）
+  final bool fullscreen;
+
+  /// 显示页脚（时间、电量、页码 / 进度）
+  final bool showStatus;
+
+  ReaderPrefs copyWith({double? fontSize, double? lineHeight, int? theme, int? mode, double? ttsRate, double? margin, int? font, double? ttsPitch, String? ttsVoice, bool? ttsHighlight, bool? ttsAutoNext, bool? dual, double? dim, bool? volumeKeys, int? tapZone, int? tapInvert, bool? keepScreenOn, bool? fullscreen, bool? showStatus}) => ReaderPrefs(
     fontSize: fontSize ?? this.fontSize,
     lineHeight: lineHeight ?? this.lineHeight,
     theme: theme ?? this.theme,
@@ -108,6 +126,12 @@ class ReaderPrefs {
     ttsAutoNext: ttsAutoNext ?? this.ttsAutoNext,
     dual: dual ?? this.dual,
     dim: dim ?? this.dim,
+    volumeKeys: volumeKeys ?? this.volumeKeys,
+    tapZone: tapZone ?? this.tapZone,
+    tapInvert: tapInvert ?? this.tapInvert,
+    keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+    fullscreen: fullscreen ?? this.fullscreen,
+    showStatus: showStatus ?? this.showStatus,
   );
 }
 
@@ -127,10 +151,16 @@ class ReaderPrefsController extends Notifier<ReaderPrefs> {
     ttsAutoNext: (_box.get('r.ttsAutoNext') as bool?) ?? true,
     dual: (_box.get('r.dual') as bool?) ?? true,
     dim: (_box.get('r.dim') as num?)?.toDouble() ?? 0,
+    volumeKeys: (_box.get('r.volumeKeys') as bool?) ?? true,
+    tapZone: (_box.get('r.tapZone') as int?) ?? 0,
+    tapInvert: (_box.get('r.tapInvert') as int?) ?? 0,
+    keepScreenOn: (_box.get('r.keepScreenOn') as bool?) ?? true,
+    fullscreen: (_box.get('r.fullscreen') as bool?) ?? true,
+    showStatus: (_box.get('r.showStatus') as bool?) ?? true,
   );
 
   void update(ReaderPrefs next) {
-    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim});
+    _box.putAll({'r.fontSize': next.fontSize, 'r.lineHeight': next.lineHeight, 'r.theme': next.theme, 'r.mode': next.mode, 'r.ttsRate': next.ttsRate, 'r.margin': next.margin, 'r.font': next.font, 'r.ttsPitch': next.ttsPitch, 'r.ttsVoice': next.ttsVoice, 'r.ttsHighlight': next.ttsHighlight, 'r.ttsAutoNext': next.ttsAutoNext, 'r.dual': next.dual, 'r.dim': next.dim, 'r.volumeKeys': next.volumeKeys, 'r.tapZone': next.tapZone, 'r.tapInvert': next.tapInvert, 'r.keepScreenOn': next.keepScreenOn, 'r.fullscreen': next.fullscreen, 'r.showStatus': next.showStatus});
     state = next;
   }
 }

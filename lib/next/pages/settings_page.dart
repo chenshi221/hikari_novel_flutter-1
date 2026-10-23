@@ -12,6 +12,7 @@ import '../router.dart';
 import '../theme.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../swipe.dart';
 import '../widgets.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -83,6 +84,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(fontSize: v))),
           Text('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
           Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(ttsRate: v))),
+          section('章节操作'),
+          Text('在章节列表里左右滑一下，直接做这件事', style: theme.textTheme.bodySmall),
+          for (final (label, current, isRight) in [('向右滑', ref.watch(swipePrefsProvider).right, true), ('向左滑', ref.watch(swipePrefsProvider).left, false)])
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(label),
+              trailing: DropdownButton<SwipeAct>(
+                value: current,
+                underline: const SizedBox.shrink(),
+                items: [for (final a in SwipeAct.values) DropdownMenuItem(value: a, child: Text(a.label))],
+                onChanged: (a) => a == null ? null : ref.read(swipePrefsProvider.notifier).set(right: isRight ? a : null, left: isRight ? null : a),
+              ),
+            ),
           if (!isWebPreview) ...[
             section('网络'),
             SegmentedButton<Wenku8Node>(

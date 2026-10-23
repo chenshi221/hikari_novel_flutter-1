@@ -83,7 +83,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     }
     await store.saveLogin(_remember ? username : null, _remember ? _password.text : null);
     // 登录成功后回到主界面
-    if (mounted) context.go(Routes.discover);
+    if (mounted) context.go(Routes.bookshelf);
   });
 
   @override

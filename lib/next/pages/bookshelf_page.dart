@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
@@ -59,7 +61,13 @@ class _OptionsController extends Notifier<ShelfOptions> {
   ShelfOptions build() {
     final f = ((_box.get('shelfFilter') as List?) ?? const []).cast<String>();
     final sort = (_box.get('shelfSort') as int?) ?? 0;
-    return ShelfOptions(sort: ShelfSort.values[sort.clamp(0, ShelfSort.values.length - 1)], display: (_box.get('shelfDisplay') as int?) ?? 0, unread: f.contains('unread'), cached: f.contains('cached'), done: f.contains('done'));
+    // 卷册是默认显示方式；以前存过别的显示方式的，迁移时也改成卷册（只做一次，之后用户自己选的照旧）
+    var display = (_box.get('shelfDisplay') as int?) ?? 3;
+    if (_box.get('shelfDisplayMigrated') != true) {
+      display = 3;
+      _box.putAll({'shelfDisplay': 3, 'shelfDisplayMigrated': true});
+    }
+    return ShelfOptions(sort: ShelfSort.values[sort.clamp(0, ShelfSort.values.length - 1)], display: display, unread: f.contains('unread'), cached: f.contains('cached'), done: f.contains('done'));
   }
 
   void set(ShelfOptions v) {
@@ -74,6 +82,9 @@ class _OptionsController extends Notifier<ShelfOptions> {
 
 /// 卷册模式封面右边留给后面几卷封面边的宽度（最多 3 张，每张错开 5）
 const _edges = 15.0;
+
+/// 书架正在多选：外面的底部导航据此收起，让位给多选的操作条
+final shelfSelecting = ValueNotifier<bool>(false);
 
 final shelfOptionsProvider = NotifierProvider<_OptionsController, ShelfOptions>(_OptionsController.new);
 
@@ -130,8 +141,107 @@ class BookshelfPage extends ConsumerStatefulWidget {
   ConsumerState<BookshelfPage> createState() => _BookshelfPageState();
 }
 
-class _BookshelfPageState extends ConsumerState<BookshelfPage> {
+/// 自动分组的标签 id：按书是否完结实时分，不存在书里
+const _ongoingTab = 'auto:ongoing';
+const _doneTab = 'auto:done';
+const _autoNames = {'连载', '完结'};
+
+class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProviderStateMixin {
   bool _searching = false;
+  TabController? _tc;
+  List<String> _ids = [];
+  String _shown = ''; // 标签栏上次滚到的标签
+  final _keys = <String, GlobalKey>{};
+
+  Box get _box => Hive.box('session');
+
+  @override
+  void dispose() {
+    _tc?.dispose();
+    super.dispose();
+  }
+
+  /// 标签：默认（全部书）、连载、完结，再加自己建的分类；顺序按拖动存的 shelfTabOrder，没存过的排后面。
+  List<LibCategory> _tabs(List<LibCategory> cats) {
+    // 自己建过同名的分类（比如"完结"）时合并：不再单独显示，里面的书并入自动标签（见 [_Shelf]）
+    final all = [const LibCategory('', '默认'), const LibCategory(_ongoingTab, '连载'), const LibCategory(_doneTab, '完结'), ...cats.where((c) => !_autoNames.contains(c.name))];
+    final order = ((_box.get('shelfTabOrder') as List?) ?? const []).cast<String>();
+    int rank(LibCategory c) {
+      final i = order.indexOf(c.id);
+      return i < 0 ? order.length : i;
+    }
+
+    return [...all]..sort((a, b) => rank(a).compareTo(rank(b))); // sort 稳定，没存过的保持原顺序
+  }
+
+  /// 标签变了（新增 / 删除 / 拖动）就换一个 TabController，停在原来的标签上。
+  TabController _controller(List<String> ids) {
+    if (!listEquals(ids, _ids) || _tc == null) {
+      final cur = _tc == null ? '' : _ids[_tc!.index.clamp(0, _ids.length - 1)];
+      final old = _tc;
+      _tc = TabController(length: ids.length, vsync: this, initialIndex: math.max(0, ids.indexOf(cur)));
+      _ids = ids;
+      _tc!.addListener(_scrollToTab);
+      if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
+    return _tc!;
+  }
+
+  void _scrollToTab() {
+    final tc = _tc!;
+    if (tc.indexIsChanging) return;
+    final id = _ids[tc.index];
+    if (id == _shown) return;
+    _shown = id;
+    final ctx = _keys[id]?.currentContext;
+    if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 200), alignment: 0.5);
+  }
+
+  /// 标签栏：点一下切换，长按拖动调整顺序
+  PreferredSizeWidget _tabStrip(List<LibCategory> tabs, TabController tc) {
+    final theme = Theme.of(context);
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(44),
+      // 横向的滚动列表要有确定的高度，不然 AppBar 里量不出来、整条顶栏画不出
+      child: SizedBox(
+        height: 44,
+        child: AnimatedBuilder(
+          animation: tc.animation!,
+          builder: (context, _) => ReorderableListView.builder(
+          scrollDirection: Axis.horizontal,
+          buildDefaultDragHandles: false,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          itemCount: tabs.length,
+          proxyDecorator: (child, _, _) => Material(color: Colors.transparent, child: child),
+          onReorderItem: (from, to) {
+            final ids = [for (final c in tabs) c.id];
+            ids.insert(to, ids.removeAt(from));
+            _box.put('shelfTabOrder', ids);
+            setState(() {});
+          },
+          itemBuilder: (context, i) {
+            final c = tabs[i];
+            final selected = tc.index == i;
+            return ReorderableDelayedDragStartListener(
+              key: ValueKey(c.id),
+              index: i,
+              child: InkWell(
+                onTap: () => tc.animateTo(i),
+                child: Container(
+                  key: _keys.putIfAbsent(c.id, GlobalKey.new),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(border: Border(bottom: BorderSide(width: 2.5, color: selected ? theme.colorScheme.primary : Colors.transparent))),
+                  child: Text(c.name, style: TextStyle(fontSize: 15, fontWeight: selected ? FontWeight.w700 : null, color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
+                ),
+              ),
+            );
+          },
+          ),
+        ),
+      ),
+    );
+  }
 
   void _showOptions() {
     showModalBottomSheet(
@@ -180,11 +290,8 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> {
   Widget build(BuildContext context) {
     final lib = ref.watch(libraryProvider);
     final o = ref.watch(shelfOptionsProvider);
-    // "默认"放没分类的书；有别的分类且默认里没书时不显示它
-    final tabs = [
-      if (lib.cats.isEmpty || lib.books.values.any((b) => b.cats.isEmpty)) const LibCategory('', '默认'),
-      ...lib.cats,
-    ];
+    final tabs = _tabs(lib.cats);
+    final tc = _controller([for (final c in tabs) c.id]);
     final appBar = AppBar(
       title: _searching
           ? TextField(
@@ -205,21 +312,26 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> {
         IconButton(tooltip: '筛选、排序、显示', icon: Icon(Icons.filter_list, color: o.filtering ? Theme.of(context).colorScheme.primary : null), onPressed: _showOptions),
         IconButton(tooltip: '管理分类', icon: const Icon(Icons.label_outline), onPressed: () => context.push(Routes.categories)),
       ],
-      bottom: tabs.length > 1 ? TabBar(isScrollable: true, tabAlignment: TabAlignment.start, tabs: [for (final c in tabs) Tab(text: c.name)]) : null,
+      bottom: _tabStrip(tabs, tc),
     );
-    if (tabs.length == 1) return Scaffold(appBar: appBar, body: const _Shelf(catId: ''));
-    return DefaultTabController(
-      key: ValueKey(tabs.map((c) => c.id).join(',')),
-      length: tabs.length,
-      child: Scaffold(appBar: appBar, body: TabBarView(children: [for (final c in tabs) _Shelf(catId: c.id)])),
-    );
+    return PopScope(
+      canPop: !_searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        setState(() => _searching = false);
+        ref.read(shelfQueryProvider.notifier).set('');
+      },
+      child: Scaffold(
+      appBar: appBar,
+      body: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
+    ));
   }
 }
 
 class _Shelf extends ConsumerStatefulWidget {
-  const _Shelf({required this.catId});
+  const _Shelf({super.key, required this.catId});
 
-  /// 分类 id，空串是"默认"（没放进任何分类的书）
+  /// 分类 id：空串是"默认"（全部的书），[_ongoingTab] / [_doneTab] 按是否完结分，其余是自己建的分类
   final String catId;
 
   @override
@@ -228,9 +340,22 @@ class _Shelf extends ConsumerStatefulWidget {
 
 class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMixin {
   final _selected = <String>{};
+  static final _selecting = <String>{}; // 哪几个标签页正在多选
 
   @override
   bool get wantKeepAlive => true;
+
+  void _syncSelecting() {
+    _selected.isEmpty ? _selecting.remove(widget.catId) : _selecting.add(widget.catId);
+    shelfSelecting.value = _selecting.isNotEmpty;
+  }
+
+  @override
+  void dispose() {
+    _selecting.remove(widget.catId);
+    Future.microtask(() => shelfSelecting.value = _selecting.isNotEmpty);
+    super.dispose();
+  }
 
   /// 下拉：和网站书架同步，再检查更新。
   Future<void> _refresh() async {
@@ -293,14 +418,21 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     ref.watch(updateProvider); // 检查完更新后刷新未读数
     ref.watch(volumeChangesProvider); // 取到卷封面后换上
     final theme = Theme.of(context);
-    final inCat = lib.books.values.where((b) => widget.catId.isEmpty ? b.cats.isEmpty : b.cats.contains(widget.catId));
+    // 同名的自建分类并进自动标签：书在那个分类里，或者本身符合
+    bool inNamed(LibBook b, String name) => lib.cats.any((c) => c.name == name && b.cats.contains(c.id));
+    final inCat = lib.books.values.where((b) => switch (widget.catId) {
+      '' => true,
+      _ongoingTab => !b.done && !inNamed(b, '完结') || inNamed(b, '连载'),
+      _doneTab => b.done || inNamed(b, '完结'),
+      final id => b.cats.contains(id),
+    });
     final books = _arrange(inCat, o, query, widget.catId);
 
     final Widget body;
     if (lib.books.isEmpty) {
       body = const StatePanel(title: '书架还是空的', detail: '在书籍详情页点"加入书架"。登录后下拉可以把网站上的书架同步过来。');
     } else if (books.isEmpty) {
-      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : '没有符合条件的书', detail: inCat.isEmpty ? '在书架长按书本，选"分类"放进来。' : null);
+      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : '没有符合条件的书', detail: inCat.isEmpty && !widget.catId.startsWith('auto:') ? '在书架长按书本，选"分类"放进来。' : null);
     } else if (o.sort == ShelfSort.custom && query.isEmpty && !o.filtering) {
       body = _reorderable(books);
     } else if (o.display == 2) {
@@ -334,30 +466,47 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
       );
     }
 
-    return Column(
-      children: [
-        if (_selected.isNotEmpty)
-          Material(
-            color: theme.colorScheme.surfaceContainer,
-            child: Row(
-              children: [
-                IconButton(icon: const Icon(Icons.close), onPressed: () => setState(_selected.clear)),
-                Expanded(child: Text('已选 ${_selected.length} 本')),
-                TextButton(onPressed: () => setState(() => _selected.addAll(books.map((b) => b.aid))), child: const Text('全选')),
-                if (_selected.length == 1) TextButton(onPressed: _pickCover, child: const Text('封面')),
-                TextButton(onPressed: _setCats, child: const Text('分类')),
-                TextButton(onPressed: _remove, child: const Text('移出')),
-              ],
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncSelecting();
+    });
+    return PopScope(
+      canPop: _selected.isEmpty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) setState(_selected.clear); // 返回键先退出多选
+      },
+      child: Column(
+        children: [
+          Expanded(child: RefreshIndicator(onRefresh: _refresh, child: body)),
+          if (_selected.isNotEmpty)
+            Material(
+              elevation: 3,
+              color: theme.colorScheme.surfaceContainer,
+              child: SafeArea(
+                top: false,
+                child: Row(
+                  children: [
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => setState(_selected.clear)),
+                    Expanded(child: Text('已选 ${_selected.length} 本')),
+                    TextButton(onPressed: () => setState(() => _selected.addAll(books.map((b) => b.aid))), child: const Text('全选')),
+                    if (_selected.length == 1) TextButton(onPressed: _pickCover, child: const Text('封面')),
+                    TextButton(onPressed: _setCats, child: const Text('分类')),
+                    TextButton(onPressed: _remove, child: const Text('移出')),
+                  ],
+                ),
+              ),
             ),
-          ),
-        Expanded(child: RefreshIndicator(onRefresh: _refresh, child: body)),
-      ],
+        ],
+      ),
     );
   }
 
   String _cover(LibBook b) => ref.read(volumeCoverQueueProvider).bookCover(b.aid, b.img);
 
-  void _toggle(String aid) => setState(() => _selected.contains(aid) ? _selected.remove(aid) : _selected.add(aid));
+  void _toggle(String aid) {
+    // 第一本长按时重一点的震动，之后点选轻一点
+    _selected.isEmpty ? HapticFeedback.mediumImpact() : HapticFeedback.selectionClick();
+    setState(() => _selected.contains(aid) ? _selected.remove(aid) : _selected.add(aid));
+  }
 
   void _tap(LibBook b) => _selected.isEmpty ? context.push(Routes.novel(b.aid)) : _toggle(b.aid);
 

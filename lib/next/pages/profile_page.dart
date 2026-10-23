@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../env.dart';
+import '../incognito.dart';
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -150,6 +151,16 @@ class ProfilePage extends ConsumerWidget {
               ),
             ),
           const SizedBox(height: 16),
+          Card(
+            child: SwitchListTile(
+              secondary: const Icon(Icons.visibility_off_outlined),
+              title: const Text('无痕模式'),
+              subtitle: const Text('开着时不记录阅读进度、历史和统计'),
+              value: ref.watch(incognitoProvider),
+              onChanged: (v) => ref.read(incognitoProvider.notifier).set(v),
+            ),
+          ),
+          const SizedBox(height: 8),
           entry(Icons.bar_chart_outlined, '阅读统计', Routes.stats),
           entry(Icons.collections_bookmark_outlined, '书籍墙', Routes.wall),
           entry(Icons.history, '阅读历史', Routes.history),
