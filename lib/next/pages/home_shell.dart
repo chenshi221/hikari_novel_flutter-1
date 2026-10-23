@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../app_prefs.dart';
+import '../cache.dart';
 import '../env.dart';
 import '../image_cache.dart';
 import '../incognito.dart';
@@ -40,6 +42,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_syncAndCheck);
     Sync.auto();
+    if (AppPrefs.read(P.autoClear, false)) ChapterCache.clearAuto().ignore();
     if (!isWebPreview) {
       final store = ref.read(imageStoreProvider);
       // 先删挑封面剩下的图，再压剩下的，省得压了又删
@@ -71,7 +74,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   void _checkUpdates() {
     final s = ref.read(sessionProvider);
     final online = s is SessionLoggedOut || (s is SessionLoggedIn && !s.offline);
-    if (online && ref.read(libraryProvider).books.isNotEmpty) ref.read(updateProvider.notifier).refresh();
+    if (online && ref.read(libraryProvider).books.isNotEmpty) ref.read(updateProvider.notifier).refresh(force: false); // 按设置里的间隔和网络限制
   }
 
   /// 先和网站书架同步（可能导入新书），再检查更新。

@@ -89,6 +89,17 @@ class ChapterCache {
     await _index.deleteAll(keys);
   }
 
+  /// 清掉读过时自动缓存的章节（整本"离线缓存"的书不动），返回清掉的章数。
+  static Future<int> clearAuto() async {
+    final aids = _index.keys.whereType<String>().where((k) => !k.startsWith('meta:') && !k.startsWith('pt|') && k != 'migrated' && k.contains(':')).map((k) => k.split(':').first).toSet().where((a) => !offline(a));
+    var n = 0;
+    for (final aid in aids.toList()) {
+      n += count(aid);
+      await remove(aid);
+    }
+    return n;
+  }
+
   /// 所有已缓存章节（含读过自动缓存的）的估算占用，规则同 [sizeLabel]。
   static String totalLabel() {
     final chars = _index.keys.whereType<String>().where((k) => !k.startsWith('meta:') && !k.startsWith('pt|') && k != 'migrated').fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));

@@ -380,7 +380,11 @@ class PagedBody extends StatefulWidget {
     this.tapZone = 0,
     this.tapInvert = 0,
     this.showFooter = true,
+    this.animate = true,
   });
+
+  /// 滑动翻页时要不要动画
+  final bool animate;
 
   final int tapZone;
   final int tapInvert;
@@ -547,7 +551,11 @@ class _PagedBodyState extends State<PagedBody> {
     final target = _page + delta;
     if (target < 0) return widget.onPrev?.call();
     if (target >= _units) return widget.onNext?.call();
-    _controller?.animateToPage(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    if (widget.animate) {
+      _controller?.animateToPage(target, duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    } else {
+      _controller?.jumpToPage(target);
+    }
   }
 
   @override

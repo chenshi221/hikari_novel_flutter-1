@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../models/cat_chapter.dart';
 import '../../models/cat_volume.dart';
+import '../app_prefs.dart';
+import '../bookmarks.dart';
 import '../cache.dart';
+import '../chapter_list.dart';
 import '../data.dart';
 import '../library.dart';
 import '../stats.dart';
@@ -72,7 +75,7 @@ class _Body extends ConsumerStatefulWidget {
 class _BodyState extends ConsumerState<_Body> {
   bool _introOpen = false;
   final _picked = <String>{}; // 目录里多选的章节
-  bool _reverse = (Hive.box('session').get('catReverse') as bool?) ?? false;
+  late ChapterListOptions _chl = ChapterListOptions.of(widget.aid);
 
   String get aid => widget.aid;
   NovelPage get data => widget.data;
@@ -105,10 +108,25 @@ class _BodyState extends ConsumerState<_Body> {
     final d = data.detail;
     if (inLib) return lib.remove([aid]);
     final cats = ref.read(libraryProvider).cats;
-    final picked = cats.isEmpty ? const <String>[] : await pickCategories(context, cats, const []);
+    // 设置里选了"新书默认分类"就直接放进去，不再问
+    final def = AppPrefs.read(P.defaultCat, 'ask');
+    final List<String>? picked = def == 'ask' || (def.isNotEmpty && !cats.any((c) => c.id == def))
+        ? (cats.isEmpty ? const <String>[] : await pickCategories(context, cats, const []))
+        : (def.isEmpty ? const <String>[] : [def]);
     if (picked == null) return;
     await lib.add(aid, d.title, d.imgUrl, cats: picked);
   }
+
+  /// 目录筛选后的章节（没筛选就是全部）
+  Iterable<CatChapter> _visible(List<CatChapter> chapters) {
+    if (!_chl.filtering) return chapters;
+    final read = ReadState.read(aid);
+    final marked = Bookmarks.all(aid).map((b) => b.cid).toSet();
+    return chapters.where((c) => chapterTri(_chl.unread, () => !read.contains(c.cid)) && chapterTri(_chl.bookmarked, () => marked.contains(c.cid)) && chapterTri(_chl.cached, () => ChapterCache.has(aid, c.cid)));
+  }
+
+  /// 章节在整本书里按网站顺序数是第几章（从 1 开始），"标题前加序号"用
+  late final Map<String, int> _indexOf = {for (final (i, c) in data.catalogue.expand((v) => v.chapters).indexed) c.cid: i + 1};
 
   String? _firstCid() => data.catalogue.expand((v) => v.chapters).firstOrNull?.cid;
 
@@ -277,18 +295,16 @@ class _BodyState extends ConsumerState<_Body> {
           children: [
             Expanded(child: Text('目录', style: theme.textTheme.titleMedium)),
             TextButton.icon(
-              onPressed: () {
-                setState(() => _reverse = !_reverse);
-                Hive.box('session').put('catReverse', _reverse);
-              },
-              icon: const Icon(Icons.swap_vert, size: 18),
-              label: Text(_reverse ? '倒序' : '正序'),
+              onPressed: () => showChapterListSheet(context, aid, (o) => setState(() => _chl = o)),
+              icon: Icon(Icons.filter_list, size: 18, color: _chl.filtering ? theme.colorScheme.primary : null),
+              label: Text('${_chl.filtering ? '已筛选 · ' : ''}${_chl.reverse ? '倒序' : '正序'}'),
             ),
           ],
         ),
         Text('长按章节可多选：批量标记已读、缓存', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         const SizedBox(height: 4),
-        for (final CatVolume v in _reverse ? data.catalogue.reversed : data.catalogue)
+        for (final CatVolume v in _chl.reverse ? data.catalogue.reversed : data.catalogue)
+          if (!_chl.filtering || _visible(v.chapters).isNotEmpty)
           ExpansionTile(
             tilePadding: EdgeInsets.zero,
             initiallyExpanded: data.catalogue.length == 1 || v.chapters.any((c) => c.cid == progress?.cid || _picked.contains(c.cid)),
@@ -327,7 +343,7 @@ class _BodyState extends ConsumerState<_Body> {
               ],
             ),
             children: [
-              for (final c in _reverse ? v.chapters.reversed : v.chapters)
+              for (final c in _chl.reverse ? _visible(v.chapters).toList().reversed : _visible(v.chapters))
                 ChapterSwipe(
                   aid: aid,
                   book: data.detail.title,
@@ -343,7 +359,7 @@ class _BodyState extends ConsumerState<_Body> {
                       ? Icon(_picked.contains(c.cid) ? Icons.check_box : Icons.check_box_outline_blank, size: 20)
                       : (read.contains(c.cid) ? Icon(Icons.check, size: 16, color: theme.colorScheme.onSurfaceVariant) : null),
                   title: Text(
-                    c.title,
+                    _chl.showIndex ? '${_indexOf[c.cid]}. ${c.title}' : c.title,
                     style: c.cid == progress?.cid
                         ? TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)
                         : (read.contains(c.cid) ? TextStyle(color: theme.colorScheme.onSurfaceVariant) : null),

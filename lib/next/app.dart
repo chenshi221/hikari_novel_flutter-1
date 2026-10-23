@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'router.dart';
+import 'security.dart';
 import 'settings.dart';
 import 'theme.dart';
 
@@ -17,6 +18,7 @@ class NextApp extends ConsumerWidget {
       darkTheme: buildAppTheme(Brightness.dark, appPalettes[ref.watch(paletteProvider)]),
       themeMode: ref.watch(themeModeProvider),
       routerConfig: ref.watch(routerProvider),
+      builder: (context, child) => AppGuard(child: child ?? const SizedBox.shrink()),
     );
   }
 }
