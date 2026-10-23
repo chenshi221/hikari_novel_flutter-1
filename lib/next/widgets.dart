@@ -1,3 +1,7 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -114,11 +118,14 @@ final imageBytesProvider = FutureProvider.autoDispose.family<Uint8List, String>(
 });
 
 class NetImage extends ConsumerWidget {
-  const NetImage(this.url, {super.key, this.fit = BoxFit.cover, this.error});
+  const NetImage(this.url, {super.key, this.fit = BoxFit.cover, this.error, this.full = false});
 
   final String url;
   final BoxFit fit;
   final Widget? error;
+
+  /// 按原图大小解码（能放大看的地方用）；默认按格子大小解码，见 [_Fitted]
+  final bool full;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -127,13 +134,29 @@ class NetImage extends ConsumerWidget {
     final crop = splitCrop(url).crop;
     if (isWebPreview) return _cropped(Image.network(displayImageUrl(splitCrop(url).url), fit: fit, errorBuilder: (_, _, _) => fallback), crop);
     final store = ref.read(imageStoreProvider);
-    Widget image(Uint8List b, {bool fade = false}) => _cropped(Image.memory(b, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback), crop);
+    Widget image(Uint8List b, {bool fade = false}) {
+      Widget build(ImageProvider p) => _cropped(Image(image: p, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback), crop);
+      if (full) return build(MemoryImage(b));
+      final dpr = MediaQuery.devicePixelRatioOf(context);
+      return LayoutBuilder(
+        builder: (context, c) {
+          // 裁剪时整张图比格子大：裁出来的那块才铺满格子
+          final box = Size(_bucket(c.maxWidth * dpr / (crop?.width ?? 1)), _bucket(c.maxHeight * dpr / (crop?.height ?? 1)));
+          return build(_Fitted(b, box, fit == BoxFit.cover));
+        },
+      );
+    }
+
     // 内存里有就同步直接画，返回页面时不会先空一帧再出来
     final hit = store.peek(url);
     if (hit != null) return image(hit);
     // 只有这次刚从网上下载的才淡入，从磁盘读的直接显示
     return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: store.downloaded(url)), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
   }
+
+  /// 往上取到几个固定档位（每档大 25%）：格子大小一直在变时（比如封面飞过去的动画）不用每帧都重新解码
+  static double _bucket(double px) =>
+      const <double>[128, 160, 200, 256, 320, 400, 512, 640, 800, 1024, 1280, 1600, 2048, 2560, 3200].firstWhere((b) => b >= px, orElse: () => double.infinity);
 
   /// 只显示图片里裁剪框那一块，再按 [fit] 填进格子
   Widget _cropped(Widget img, Rect? c) {
@@ -145,6 +168,36 @@ class NetImage extends ConsumerWidget {
       child: ClipRect(child: Align(alignment: Alignment(align(c.left, c.width), align(c.top, c.height)), widthFactor: c.width, heightFactor: c.height, child: img)),
     );
   }
+}
+
+/// 按格子大小解码。高清封面原图 1440×2048，原样解码一张占 12 MB，Flutter 的图片缓存（100 MB）装不下一屏书架，滑回来又得重新解码。
+class _Fitted extends ImageProvider<_Fitted> {
+  const _Fitted(this.bytes, this.box, this.cover);
+
+  final Uint8List bytes;
+  final Size box; // 物理像素；无限表示这个方向不限
+  final bool cover; // 铺满格子（取两边缩放比里大的那个），否则整张放进格子
+
+  @override
+  Future<_Fitted> obtainKey(ImageConfiguration configuration) => SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(_Fitted key, ImageDecoderCallback decode) => MultiFrameImageStreamCompleter(codec: _codec(decode), scale: 1);
+
+  Future<ui.Codec> _codec(ImageDecoderCallback decode) async => decode(
+    await ui.ImmutableBuffer.fromUint8List(bytes),
+    getTargetSize: (w, h) {
+      final sx = box.width / w, sy = box.height / h;
+      final s = sx.isInfinite ? sy : (sy.isInfinite ? sx : (cover ? math.max(sx, sy) : math.min(sx, sy)));
+      return s >= 1 ? const ui.TargetImageSize() : ui.TargetImageSize(width: (w * s).ceil());
+    },
+  );
+
+  @override
+  bool operator ==(Object other) => other is _Fitted && identical(other.bytes, bytes) && other.box == box && other.cover == cover;
+
+  @override
+  int get hashCode => Object.hash(identityHashCode(bytes), box, cover);
 }
 
 Widget _fadeIn(BuildContext context, Widget child, int? frame, bool sync) =>

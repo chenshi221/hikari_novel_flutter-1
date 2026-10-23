@@ -138,7 +138,7 @@ class _BodyState extends ConsumerState<_Body> {
               child: GestureDetector(
                 onTap: () => showDialog(
                   context: context,
-                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(cover, fit: BoxFit.contain))),
+                  builder: (context) => GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => Navigator.pop(context), child: InteractiveViewer(child: NetImage(cover, fit: BoxFit.contain, full: true))),
                 ),
                 child: CoverImage(cover),
               ),

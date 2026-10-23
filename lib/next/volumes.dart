@@ -241,10 +241,33 @@ class VolumeCoverQueue {
           return;
         }
         await Volumes.setCover(aid, title, url);
+        await _dropSkipped(aid, v, content.images);
       }
     } finally {
       _running = false;
     }
+  }
+
+  /// 挑封面时下载了又没选上的图（插图章节开头的横版跨页，一张几百 KB）删掉，只留封面；以后打开插图章节再下。
+  /// 下载过离线缓存的书不删，离线时还要看。
+  Future<void> _dropSkipped(String aid, Vol v, List<String> images) async {
+    if (ChapterCache.offline(aid)) return;
+    final cover = splitCrop(Volumes.cover(aid, v.title) ?? '').url;
+    await _ref.read(imageStoreProvider).remove(images.take(_checked).where((u) => u != cover));
+  }
+
+  /// 以前挑封面时留下的这种图删一遍（只做一次）
+  Future<void> dropSkippedOnce(Iterable<String> aids) async {
+    final box = Hive.box('session');
+    if (box.get('coverSkipDropped') == true) return;
+    for (final aid in aids) {
+      for (final v in Volumes.of(aid)) {
+        if (v.illus == null || Volumes.cover(aid, v.title) == null) continue;
+        final content = await ChapterCache.get(aid, v.illus!);
+        if (content != null) await _dropSkipped(aid, v, content.images);
+      }
+    }
+    await box.put('coverSkipDropped', true);
   }
 
   /// 图片本来就要显示，下载后存在本机。

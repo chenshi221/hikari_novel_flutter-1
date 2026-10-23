@@ -26,12 +26,60 @@ class VolumesPage extends ConsumerStatefulWidget {
   ConsumerState<VolumesPage> createState() => _VolumesPageState();
 }
 
-/// 书架封面和轮播最前面那卷之间飞的时候：书架那张垫底，轮播那张跟着动画淡入（返回时淡出），
+/// 书架上一叠书露出后面几卷的边：卷数越多露得越多（0~3 条）
+int stackEdges(int count) => count <= 1 ? 0 : (count <= 4 ? 1 : (count <= 9 ? 2 : 3));
+
+/// 叠在第一卷后面的第 k 卷（k ≥ 1，0 是第一卷自己）：以封面中心缩小一点、往右错开露出一条边、越往后越暗。
+/// 书架上的一叠和轮播打开时往右抽出的起点都用它，飞到位时两边对得上。
+({double dx, double scale, double dim}) stackPose(int k, double width) {
+  final s = 1 - 0.04 * k;
+  return (dx: width * ((1 - s) / 2 + 0.026 * k), scale: s, dim: k <= 1 ? 0.0 : 0.12 * (k - 1));
+}
+
+/// 书架卷册模式的一叠书：第一卷的封面压着后面几卷（右边露出一条条真封面的边）。按自己的宽度排，飞的时候整叠一起放大。
+class VolumeStack extends StatelessWidget {
+  const VolumeStack({super.key, required this.cover, this.behind = const []});
+
+  final String cover;
+
+  /// 后面几卷的封面，近的在前
+  final List<String> behind;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, c) {
+      Widget sheet(String url, double dim) => DecoratedBox(
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(6), boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 3, offset: const Offset(1, 0))]),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Stack(fit: StackFit.expand, children: [CoverImage(url), if (dim > 0) ColoredBox(color: Colors.black.withValues(alpha: dim))]),
+        ),
+      );
+      return Stack(
+        fit: StackFit.expand,
+        clipBehavior: Clip.none, // 后面几卷的边在封面右边、自己的范围外面
+        children: [
+          for (var k = behind.length; k >= 1; k--)
+            Builder(
+              builder: (context) {
+                final p = stackPose(k, c.maxWidth);
+                return Transform.translate(offset: Offset(p.dx, 0), child: Transform.scale(scale: p.scale, child: sheet(behind[k - 1], p.dim)));
+              },
+            ),
+          sheet(cover, 0),
+        ],
+      );
+    },
+  );
+}
+
+/// 书架封面和轮播最前面那卷之间飞的时候：书架那叠垫底（整叠一起放大），轮播那张跟着动画淡入（返回时淡出），
 /// 停在的卷不是第一卷时封面在飞行中自然换过去。
 Widget volumeHeroShuttle(BuildContext context, Animation<double> animation, HeroFlightDirection direction, BuildContext from, BuildContext to) {
   final (shelf, carousel) = direction == HeroFlightDirection.push ? (from, to) : (to, from);
   return Stack(
     fit: StackFit.expand,
+    clipBehavior: Clip.none, // 书架那叠后面几卷的边在范围外面
     children: [
       (shelf.widget as Hero).child,
       FadeTransition(opacity: animation, child: (carousel.widget as Hero).child),
@@ -61,42 +109,78 @@ int readingVolume(String aid) {
   return -1;
 }
 
-class _VolumesPageState extends ConsumerState<VolumesPage> {
-  late int _cur = math.max(readingVolume(widget.aid), 0); // 一打开停在正在读的那卷
-  late final _pc = PageController(initialPage: _cur, viewportFraction: 0.5);
+class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProviderStateMixin {
+  // 先停在第一卷（和书架上那叠对得上），开场动画放完再滑到正在读的那卷
+  int _cur = 0;
+  final _pc = PageController(viewportFraction: 0.5);
+  // 开场：封面飞到位以后，后面几卷从封面后面往右抽出来
+  late final _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
+  Animation<double>? _route;
   bool _open = false;
   final _coverKey = GlobalKey(); // 最前面那卷的封面，翻开动画从它的位置开始
-  bool _opening = false;
+  OverlayEntry? _opening; // 正在放的翻开动画
 
   /// 点最前面那卷：封面绕书脊翻开、放大铺满屏幕，进阅读页。动画放在最上层的 Overlay 里，阅读页推上来以后再淡出。
   void _openBook(Vol v, String url) {
     final cid = startCid(widget.aid, v);
     final box = _coverKey.currentContext?.findRenderObject() as RenderBox?;
-    if (_opening) return;
+    if (_opening != null) return;
     if (box == null || !box.hasSize) {
       context.push(Routes.reader(widget.aid, cid));
       return;
     }
-    _opening = true;
-    late final OverlayEntry entry;
-    entry = OverlayEntry(
+    _opening = OverlayEntry(
       builder: (_) => _OpeningBook(
         from: box.localToGlobal(Offset.zero) & box.size,
         url: url,
         onOpened: () {
           if (mounted) context.push(Routes.reader(widget.aid, cid));
         },
-        onDone: () {
-          entry.remove();
-          _opening = false;
-        },
+        onDone: _closeBook,
       ),
     );
-    Overlay.of(context, rootOverlay: true).insert(entry);
+    Overlay.of(context, rootOverlay: true).insert(_opening!);
+  }
+
+  /// 收掉翻开动画。动画中途返回时也走这里：动画跟着停，不会再推阅读页。
+  void _closeBook() {
+    _opening?.remove();
+    _opening = null;
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_route != null) return;
+    _route = ModalRoute.of(context)?.animation ?? kAlwaysCompleteAnimation;
+    // 第一次 build 时路由动画还没开始（状态是"完成"），等第一帧画完再看是不是正在推进来
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_route!.isCompleted) {
+        _startIntro();
+      } else {
+        _route!.addStatusListener(_onRoute);
+      }
+    });
+  }
+
+  void _onRoute(AnimationStatus s) {
+    if (s != AnimationStatus.completed) return;
+    _route!.removeStatusListener(_onRoute);
+    _startIntro();
+  }
+
+  /// 抽出来以后快速滑到正在读的那卷：卷数差得多也在 0.9 秒内滑到
+  void _startIntro() => _intro.forward().whenComplete(() {
+    final target = readingVolume(widget.aid);
+    if (!mounted || target <= 0 || !_pc.hasClients) return;
+    _pc.animateToPage(target, duration: Duration(milliseconds: math.min(250 + 80 * target, 900)), curve: Curves.easeInOutCubic);
+  });
+
+  @override
   void dispose() {
+    _route?.removeStatusListener(_onRoute);
+    _intro.dispose();
     _pc.dispose();
     super.dispose();
   }
@@ -138,6 +222,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
         controller: _pc,
         page: () => _page,
         cur: cur,
+        intro: _intro,
         coverOf: coverOf,
         onPage: (i) => setState(() => _cur = i),
         coverKey: _coverKey,
@@ -223,7 +308,11 @@ class _VolumesPageState extends ConsumerState<VolumesPage> {
     return PopScope(
       canPop: !_open,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) setState(() => _open = false); // 返回键先收起详情
+        if (didPop) {
+          _closeBook();
+        } else {
+          setState(() => _open = false); // 返回键先收起详情
+        }
       },
       child: TweenAnimationBuilder<Color?>(
         tween: ColorTween(end: base),
@@ -261,6 +350,7 @@ class _Carousel extends StatelessWidget {
     required this.controller,
     required this.page,
     required this.cur,
+    required this.intro,
     required this.coverOf,
     required this.onPage,
     required this.onTap,
@@ -273,6 +363,7 @@ class _Carousel extends StatelessWidget {
   final PageController controller;
   final double Function() page;
   final int cur;
+  final Animation<double> intro;
   final String Function(Vol) coverOf;
   final ValueChanged<int> onPage;
   final void Function(int, Vol) onTap;
@@ -293,13 +384,16 @@ class _Carousel extends StatelessWidget {
           alignment: Alignment.center,
           children: [
             AnimatedBuilder(
-              animation: Listenable.merge([controller, route]),
+              animation: Listenable.merge([controller, route, intro]),
               builder: (context, _) {
                 final p = page();
-                // 打开时其他卷从封面后面往两边摊开；返回时原地很快淡出（往中间收会在封面飞走后露出来）
+                // 打开：书架那叠飞过来的时候其他卷先不画，飞到位后从书架上露边的位置往右抽出来（[stackPose]）；
+                // 返回时原地很快淡出（往中间收会在封面飞走后露出来）
                 final closing = route.status == AnimationStatus.reverse;
-                final t = closing ? 1.0 : Curves.easeOutCubic.transform(const Interval(0.25, 1).transform(route.value));
-                final fade = closing ? const Interval(0.6, 1).transform(route.value) : t;
+                final flying = route.status == AnimationStatus.forward;
+                final q = closing ? 1.0 : Curves.easeOutCubic.transform(intro.value);
+                final fade = closing ? const Interval(0.6, 1).transform(route.value) : 1.0;
+                final edges = stackEdges(vols.length);
                 final shown = [for (var i = math.max(0, p.floor() - 3); i <= math.min(vols.length - 1, p.ceil() + 3); i++) i]
                   ..sort((a, b) => (b - p).abs().compareTo((a - p).abs())); // 远的先画，近的压在上面
                 return Stack(
@@ -313,26 +407,32 @@ class _Carousel extends StatelessWidget {
                           // 第一张错开大半个身位，再往后的只露一条边
                           final dx = d.sign * (w * 0.55 * math.min(a, 1) + w * 0.16 * math.max(a - 1, 0));
                           final v = vols[i];
+                          final untouched = !v.cids.any(read.contains);
+                          // 最前面那卷是飞过来的封面，不用抽；后面的从露边的位置出发，露不出边的藏在封面后面淡入
+                          final k = i - cur;
+                          final from = i == cur ? null : stackPose(math.min(math.max(k, 0), edges), w);
+                          double lerp(double a, double b) => from == null ? b : a + (b - a) * q;
+                          final shade = math.min(a, 1.5) * 0.3;
                           final card = _VolumeCard(
                             url: coverOf(v),
                             width: w,
                             done: done.containsKey(v.title),
                             reading: i == reading,
-                            untouched: !v.cids.any(read.contains),
-                            shade: math.min(a, 1.5) * 0.3,
+                            untouched: from == null && untouched,
+                            shade: lerp(from?.dim ?? 0, shade + (from != null && untouched ? 0.2 : 0)),
                           );
-                          final f = i == cur ? 1.0 : t; // 最前面那卷是飞过来的封面，不用摊
+                          final show = from == null ? 1.0 : (flying ? 0.0 : (k >= 1 && k <= edges ? 1.0 : q));
                           return Opacity(
-                            opacity: (3.2 - a).clamp(0.0, 1.0) * (i == cur ? 1.0 : fade),
+                            opacity: (3.2 - a).clamp(0.0, 1.0) * show * (i == cur ? 1.0 : fade),
                             child: Transform.translate(
-                              offset: Offset(dx * f, 0),
+                              offset: Offset(lerp(from?.dx ?? 0, dx), 0),
                               child: Transform.scale(
-                                scale: 1 - 0.14 * math.min(a, 2.5) * f,
+                                scale: lerp(from?.scale ?? 1, 1 - 0.14 * math.min(a, 2.5)),
                                 child: i == cur
-                                    ? Hero(
-                                        tag: 'vols:$aid',
-                                        flightShuttleBuilder: volumeHeroShuttle,
-                                        child: KeyedSubtree(key: coverKey, child: card),
+                                    // key 包在 Hero 外面：放里面会被飞行动画复制一份，同一个 GlobalKey 出现两次就红屏
+                                    ? KeyedSubtree(
+                                        key: coverKey,
+                                        child: Hero(tag: 'vols:$aid', flightShuttleBuilder: volumeHeroShuttle, child: card),
                                       )
                                     : card,
                               ),
@@ -710,9 +810,10 @@ class _OpeningBookState extends State<_OpeningBook> with SingleTickerProviderSta
                     rect: r,
                     child: Transform(
                       alignment: Alignment.centerLeft,
+                      // 右边朝人抬起来往左翻（真书翻开封面的方向）；透视不能太强，不然靠近的那条边转到快 90° 时会大得变形
                       transform: Matrix4.identity()
-                        ..setEntry(3, 2, 0.0012)
-                        ..rotateY(-turn * math.pi / 2),
+                        ..setEntry(3, 2, 0.0009)
+                        ..rotateY(turn * math.pi / 2),
                       child: ClipRRect(
                         borderRadius: radius,
                         child: Stack(

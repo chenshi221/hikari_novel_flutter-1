@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
@@ -29,6 +30,29 @@ class PaletteController extends Notifier<int> {
 }
 
 final paletteProvider = NotifierProvider<PaletteController, int>(PaletteController.new);
+
+/// 屏幕方向：0 锁竖屏（默认）1 自动旋转 2 锁横屏，记在本地。
+class OrientationController extends Notifier<int> {
+  static int get saved => (_box.get('orientation') as int?) ?? 0;
+
+  @override
+  int build() => saved;
+
+  void set(int v) {
+    _box.put('orientation', v);
+    state = v;
+    applyOrientation(v);
+  }
+}
+
+final orientationProvider = NotifierProvider<OrientationController, int>(OrientationController.new);
+
+/// 启动时和改设置时调用。只对手机、平板有效（iPad 分屏时系统不让 App 锁方向）。
+void applyOrientation(int v) => SystemChrome.setPreferredOrientations(switch (v) {
+  1 => const [],
+  2 => const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight],
+  _ => const [DeviceOrientation.portraitUp],
+});
 
 /// 阅读器的外观和翻页方式。
 class ReaderPrefs {
