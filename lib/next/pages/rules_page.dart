@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../color_picker.dart';
 import '../reader/reader_page.dart';
 import '../rules.dart';
 
@@ -98,21 +99,7 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
                   TextField(controller: name, decoration: const InputDecoration(labelText: '名字（备注按它归档）', helperText: '例如人物名，可留空')),
                   const SizedBox(height: 12),
                 ],
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final c in ruleColors)
-                      GestureDetector(
-                        onTap: () => setLocal(() => color = c),
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface)),
-                        ),
-                      ),
-                  ],
-                ),
+                ColorPickerField(color: color, highlight: kind == RuleKind.highlight, sample: name.text.isNotEmpty ? name.text : '示例', onChanged: (c) => setLocal(() => color = c)),
               ],
             ],
           ),

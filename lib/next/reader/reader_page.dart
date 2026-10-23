@@ -13,6 +13,7 @@ import '../../models/cat_chapter.dart';
 import '../../models/cat_volume.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
+import '../color_picker.dart';
 import '../data.dart';
 import '../env.dart';
 import '../fonts.dart';
@@ -454,25 +455,19 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final pattern = _patternOf(text);
     final rules = ReplaceRules.all();
     final old = rules.where((r) => r.kind == RuleKind.color && r.pattern == pattern && r.aid == widget.aid).firstOrNull;
+    var color = old?.color ?? ruleColors[5];
     final picked = await showDialog<int>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('变色：${text.length > 12 ? '${text.substring(0, 12)}…' : text}'),
-        content: Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final c in ruleColors)
-              GestureDetector(
-                onTap: () => Navigator.pop(context, c),
-                child: Container(width: 32, height: 32, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: old?.color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface))),
-              ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text('变色：${text.length > 12 ? '${text.substring(0, 12)}…' : text}'),
+          content: SingleChildScrollView(child: ColorPickerField(color: color, sample: text.length > 8 ? text.substring(0, 8) : text, onChanged: (c) => setLocal(() => color = c))),
+          actions: [
+            if (old != null) TextButton(onPressed: () => Navigator.pop(context, -1), child: const Text('取消变色')),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+            FilledButton(onPressed: () => Navigator.pop(context, color), child: const Text('确定')),
           ],
         ),
-        actions: [
-          if (old != null) TextButton(onPressed: () => Navigator.pop(context, -1), child: const Text('取消变色')),
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-        ],
       ),
     );
     if (picked == null) return;
@@ -501,17 +496,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               children: [
                 TextField(controller: controller, minLines: 3, maxLines: 8, decoration: const InputDecoration(hintText: '写点备注：身份、关系、伏笔……')),
                 const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final c in ruleColors)
-                      GestureDetector(
-                        onTap: () => setLocal(() => color = c),
-                        child: Container(width: 28, height: 28, decoration: BoxDecoration(color: Color(c), shape: BoxShape.circle, border: Border.all(width: color == c ? 3 : 0, color: Theme.of(context).colorScheme.onSurface))),
-                      ),
-                  ],
-                ),
+                ColorPickerField(color: color, highlight: true, sample: rule.label.length > 8 ? rule.label.substring(0, 8) : rule.label, onChanged: (c) => setLocal(() => color = c)),
               ],
             ),
           ),
