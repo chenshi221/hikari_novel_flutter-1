@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../library.dart';
 import '../router.dart';
 import '../updates.dart';
 import '../widgets.dart';
@@ -55,7 +56,7 @@ class _UpdatesPageState extends ConsumerState<UpdatesPage> {
       rows.add(
         ListTile(
           leading: SizedBox(width: 40, height: 54, child: CoverImage(e.img)),
-          title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: Text(LibraryStore.shown(e.aid, e.title), maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text('${e.chapter} · ${hhmm(e.time)}', maxLines: 1, overflow: TextOverflow.ellipsis),
           trailing: e.time.millisecondsSinceEpoch > _seen ? Icon(Icons.circle, size: 10, color: theme.colorScheme.primary) : null,
           onTap: () => context.push(Routes.reader(e.aid, e.cid)),

@@ -33,4 +33,13 @@ void main() {
     final local = {'synced': const LibBook(aid: 'synced', title: 'a', img: '', bid: 'x')};
     expect(reconcile(local, {}, {}, now: 1).keys, ['synced']);
   });
+
+  test('自己改的显示名称：和网站同步、存取都保留', () {
+    const b = LibBook(aid: '1', title: '原名', img: '', bid: 'b1', name: '简称');
+    final out = reconcile({'1': b}, {'1': r('b1')}, {}, now: 1);
+    expect(out['1']!.shown, '简称');
+    expect(LibBook.fromMap(out['1']!.toMap()).shown, '简称');
+    expect(out['1']!.copyWith(title: '新名').shown, '简称');
+    expect(const LibBook(aid: '2', title: '原名', img: '').shown, '原名');
+  });
 }

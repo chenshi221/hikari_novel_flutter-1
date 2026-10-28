@@ -273,9 +273,12 @@ SliverGridDelegate novelGridDelegate(double width) =>
 
 /// 分页的书籍网格：下拉刷新，滑到底自动加载下一页。[fetch] 变化（用 [Key] 区分）时整体重新加载。
 class PagedNovelGrid extends ConsumerStatefulWidget {
-  const PagedNovelGrid({super.key, required this.fetch, this.sourceHtml});
+  const PagedNovelGrid({super.key, required this.fetch, this.sourceHtml, this.hide});
 
   final Future<PageResult> Function(int page) fetch;
+
+  /// 不显示的书（比如已在书架上的）
+  final bool Function(String aid)? hide;
 
   /// 出错时取解析失败的页面源码（搜索页用）
   final String? Function()? sourceHtml;
@@ -330,6 +333,9 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
         child: _error != null ? StatePanel(title: '加载失败', detail: _error.toString(), error: _error, sourceHtml: widget.sourceHtml?.call(), onRetry: () => _load(reset: true)) : const StatePanel(title: '没有内容'),
       );
     }
+    final items = widget.hide == null ? _items : _items.where((e) => !widget.hide!(e.aid)).toList();
+    // 滤掉太多、一屏都不满时滑不动，自己接着加载下一页
+    if (items.length < 12 && !_loading && _error == null && _page < _maxPage) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _load() : null);
     final theme = Theme.of(context);
     final hint = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     // 下一页失败后不再自动加载，只能点重试或下拉刷新，避免狂发请求触发 429
@@ -355,8 +361,8 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 sliver: SliverGrid.builder(
                   gridDelegate: novelGridDelegate(c.maxWidth),
-                  itemCount: _items.length,
-                  itemBuilder: (context, i) => NovelCard(title: _items[i].title, aid: _items[i].aid, imageUrl: _items[i].imageUrl),
+                  itemCount: items.length,
+                  itemBuilder: (context, i) => NovelCard(title: items[i].title, aid: items[i].aid, imageUrl: items[i].imageUrl),
                 ),
               ),
               SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(vertical: 16), child: footer())),

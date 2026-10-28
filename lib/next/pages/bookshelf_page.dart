@@ -127,6 +127,9 @@ const _edges = 15.0;
 /// 书架正在多选：外面的底部导航据此收起，让位给多选的操作条
 final shelfSelecting = ValueNotifier<bool>(false);
 
+/// 书架正在搜索：返回键先关搜索，外面不提示退出
+final shelfSearching = ValueNotifier<bool>(false);
+
 final shelfOptionsProvider = NotifierProvider<_OptionsController, ShelfOptions>(_OptionsController.new);
 
 class _QueryController extends Notifier<String> {
@@ -152,6 +155,9 @@ Iterable<LibBook> _booksIn(LibraryState lib, String tabId) {
   });
 }
 
+/// 某个标签页里有几本书（分类管理页用）
+int booksInTab(LibraryState lib, String tabId) => _booksIn(lib, tabId).length;
+
 bool _started(String aid) => ReadingProgress.of(aid) != null || ReadState.read(aid).isNotEmpty;
 
 /// 未读章数：上次检查更新时记下的总章数减去读过的章数。
@@ -163,14 +169,14 @@ int _unread(String aid) {
 List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, String catId) {
   final q = query.toLowerCase();
   final out = list
-      .where((b) => q.isEmpty || b.title.toLowerCase().contains(q))
+      .where((b) => q.isEmpty || b.shown.toLowerCase().contains(q) || b.title.toLowerCase().contains(q))
       .where((b) => _tri(o.unread, () => _unread(b.aid) > 0) && _tri(o.started, () => _started(b.aid)) && _tri(o.cached, () => ChapterCache.count(b.aid) > 0) && _tri(o.bookmarked, () => Bookmarks.all(b.aid).isNotEmpty) && _tri(o.completed, () => b.done))
       .toList();
   switch (o.sort) {
     case ShelfSort.added:
       out.sort((a, b) => b.added.compareTo(a.added));
     case ShelfSort.name:
-      out.sort((a, b) => a.title.compareTo(b.title));
+      out.sort((a, b) => a.shown.compareTo(b.shown));
     case ShelfSort.lastRead:
       out.sort((a, b) => ReadingProgress.lastRead(b.aid).compareTo(ReadingProgress.lastRead(a.aid)));
     case ShelfSort.updated:
@@ -208,8 +214,38 @@ const _ongoingTab = 'auto:ongoing';
 const _doneTab = 'auto:done';
 const _autoNames = {'连载', '完结'};
 
+/// 全部标签（含隐藏的）：默认（全部书）、连载、完结，再加自己建的分类；顺序按拖动存的 shelfTabOrder，没存过的排后面。
+List<LibCategory> allShelfTabs(List<LibCategory> cats) {
+  // 自己建过同名的分类（比如"完结"）时合并：不再单独显示，里面的书并入自动标签（见 [_Shelf]）
+  final all = [const LibCategory('', '默认'), const LibCategory(_ongoingTab, '连载'), const LibCategory(_doneTab, '完结'), ...cats.where((c) => !_autoNames.contains(c.name))];
+  final order = ((Hive.box('session').get('shelfTabOrder') as List?) ?? const []).cast<String>();
+  int rank(LibCategory c) {
+    final i = order.indexOf(c.id);
+    return i < 0 ? order.length : i;
+  }
+
+  return [...all]..sort((a, b) => rank(a).compareTo(rank(b))); // sort 稳定，没存过的保持原顺序
+}
+
+/// 书架上显示的标签：去掉隐藏的；全隐藏了就留第一个
+List<LibCategory> shelfTabs(List<LibCategory> cats) {
+  final all = allShelfTabs(cats);
+  final hidden = AppPrefs.readList(P.hiddenTabs);
+  final shown = all.where((c) => !hidden.contains(c.id)).toList();
+  return shown.isEmpty ? all.take(1).toList() : shown;
+}
+
+/// 自建分类里和自动标签同名的不单独显示（并进自动标签）
+bool isMergedCategory(LibCategory c) => _autoNames.contains(c.name);
+
 class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProviderStateMixin {
   bool _searching = false;
+
+  void _setSearching(bool v) {
+    _searching = v;
+    shelfSearching.value = v;
+  }
+
   TabController? _tc;
   List<String> _ids = [];
   String _shown = ''; // 标签栏上次滚到的标签
@@ -236,28 +272,17 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     return (left + 14, box.size.width - 28); // 去掉左右内边距，下划线和字一样宽
   }
 
-  /// 标签：默认（全部书）、连载、完结，再加自己建的分类；顺序按拖动存的 shelfTabOrder，没存过的排后面。
-  List<LibCategory> _tabs(List<LibCategory> cats) {
-    // 自己建过同名的分类（比如"完结"）时合并：不再单独显示，里面的书并入自动标签（见 [_Shelf]）
-    final all = [const LibCategory('', '默认'), const LibCategory(_ongoingTab, '连载'), const LibCategory(_doneTab, '完结'), ...cats.where((c) => !_autoNames.contains(c.name))];
-    final order = ((_box.get('shelfTabOrder') as List?) ?? const []).cast<String>();
-    int rank(LibCategory c) {
-      final i = order.indexOf(c.id);
-      return i < 0 ? order.length : i;
-    }
-
-    return [...all]..sort((a, b) => rank(a).compareTo(rank(b))); // sort 稳定，没存过的保持原顺序
-  }
-
   /// 标签变了（新增 / 删除 / 拖动）就换一个 TabController，停在原来的标签上。
   TabController _controller(List<String> ids) {
     if (!listEquals(ids, _ids) || _tc == null) {
-      final cur = _tc == null ? '' : _ids[_tc!.index.clamp(0, _ids.length - 1)];
+      final first = _tc == null;
+      final cur = first ? AppPrefs.read(P.lastTab, '') : _ids[_tc!.index.clamp(0, _ids.length - 1)];
       final old = _tc;
       _tc = TabController(length: ids.length, vsync: this, initialIndex: math.max(0, ids.indexOf(cur)));
       _ids = ids;
       _tc!.addListener(_scrollToTab);
       if (old != null) WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+      if (first) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _scrollToTab() : null); // 标签栏滚到上次的标签
     }
     return _tc!;
   }
@@ -266,6 +291,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     final tc = _tc!;
     if (tc.indexIsChanging) return;
     final id = _ids[tc.index];
+    if (AppPrefs.read(P.lastTab, '') != id) AppPrefs.write(P.lastTab, id);
     if (id == _shown) return;
     _shown = id;
     final ctx = _keys[id]?.currentContext;
@@ -306,7 +332,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                   onReorderItem: (from, to) {
                     final ids = [for (final c in tabs) c.id];
                     ids.insert(to, ids.removeAt(from));
-                    _box.put('shelfTabOrder', ids);
+                    _box.put('shelfTabOrder', [...ids, for (final c in allShelfTabs(lib.cats)) if (!ids.contains(c.id)) c.id]);
                     setState(() {});
                   },
                   itemBuilder: (context, i) {
@@ -361,6 +387,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
           ref.watch(appPrefsProvider);
           final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), tabId);
           final perCat = AppPrefs.read(P.perCat, false);
+          final colsKey = MediaQuery.orientationOf(context) == Orientation.landscape ? P.colsLandscape : P.colsPortrait;
           void set(ShelfOptions v) => perCat ? ref.read(appPrefsProvider.notifier).set('shelf.tab.$tabId', v.toMap()) : ref.read(shelfOptionsProvider.notifier).set(v);
           final theme = Theme.of(context);
           Widget title(String t) => Padding(padding: const EdgeInsets.fromLTRB(4, 12, 4, 8), child: Text(t, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary)));
@@ -371,7 +398,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
             showCheckmark: false,
             onSelected: (_) => set(apply((v + 1) % 3)), // 不限 → 必须满足 → 必须不满足
           );
-          final tabName = _tabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == tabId, orElse: () => const LibCategory('', '默认')).name;
+          final tabName = allShelfTabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == tabId, orElse: () => const LibCategory('', '默认')).name;
           return SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -380,7 +407,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                 children: [
                   if (perCat) Text('以下设置只对「$tabName」生效', style: theme.textTheme.bodySmall),
                   title('筛选'),
-                  Text('点一下：必须满足；再点一下：必须不满足；再点：不限', style: theme.textTheme.bodySmall),
+                  Text('点按切换：满足 / 不满足 / 不限', style: theme.textTheme.bodySmall),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -418,6 +445,18 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                     selected: {o.display},
                     onSelectionChanged: (v) => set(o.copyWith(display: v.first)),
                   ),
+                  if (o.display != 2) ...[
+                    const SizedBox(height: 8),
+                    // 就是设置里的书架列数（竖屏、横屏分开记），这里只放常用的几种
+                    SegmentedButton<int>(
+                      emptySelectionAllowed: true,
+                      segments: const [ButtonSegment(value: 0, label: Text('自动')), ButtonSegment(value: 3, label: Text('3 列')), ButtonSegment(value: 4, label: Text('4 列'))],
+                      selected: {AppPrefs.read(colsKey, 0)}.intersection(const {0, 3, 4}),
+                      onSelectionChanged: (v) => v.isEmpty ? null : ref.read(appPrefsProvider.notifier).set(colsKey, v.first),
+                    ),
+                  ],
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('未读章数角标'), value: AppPrefs.read(P.unreadBadge, true), onChanged: (v) => ref.read(appPrefsProvider.notifier).set(P.unreadBadge, v)),
+                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('已缓存章数角标'), value: AppPrefs.read(P.cacheBadge, false), onChanged: (v) => ref.read(appPrefsProvider.notifier).set(P.cacheBadge, v)),
                   title('更多'),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
@@ -455,7 +494,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   Widget build(BuildContext context) {
     final lib = ref.watch(libraryProvider);
     ref.watch(appPrefsProvider);
-    final tabs = _tabs(lib.cats);
+    final tabs = shelfTabs(lib.cats);
     final tc = _controller([for (final c in tabs) c.id]);
     final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), _curTab);
     final scene = appPalettes[ref.watch(paletteProvider)].scene;
@@ -474,13 +513,19 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         IconButton(
           icon: Icon(_searching ? Icons.close : Icons.search),
           onPressed: () {
-            setState(() => _searching = !_searching);
+            setState(() => _setSearching(!_searching));
             if (!_searching) ref.read(shelfQueryProvider.notifier).set('');
           },
         ),
-        IconButton(tooltip: '书籍墙', icon: const Icon(Icons.collections_bookmark_outlined), onPressed: () => context.push(Routes.wall)),
         IconButton(tooltip: '筛选、排序、显示', icon: Icon(Icons.filter_list, color: o.filtering ? Theme.of(context).colorScheme.primary : null), onPressed: _showOptions),
-        IconButton(tooltip: '管理分类', icon: const Icon(Icons.label_outline), onPressed: () => context.push(Routes.categories)),
+        PopupMenuButton<String>(
+          tooltip: '更多',
+          onSelected: context.push,
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: Routes.wall, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.collections_bookmark_outlined), title: Text('书籍墙'))),
+            PopupMenuItem(value: Routes.categories, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.label_outline), title: Text('管理分类'))),
+          ],
+        ),
       ],
       bottom: scene ? PreferredSize(preferredSize: const Size.fromHeight(44 + 64), child: Column(children: [const SizedBox(height: 64), _tabStrip(tabs, tc, lib)])) : _tabStrip(tabs, tc, lib),
     );
@@ -488,10 +533,11 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
       canPop: !_searching,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        setState(() => _searching = false);
+        setState(() => _setSearching(false));
         ref.read(shelfQueryProvider.notifier).set('');
       },
       child: Scaffold(
+      resizeToAvoidBottomInset: false, // 外层主界面已经让开了键盘，这里再让一次，书架只剩上面一小截
       appBar: appBar,
       body: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
     ));
@@ -573,6 +619,24 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     if (mounted) setState(_selected.clear);
   }
 
+  /// 改书架上显示的名字（只在本机，网站上不变），留空恢复原名
+  Future<void> _rename() async {
+    final b = ref.read(libraryProvider).books[_selected.first];
+    if (b == null) return;
+    final controller = TextEditingController(text: b.shown);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('显示名称'),
+        content: TextField(controller: controller, autofocus: true, decoration: InputDecoration(hintText: b.title), onSubmitted: (v) => Navigator.pop(context, v)),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('确定'))],
+      ),
+    );
+    if (name == null) return;
+    await ref.read(libraryProvider.notifier).rename(b.aid, name);
+    if (mounted) setState(_selected.clear);
+  }
+
   Future<void> _remove() async {
     final n = _selected.length;
     final ok = await showDialog<bool>(
@@ -598,14 +662,14 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     ref.watch(updateProvider); // 检查完更新后刷新未读数
     ref.watch(volumeChangesProvider); // 取到卷封面后换上
     final theme = Theme.of(context);
-    final inCat = _booksIn(lib, widget.catId);
+    final inCat = query.isEmpty ? _booksIn(lib, widget.catId) : lib.books.values; // 搜索时不分标签，整个书架里找
     final books = _arrange(inCat, o, query, widget.catId);
 
     final Widget body;
     if (lib.books.isEmpty) {
       body = const StatePanel(title: '书架还是空的', detail: '在书籍详情页点"加入书架"。登录后下拉可以把网站上的书架同步过来。');
     } else if (books.isEmpty) {
-      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : '没有符合条件的书', detail: inCat.isEmpty && !widget.catId.startsWith('auto:') ? '在书架长按书本，选"分类"放进来。' : null);
+      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : (query.isEmpty ? '没有符合条件的书' : '书架里没有找到「$query」'), detail: inCat.isEmpty && !widget.catId.startsWith('auto:') ? '在书架长按书本，选"分类"放进来。' : null);
     } else if (o.sort == ShelfSort.custom && query.isEmpty && !o.filtering) {
       body = _reorderable(books);
     } else if (o.display == 2) {
@@ -659,8 +723,9 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                 child: Row(
                   children: [
                     IconButton(icon: const Icon(Icons.close), onPressed: () => setState(_selected.clear)),
-                    Expanded(child: Text('已选 ${_selected.length} 本')),
+                    Expanded(child: Text('${_selected.length} 本', maxLines: 1, softWrap: false, overflow: TextOverflow.fade)),
                     TextButton(onPressed: () => setState(() => _selected.addAll(books.map((b) => b.aid))), child: const Text('全选')),
+                    if (_selected.length == 1) TextButton(onPressed: _rename, child: const Text('改名')),
                     if (_selected.length == 1) TextButton(onPressed: _pickCover, child: const Text('封面')),
                     TextButton(onPressed: _setCats, child: const Text('分类')),
                     TextButton(onPressed: _remove, child: const Text('移出')),
@@ -732,7 +797,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     if (!compact) {
       return GestureDetector(
         onLongPress: () => _toggle(b.aid),
-        child: NovelCard(title: b.title, aid: b.aid, imageUrl: _cover(b), onTap: () => _tap(b), badge: badge, action: resume),
+        child: NovelCard(title: b.shown, aid: b.aid, imageUrl: _cover(b), onTap: () => _tap(b), badge: badge, action: resume),
       );
     }
     // 紧凑：书名压在封面底部的渐变上
@@ -749,7 +814,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
               gradient: const LinearGradient(begin: Alignment.center, end: Alignment.bottomCenter, colors: [Colors.transparent, Colors.black87]),
             ),
           ),
-          Positioned(left: 6, right: resume == null ? 6 : 40, bottom: 6, child: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 12, height: 1.25))),
+          Positioned(left: 6, right: resume == null ? 6 : 40, bottom: 6, child: Text(b.shown, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 12, height: 1.25))),
           if (badge != null) Positioned(top: 6, right: 6, child: badge),
           if (resume != null) Positioned(right: 0, bottom: 0, child: resume),
         ],
@@ -803,7 +868,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
             ),
           ),
           const SizedBox(height: 6),
-          Text(b.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+          Text(b.shown, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
           Text(
             vols.isEmpty ? '还没有分卷信息' : [if (allDone) '已读完' else if (at >= 0) '读到第 ${at + 1} 卷', '共 ${vols.length} 卷'].join(' · '),
             maxLines: 1,
@@ -821,7 +886,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     return ListTile(
       selected: _selected.contains(b.aid),
       leading: SizedBox(width: 40, height: 54, child: CoverImage(_cover(b))),
-      title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: Text(b.shown, maxLines: 2, overflow: TextOverflow.ellipsis),
       subtitle: Text([if (n > 0) '未读 $n 章', if (ChapterCache.count(b.aid) > 0) '已缓存 ${ChapterCache.count(b.aid)} 章', if (b.done) '已完结', if (p == null) '还没读'].join(' · ')),
       trailing: _selected.contains(b.aid) ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : _resume(b),
       onTap: () => _tap(b),
@@ -842,7 +907,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     itemBuilder: (context, i) => ListTile(
       key: ValueKey(books[i].aid),
       leading: SizedBox(width: 40, height: 54, child: CoverImage(_cover(books[i]))),
-      title: Text(books[i].title, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: Text(books[i].shown, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: ReorderableDragStartListener(index: i, child: const Icon(Icons.drag_handle)),
       onTap: () => context.push(Routes.novel(books[i].aid)),
     ),

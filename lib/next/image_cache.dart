@@ -158,10 +158,10 @@ class ImageStore {
     }
   }
 
-  /// 以前缓存的图在后台压一遍（只做一次），一张一张来，压完一张存一张，保留原来的修改时间（清理时按它排先后）。
+  /// 以前缓存的图在后台按现在的标准压一遍（每次调高压缩程度后做一次），一张一张来，压完一张存一张，保留原来的修改时间（清理时按它排先后）。
   Future<void> shrinkOld() async {
     final box = Hive.box('session');
-    if (box.get('imgShrunk') == true) return;
+    if (box.get('imgShrunk2') == true) return;
     final dir = await _cacheDir();
     await for (final f in dir.list()) {
       if (f is! File) continue;
@@ -173,7 +173,7 @@ class ImageStore {
         await f.setLastModified(mtime);
       }
     }
-    await box.put('imgShrunk', true);
+    await box.put('imgShrunk2', true);
   }
 
   Future<void> clearDisk() async {
@@ -198,20 +198,24 @@ class ImageStore {
   }
 }
 
-/// 图片存盘前压一下：长边超过 2400 的缩到 2400，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 85，看起来和原图没区别。
-/// 小图（150 KB 以下，比如书的小封面）、动图、已经是 WebP 的不动；压完没小两成以上（源图本来就压得狠）就留原图。
+/// 图片存盘前压一下：长边超过 [_maxSide] 的缩到 [_maxSide]，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 75（手机屏上看不出来）。
+/// 小图（80 KB 以下，比如书的小封面）、动图、已经按这个标准压过的 WebP 不动；压完没小两成以上（源图本来就压得狠）就留原图。
 /// 不支持的平台（Windows、Linux）原样返回。
+const _maxSide = 1600;
+
 Future<Uint8List> shrinkImage(Uint8List b) async {
-  if (b.length < 150 << 10 || _isGif(b) || _isWebp(b)) return b;
+  if (b.length < 80 << 10 || _isGif(b)) return b;
   try {
     final size = await imageSize(b);
     final long = size.longestSide;
-    final s = long > 2400 ? 2400 / long : 1.0;
+    // 以前按 2400 / 质量 85 压过的 WebP 再压一次；已经不大的不重复压
+    if (_isWebp(b) && long <= _maxSide && b.length < 250 << 10) return b;
+    final s = long > _maxSide ? _maxSide / long : 1.0;
     final out = await FlutterImageCompress.compressWithList(
       b,
       minWidth: (size.width * s).round(),
       minHeight: (size.height * s).round(),
-      quality: 85,
+      quality: 75,
       format: Platform.isAndroid || Platform.isIOS ? CompressFormat.webp : CompressFormat.jpeg,
     );
     return out.length < b.length * 0.8 ? out : b;

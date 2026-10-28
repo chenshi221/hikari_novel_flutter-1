@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,7 +11,7 @@ import '../env.dart';
 import '../image_cache.dart';
 import '../incognito.dart';
 import '../library.dart';
-import '../pages/bookshelf_page.dart' show shelfSelecting;
+import '../pages/bookshelf_page.dart' show shelfSearching, shelfSelecting;
 import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
@@ -32,6 +33,7 @@ class HomeShell extends ConsumerStatefulWidget {
 
 class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserver {
   Timer? _timer;
+  DateTime _lastBack = DateTime(0);
 
   StatefulNavigationShell get shell => widget.shell;
 
@@ -84,7 +86,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     if (!isWebPreview) ref.read(volumeCoverQueueProvider).prefetchAll(ref.read(libraryProvider).books.keys);
   }
 
-  static const _items = [(Icons.explore_outlined, Icons.explore, '发现'), (Icons.auto_stories_outlined, Icons.auto_stories, '书架'), (Icons.update_outlined, Icons.update, '更新'), (Icons.person_outline, Icons.person, '我的')];
+  // 最后一项是主题导航图标的序号（图标按含义编号：0 发现 1 书架 2 更新 3 我的）
+  static const _items = [(Icons.auto_stories_outlined, Icons.auto_stories, '书架', 1), (Icons.explore_outlined, Icons.explore, '发现', 0), (Icons.update_outlined, Icons.update, '更新', 2), (Icons.person_outline, Icons.person, '我的', 3)];
 
   void _go(int index) => shell.goBranch(index, initialLocation: index == shell.currentIndex);
 
@@ -101,8 +104,8 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     final palette = appPalettes[ref.watch(paletteProvider)];
     final incognito = ref.watch(incognitoProvider);
     Widget icon(int i, bool selected) {
-      final (outlined, filled, label) = _items[i];
-      final art = ThemeArt.navIcon(palette, i, selected: selected) ?? Icon(selected ? filled : outlined);
+      final (outlined, filled, label, artIndex) = _items[i];
+      final art = ThemeArt.navIcon(palette, artIndex, selected: selected) ?? Icon(selected ? filled : outlined);
       return label == '更新' && unread > 0 ? Badge(label: Text('$unread'), child: art) : art;
     }
 
@@ -139,11 +142,20 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
       ],
     );
     final wide = MediaQuery.sizeOf(context).width >= 720;
-    // 不在书架页时按返回先回书架，在书架页才退出（Mihon 的做法）
+    // 不在书架页时按返回先回书架；在书架页 2 秒内连按两次才退出
     Widget back(Widget child) => PopScope(
-      canPop: shell.currentIndex == 1,
+      canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _go(1);
+        if (didPop) return;
+        if (shell.currentIndex != 0) return _go(0);
+        if (shelfSelecting.value || shelfSearching.value) return; // 书架自己先退出多选 / 搜索
+        final now = DateTime.now();
+        if (now.difference(_lastBack) < const Duration(seconds: 2)) {
+          SystemNavigator.pop();
+          return;
+        }
+        _lastBack = now;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('再按一次退出'), duration: Duration(seconds: 2)));
       },
       child: child,
     );
@@ -172,7 +184,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
       // 书架多选时收起底部导航，让位给多选的操作条
       bottomNavigationBar: ValueListenableBuilder<bool>(
         valueListenable: shelfSelecting,
-        builder: (context, selecting, _) => selecting && shell.currentIndex == 1
+        builder: (context, selecting, _) => selecting && shell.currentIndex == 0
             ? const SizedBox.shrink()
             : Column(
                 mainAxisSize: MainAxisSize.min,

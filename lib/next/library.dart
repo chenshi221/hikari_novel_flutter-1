@@ -10,7 +10,7 @@ import 'session.dart';
 
 /// 本地书架里的一本书。书架页只读本地，网站书架只是定期对一下。
 class LibBook {
-  const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false});
+  const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false, this.name});
 
   final String aid;
   final String title;
@@ -28,7 +28,12 @@ class LibBook {
   /// 已完结（打开过详情页才知道）
   final bool done;
 
-  Map<String, Object?> toMap() => {'aid': aid, 'title': title, 'img': img, 'added': added, 'cats': cats, 'bid': bid, 'done': done};
+  /// 自己起的显示名称；null 用网站上的书名 [title]（同步、打开详情会更新 [title]，不动它）
+  final String? name;
+
+  String get shown => name ?? title;
+
+  Map<String, Object?> toMap() => {'aid': aid, 'title': title, 'img': img, 'added': added, 'cats': cats, 'bid': bid, 'done': done, 'name': name};
 
   static LibBook fromMap(Map m) => LibBook(
     aid: m['aid'] as String,
@@ -38,10 +43,11 @@ class LibBook {
     cats: ((m['cats'] as List?) ?? const []).cast<String>(),
     bid: m['bid'] as String?,
     done: (m['done'] as bool?) ?? false,
+    name: m['name'] as String?,
   );
 
   LibBook copyWith({String? title, String? img, List<String>? cats, String? bid, bool? done}) =>
-      LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done);
+      LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done, name: name);
 }
 
 class LibCategory {
@@ -86,6 +92,9 @@ class LibraryStore {
   static bool contains(String aid) => _raw.containsKey(aid);
 
   static Map? get(String aid) => _raw[aid] as Map?;
+
+  /// 书架上这本书的显示名称：自己改过名就是改的名字，否则 [fallback]（不在书架上也是 [fallback]）
+  static String shown(String aid, String fallback) => (get(aid)?['name'] as String?) ?? fallback;
 
   static Iterable<String> covers() => _raw.values.map((m) => ((m as Map)['img'] as String?) ?? '').where((e) => e.isNotEmpty);
 }
@@ -138,6 +147,15 @@ class LibraryController extends Notifier<LibraryState> {
     }
     await _save(books);
     unawaited(_push());
+  }
+
+  /// 改显示名称；空的或和原书名一样就恢复原名
+  Future<void> rename(String aid, String? name) async {
+    final b = state.books[aid];
+    if (b == null) return;
+    final n = name?.trim();
+    final m = b.toMap()..['name'] = n == null || n.isEmpty || n == b.title ? null : n;
+    await _save({...state.books, aid: LibBook.fromMap(m)});
   }
 
   Future<void> setCats(Iterable<String> aids, List<String> cats) =>

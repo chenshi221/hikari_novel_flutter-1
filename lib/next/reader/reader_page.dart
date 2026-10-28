@@ -22,6 +22,7 @@ import '../fonts.dart';
 import '../history.dart';
 import '../image_cache.dart' show imageStoreProvider;
 import '../incognito.dart';
+import '../library.dart' show LibraryStore;
 import '../net_state.dart';
 import '../pages/novel_page.dart';
 import '../pages/rules_page.dart' show showRuleDialog;
@@ -755,7 +756,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     }
 
     final title = index >= 0 ? chapters[index].title : '';
-    _bookTitle = novel?.detail.title;
+    _bookTitle = novel == null ? null : LibraryStore.shown(widget.aid, novel.detail.title);
     _chapterTitle = title;
     final f = FontStore.resolve(prefs.font);
     final style = readerStyle(prefs, palette.fg, family: f.family, fallback: f.fallback);
@@ -1187,7 +1188,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   ),
                   const XDivider(),
                   const XGroupTitle('朗读方式'),
-                  XSwitch(title: '跟读高亮', subtitle: '高亮当前朗读的句子，并自动翻到对应页面', value: prefs.ttsHighlight, onChanged: (v) => set(prefs.copyWith(ttsHighlight: v))),
+                  XSwitch(title: '跟读高亮', value: prefs.ttsHighlight, onChanged: (v) => set(prefs.copyWith(ttsHighlight: v))),
                   XSwitch(title: '自动朗读下一章', value: prefs.ttsAutoNext, onChanged: (v) => set(prefs.copyWith(ttsAutoNext: v))),
                   const XDivider(),
                   const XGroupTitle('定时停止'),
@@ -1231,8 +1232,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
           void set(ReaderPrefs p) => ref.read(readerPrefsProvider.notifier).update(p);
           final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
           final scheme = Theme.of(context).colorScheme;
-          const tapZones = {0: '默认', 1: 'L 形', 2: 'Kindle 式', 3: '边缘式', 4: '仅呼出菜单'};
-          const tapHelp = ['翻页模式下点击左右两侧翻页、中间呼出菜单；滚动模式下点击任意位置呼出菜单', '点击上方和左中部向前翻页，下方和右中部向后翻页，中间呼出菜单', '点击顶部一栏呼出菜单，左侧向前翻页，其余区域向后翻页', '点击左右两侧向后翻页，底部中间向前翻页，中间呼出菜单', '点击任意位置只呼出菜单，用音量键或滑动翻页'];
           return SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.only(bottom: 16),
@@ -1276,7 +1275,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
                   XSlider(title: '页面亮度', label: '${((1 - prefs.dim) * 100).round()}%', slider: Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v)))),
                   if (android) ...[
-                    XSwitch(title: '独立屏幕亮度', subtitle: '不跟随系统亮度，最高可调得比系统更亮；退出阅读后恢复', value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
+                    XSwitch(title: '独立屏幕亮度', subtitle: '不跟随系统，可调得更亮', value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
                     if (prefs.customBrightness) XSlider(title: '屏幕亮度', label: '${(prefs.brightness * 100).round()}%', slider: Slider(min: 0.02, max: 1.0, value: prefs.brightness.clamp(0.02, 1.0), onChanged: (v) => set(prefs.copyWith(brightness: v)))),
                   ],
                   XSlider(title: '暖色滤镜', label: prefs.warm == 0 ? '关闭' : '${(prefs.warm * 200).round()}%', slider: Slider(min: 0, max: 0.5, divisions: 10, value: prefs.warm, onChanged: (v) => set(prefs.copyWith(warm: v)))),
@@ -1309,25 +1308,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   const XDivider(),
                   const XGroupTitle('翻页'),
                   XSegments<int>(value: prefs.mode, options: const {0: '滚动', 1: '滑动', 2: '仿真', 3: '覆盖'}, onChanged: (v) => set(prefs.copyWith(mode: v))),
-                  if (prefs.mode == 1) XSwitch(title: '翻页动画', subtitle: '滑动翻页时显示过渡动画', value: prefs.pageAnim, onChanged: (v) => set(prefs.copyWith(pageAnim: v))),
-                  XSwitch(title: '宽屏双页', subtitle: '窗口宽度不小于 900 时，翻页模式下并排显示两页', value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
-                  XChoice<int>(title: '点击区域', subtitle: tapHelp[prefs.tapZone], value: prefs.tapZone, options: tapZones, onChanged: (v) => set(prefs.copyWith(tapZone: v))),
-                  if (prefs.tapZone != 4) XChoice<int>(title: '反转点击区域', value: prefs.tapInvert, options: const {0: '不反转', 1: '左右反转', 2: '上下反转', 3: '全部反转'}, onChanged: (v) => set(prefs.copyWith(tapInvert: v))),
-                  if (android) ...[
-                    XSwitch(title: '音量键翻页', subtitle: prefs.volumeInvert ? '音量 + 下一页，音量 − 上一页；朗读时仍调节音量' : '音量 − 下一页，音量 + 上一页；朗读时仍调节音量', value: prefs.volumeKeys, onChanged: (v) => set(prefs.copyWith(volumeKeys: v))),
-                    if (prefs.volumeKeys) XSwitch(title: '反转音量键', value: prefs.volumeInvert, onChanged: (v) => set(prefs.copyWith(volumeInvert: v))),
-                  ],
-                  const XDivider(),
-                  const XGroupTitle('章节'),
-                  XSwitch(title: '自动跳过已读章节', subtitle: '翻到下一章时，跳过已经读过的章节', value: prefs.skipRead, onChanged: (v) => set(prefs.copyWith(skipRead: v))),
-                  XSwitch(title: '切换章节时显示标题', value: prefs.chapterToast, onChanged: (v) => set(prefs.copyWith(chapterToast: v))),
-                  XChoice<int>(title: '预加载章节', subtitle: '提前下载后面的章节，翻页时不用等', value: prefs.prefetch, options: const {0: '关闭', 1: '后 1 章', 2: '后 2 章', 3: '后 3 章', 5: '后 5 章'}, onChanged: (v) => set(prefs.copyWith(prefetch: v))),
-                  if (prefs.prefetch > 0) XSwitch(title: '仅在 Wi-Fi 下预加载', value: prefs.prefetchWifi, onChanged: (v) => set(prefs.copyWith(prefetchWifi: v))),
-                  const XDivider(),
-                  const XGroupTitle('屏幕'),
-                  XSwitch(title: '屏幕常亮', subtitle: '阅读时不自动锁屏', value: prefs.keepScreenOn, onChanged: (v) => set(prefs.copyWith(keepScreenOn: v))),
-                  XSwitch(title: '沉浸式阅读', subtitle: '隐藏系统状态栏，呼出菜单时显示', value: prefs.fullscreen, onChanged: (v) => set(prefs.copyWith(fullscreen: v))),
-                  XSwitch(title: '页脚信息', subtitle: '在页面底部显示时间、电量和阅读进度', value: prefs.showStatus, onChanged: (v) => set(prefs.copyWith(showStatus: v))),
                 ],
               ),
             ),

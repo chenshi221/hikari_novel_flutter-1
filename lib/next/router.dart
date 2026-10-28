@@ -110,10 +110,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (_, _, shell) => HomeShell(shell: shell),
         branches: [
           StatefulShellBranch(
-            routes: [GoRoute(path: Routes.discover, builder: (_, _) => const DiscoverPage())],
+            routes: [GoRoute(path: Routes.bookshelf, builder: (_, _) => const BookshelfPage())],
           ),
           StatefulShellBranch(
-            routes: [GoRoute(path: Routes.bookshelf, builder: (_, _) => const BookshelfPage())],
+            routes: [GoRoute(path: Routes.discover, builder: (_, _) => const DiscoverPage())],
           ),
           StatefulShellBranch(
             routes: [GoRoute(path: Routes.updates, builder: (_, _) => const UpdatesPage())],

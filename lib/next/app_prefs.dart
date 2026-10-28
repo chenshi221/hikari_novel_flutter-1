@@ -43,6 +43,14 @@ class P {
   static const colsPortrait = 'shelf.colsPortrait'; // int，0 自动
   static const colsLandscape = 'shelf.colsLandscape'; // int，0 自动
   static const defaultCat = 'shelf.defaultCat'; // String，'ask' 每次问，'' 不放进分类，其余是分类 id
+  static const hiddenTabs = 'shelf.hiddenTabs'; // List<String> 书架上不显示的标签 id
+  static const lastTab = 'shelf.lastTab'; // String 上次停在的标签 id
+
+  // 发现
+  static const discoverRank = 'discover.rank'; // String 上次的排行榜
+  static const discoverTag = 'discover.tag'; // String 上次的分类标签
+  static const discoverTagSort = 'discover.tagSort'; // String 上次的分类排序
+  static const hideShelved = 'discover.hideShelved'; // bool 排行、分类里不显示已在书架上的书
 
   // 自动更新
   static const updInterval = 'upd.interval'; // int 小时，0 不自动

@@ -167,7 +167,9 @@ class _BodyState extends ConsumerState<_Body> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(d.title, style: theme.textTheme.headlineSmall),
+                  Text(LibraryStore.shown(aid, d.title), style: theme.textTheme.headlineSmall),
+                  // 书架上改过名：原名用小字写在下面
+                  if (LibraryStore.shown(aid, d.title) != d.title) Text(d.title, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                   const SizedBox(height: 8),
                   InkWell(
                     onTap: () => context.push(Routes.searchAuthor(d.author)),

@@ -31,7 +31,7 @@ import '../x_list.dart';
 /// 设置分成几组（Mihon 那样），主页能搜索：搜到的条目点一下跳到它所在的那一组。
 enum SettingsSection {
   appearance('外观', Icons.palette_outlined, '主题、配色、屏幕方向'),
-  reading('阅读', Icons.book_outlined, '翻页、文字、朗读、章节列表手势'),
+  reading('阅读', Icons.book_outlined, '翻页、点击区域、预加载、屏幕、朗读'),
   shelf('书架', Icons.auto_stories_outlined, '封面角标、列数、分类管理'),
   update('更新', Icons.update_outlined, '检查频率、网络条件、检查范围'),
   data('数据与存储', Icons.inventory_2_outlined, '缓存、备份与恢复、同步'),
@@ -60,6 +60,11 @@ const _items = <(String, SettingsSection, String)>[
   ('屏幕方向', SettingsSection.appearance, '横屏 竖屏 旋转'),
   ('翻页方式', SettingsSection.reading, '滚动 滑动 仿真 覆盖'),
   ('正则规则', SettingsSection.reading, '替换 去广告 高亮 备注'),
+  ('点击区域', SettingsSection.reading, '翻页 点击 反转 双页 动画'),
+  ('音量键翻页', SettingsSection.reading, '音量 按键'),
+  ('预加载章节', SettingsSection.reading, '预加载 提前 下载 wi-fi'),
+  ('自动跳过已读章节', SettingsSection.reading, '跳过 章节 标题'),
+  ('屏幕常亮', SettingsSection.reading, '锁屏 沉浸式 状态栏 页脚'),
   ('字号', SettingsSection.reading, '字体 大小'),
   ('朗读语速', SettingsSection.reading, '听书 tts'),
   ('章节列表手势', SettingsSection.reading, '左滑 右滑 已读 书签 滑动'),
@@ -236,7 +241,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     return [
       const XGroupTitle('主题'),
       XSegments<ThemeMode>(value: mode, options: const {ThemeMode.system: '跟随系统', ThemeMode.light: '浅色', ThemeMode.dark: '深色'}, onChanged: (v) => ref.read(themeModeProvider.notifier).set(v)),
-      _switch('纯黑深色', P.pureBlack, false, subtitle: '深色模式下使用纯黑背景，适合 OLED 屏幕，更省电'),
+      _switch('纯黑深色', P.pureBlack, false, subtitle: '适合 OLED 屏幕'),
       const XDivider(),
       const XGroupTitle('配色'),
       // 一排色点：点一下换，选中的外面一圈
@@ -270,11 +275,11 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
           ],
         ),
       ),
-      if (appPalettes[palette].scene) _switch('插画动效', P.sceneMotion, true, subtitle: '云朵缓慢飘动、旗帜轻轻摆动；关闭可节省电量'),
+      if (appPalettes[palette].scene) _switch('插画动效', P.sceneMotion, true),
       if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) ...[
         const XDivider(),
         const XGroupTitle('屏幕方向'),
-        XSegments<int>(subtitle: '控制 App 界面的显示方向', value: ref.watch(orientationProvider), options: const {0: '竖屏', 1: '自动旋转', 2: '横屏'}, onChanged: (v) => ref.read(orientationProvider.notifier).set(v)),
+        XSegments<int>(value: ref.watch(orientationProvider), options: const {0: '竖屏', 1: '自动旋转', 2: '横屏'}, onChanged: (v) => ref.read(orientationProvider.notifier).set(v)),
       ],
     ];
   }
@@ -285,10 +290,30 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     final prefs = ref.watch(readerPrefsProvider);
     final swipe = ref.watch(swipePrefsProvider);
     void set(ReaderPrefs p) => ref.read(readerPrefsProvider.notifier).update(p);
+    final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    const tapZones = {0: '默认', 1: 'L 形', 2: 'Kindle 式', 3: '边缘式', 4: '仅呼出菜单'};
     return [
       const XGroupTitle('翻页'),
       XChoice<int>(title: '翻页方式', value: prefs.mode, options: const {0: '上下滚动', 1: '左右滑动', 2: '仿真翻页', 3: '覆盖翻页'}, onChanged: (v) => set(prefs.copyWith(mode: v))),
-      const XNote('点击区域、亮度、滤镜、音量键等更多选项，请在阅读界面的菜单「设置」中调整。'),
+      if (prefs.mode == 1) XSwitch(title: '翻页动画', value: prefs.pageAnim, onChanged: (v) => set(prefs.copyWith(pageAnim: v))),
+      XSwitch(title: '宽屏双页', subtitle: '宽屏时并排两页', value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
+      XChoice<int>(title: '点击区域', value: prefs.tapZone, options: tapZones, onChanged: (v) => set(prefs.copyWith(tapZone: v))),
+      if (prefs.tapZone != 4) XChoice<int>(title: '反转点击区域', value: prefs.tapInvert, options: const {0: '不反转', 1: '左右反转', 2: '上下反转', 3: '全部反转'}, onChanged: (v) => set(prefs.copyWith(tapInvert: v))),
+      if (android) ...[
+        XSwitch(title: '音量键翻页', subtitle: prefs.volumeInvert ? '+ 下一页，− 上一页' : '− 下一页，+ 上一页', value: prefs.volumeKeys, onChanged: (v) => set(prefs.copyWith(volumeKeys: v))),
+        if (prefs.volumeKeys) XSwitch(title: '反转音量键', value: prefs.volumeInvert, onChanged: (v) => set(prefs.copyWith(volumeInvert: v))),
+      ],
+      const XDivider(),
+      const XGroupTitle('章节'),
+      XSwitch(title: '自动跳过已读章节', value: prefs.skipRead, onChanged: (v) => set(prefs.copyWith(skipRead: v))),
+      XSwitch(title: '切换章节时显示标题', value: prefs.chapterToast, onChanged: (v) => set(prefs.copyWith(chapterToast: v))),
+      XChoice<int>(title: '预加载章节', value: prefs.prefetch, options: const {0: '关闭', 1: '后 1 章', 2: '后 2 章', 3: '后 3 章', 5: '后 5 章'}, onChanged: (v) => set(prefs.copyWith(prefetch: v))),
+      if (prefs.prefetch > 0) XSwitch(title: '仅在 Wi-Fi 下预加载', value: prefs.prefetchWifi, onChanged: (v) => set(prefs.copyWith(prefetchWifi: v))),
+      const XDivider(),
+      const XGroupTitle('屏幕'),
+      XSwitch(title: '屏幕常亮', value: prefs.keepScreenOn, onChanged: (v) => set(prefs.copyWith(keepScreenOn: v))),
+      XSwitch(title: '沉浸式阅读', value: prefs.fullscreen, onChanged: (v) => set(prefs.copyWith(fullscreen: v))),
+      XSwitch(title: '页脚信息', value: prefs.showStatus, onChanged: (v) => set(prefs.copyWith(showStatus: v))),
       const XDivider(),
       const XGroupTitle('文字'),
       XSlider(
@@ -308,10 +333,9 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XGroupTitle('章节列表手势'),
       XChoice<SwipeAct>(title: '右滑操作', value: swipe.right, options: {for (final a in SwipeAct.values) a: a.label}, onChanged: (a) => ref.read(swipePrefsProvider.notifier).set(right: a)),
       XChoice<SwipeAct>(title: '左滑操作', value: swipe.left, options: {for (final a in SwipeAct.values) a: a.label}, onChanged: (a) => ref.read(swipePrefsProvider.notifier).set(left: a)),
-      const XNote('在章节列表中左右滑动某一章，即可执行对应操作。'),
       const XDivider(),
       const XGroupTitle('卷末'),
-      _switch('卷末庆祝卡片', P.volumeDone, true, subtitle: '读完一卷进入下一卷时，展示本卷用时与字数，并可评分'),
+      _switch('卷末庆祝卡片', P.volumeDone, true),
     ];
   }
 
@@ -322,13 +346,13 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     final def = _prefs.get(P.defaultCat, 'ask');
     return [
       const XGroupTitle('封面'),
-      _switch('继续阅读按钮', P.resumeButton, true, subtitle: '显示在封面右下角，点按回到上次阅读位置'),
+      _switch('继续阅读按钮', P.resumeButton, true),
       _switch('未读章数角标', P.unreadBadge, true),
       _switch('已缓存章数角标', P.cacheBadge, false),
       const XDivider(),
       const XGroupTitle('分类标签'),
       _switch('显示分类书籍数量', P.tabCounts, false),
-      _switch('按分类分别设置', P.perCat, false, subtitle: '筛选、排序和显示方式按分类分别保存；关闭后所有分类共用'),
+      _switch('按分类分别设置', P.perCat, false, subtitle: '筛选、排序、显示按分类分开存'),
       const XDivider(),
       const XGroupTitle('列数'),
       XChoice<int>(title: '竖屏', value: _prefs.get(P.colsPortrait, 0), options: {0: '自动', for (var i = 2; i <= 8; i++) i: '$i 列'}, onChanged: (v) => _prefs.set(P.colsPortrait, v)),
@@ -337,8 +361,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XGroupTitle('分类'),
       XChoice<String>(
         title: '新书默认分类',
-        subtitle: '加入书架时自动归入的分类',
-        // 选过的分类后来被删了，就当"每次询问"
+                // 选过的分类后来被删了，就当"每次询问"
         value: def == 'ask' || def.isEmpty || cats.any((c) => c.id == def) ? def : 'ask',
         options: {'ask': '每次询问', '': '不分类', for (final c in cats) c.id: c.name},
         onChanged: (v) => _prefs.set(P.defaultCat, v),
@@ -355,12 +378,11 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       XChoice<int>(title: '检查间隔', value: _prefs.get(P.updInterval, 1), options: const {0: '不自动检查', 1: '每小时', 6: '每 6 小时', 12: '每 12 小时', 24: '每天', 48: '每 2 天', 168: '每周'}, onChanged: (v) => _prefs.set(P.updInterval, v)),
       _switch('仅在 Wi-Fi 下检查', P.updWifi, false),
       _switch('仅在充电时检查', P.updCharging, false),
-      const XNote('仅在 App 运行时检查，进入后台后不会检查。下拉书架或在「更新」页点刷新属于手动检查，不受以上限制。'),
       const XDivider(),
       const XGroupTitle('检查范围'),
       _switch('跳过已完结的书', P.updSkipDone, false),
       _switch('跳过未开始阅读的书', P.updSkipNotStarted, false),
-      _switch('跳过还有未读章节的书', P.updSkipUnread, false, subtitle: '只检查已读到最新章节的书'),
+      _switch('跳过还有未读章节的书', P.updSkipUnread, false),
       _link('仅检查以下分类', _catNames(P.updInclude), () => _pickCats(P.updInclude, '仅检查以下分类（不选则不限）')),
       _link('排除以下分类', _catNames(P.updExclude), () => _pickCats(P.updExclude, '排除以下分类')),
     ];
@@ -420,7 +442,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
         ),
       XTile(
         title: '清除章节缓存',
-        subtitle: '阅读时自动缓存的正文，共约 ${ChapterCache.totalLabel()}；不影响「离线缓存」中整本下载的书',
+        subtitle: '约 ${ChapterCache.totalLabel()}，不含离线缓存的整本',
         onTap: () => _confirm('清除章节缓存？', '阅读时自动缓存的章节将被删除，再次打开时重新下载；阅读报告中按卷统计的字数可能减少。', '清除', () async {
           final n = await ChapterCache.clearAuto();
           if (mounted) _snack('已清除 $n 章');
@@ -430,9 +452,8 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       _link('离线缓存', '管理整本下载的书', () => context.push(Routes.cache)),
       const XDivider(),
       const XGroupTitle('备份与恢复'),
-      XTile(title: '导出完整备份', subtitle: '生成备份文件，通过系统分享保存或发送', onTap: _exportBackup),
-      XTile(title: '导入备份', subtitle: '阅读数据按同步规则合并，补回书架中缺少的书；设置只补充本机没有的项', onTap: _importBackup),
-      const XNote('完整备份包含阅读进度、历史、书签、已读章节、统计、规则与备注，以及书架、分类、各项设置和自选封面；不含登录信息、WebDAV 密码和已缓存的正文。'),
+      XTile(title: '导出完整备份', onTap: _exportBackup),
+      XTile(title: '导入备份', subtitle: '合并到本机，不覆盖', onTap: _importBackup),
       const XDivider(),
       const XGroupTitle('多设备'),
       _link('同步', '通过 WebDAV（如坚果云）在多台设备间同步阅读进度、书签和统计', () => context.push(Routes.sync)),
@@ -448,7 +469,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       if (lockSupported) ...[
         XSwitch(
           title: '生物识别锁',
-          subtitle: '用指纹、面容或手机锁屏密码解锁 App',
+          subtitle: '指纹、面容或锁屏密码',
           value: _prefs.get(P.lock, false),
           onChanged: (v) async {
             if (v && !await authenticate('确认开启 Hikari Novel 的锁')) {
@@ -464,11 +485,11 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       if (secureScreenSupported) ...[
         const XDivider(),
         const XGroupTitle('防截屏'),
-        XSegments<int>(subtitle: '开启后禁止截屏和录屏，最近任务中也不显示 App 内容', value: _prefs.get(P.secure, 0), options: const {0: '关', 1: '始终', 2: '仅无痕时'}, onChanged: (v) => _prefs.set(P.secure, v)),
+        XSegments<int>(value: _prefs.get(P.secure, 0), options: const {0: '关', 1: '始终', 2: '仅无痕时'}, onChanged: (v) => _prefs.set(P.secure, v)),
       ],
       const XDivider(),
       const XGroupTitle('无痕'),
-      XSwitch(title: '无痕模式', subtitle: '开启期间不记录阅读进度、历史、已读章节和统计', value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
+      XSwitch(title: '无痕模式', subtitle: '不记录进度和历史', value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
     ];
   }
 
@@ -488,7 +509,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       ),
       XSwitch(
         title: '系统网络栈',
-        subtitle: '使用系统网络层发送请求，TLS 指纹与浏览器一致，不易被 Cloudflare 拦截。设置代理时不生效；修改后需重启 App。',
+        subtitle: '不易被 Cloudflare 拦截，重启后生效',
         value: store.nativeNet,
         onChanged: (v) async {
           await store.setNativeNet(v);
