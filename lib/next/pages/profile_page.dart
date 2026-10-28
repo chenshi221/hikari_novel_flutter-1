@@ -17,6 +17,7 @@ import '../settings.dart';
 import '../app_prefs.dart';
 import '../stats.dart';
 import '../theme.dart';
+import '../theme_doodle.dart';
 import '../theme_squire.dart';
 import '../volumes.dart';
 import '../widgets.dart';
@@ -136,7 +137,8 @@ class ProfilePage extends ConsumerWidget {
 
     // X 侧边栏的样子：头像在左上，名字粗体大字，下面灰色 UID 和一行数字；角色主题时立绘站在右边。
     // 插画主题换成 X 个人页的样子：上面一张插画横幅，头像压在横幅下沿
-    final header = palette.scene
+    final art = characterArtOf(palette);
+    final header = palette.scene || art != null
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -145,10 +147,13 @@ class ProfilePage extends ConsumerWidget {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SizedBox(height: 132, width: double.infinity, child: RuinsScene(animate: AppPrefs.read(P.sceneMotion, true))),
-                    ),
+                    if (art != null)
+                      DoodleBanner(art: art)
+                    else
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: SizedBox(height: 132, width: double.infinity, child: RuinsScene(animate: AppPrefs.read(P.sceneMotion, true))),
+                      ),
                     Positioned(
                       left: 12,
                       bottom: -30,
@@ -165,13 +170,7 @@ class ProfilePage extends ConsumerWidget {
           )
         : Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
-            child: Stack(
-              children: [
-                // 立绘只占头像和名字那一段的高度，不压到下面那行数字
-                if (palette.art != null) Positioned(right: 0, top: 0, height: 128, child: Image.asset('assets/theme/${palette.art}_full.png', fit: BoxFit.contain)),
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [tappableAvatar, const SizedBox(height: 10), info]),
-              ],
-            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [tappableAvatar, const SizedBox(height: 10), info]),
           );
 
     return Scaffold(
