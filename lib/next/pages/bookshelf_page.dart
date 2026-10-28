@@ -19,6 +19,7 @@ import '../router.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../theme.dart';
+import '../theme_doodle.dart';
 import '../theme_squire.dart';
 import '../updates.dart';
 import '../volumes.dart';
@@ -700,15 +701,21 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final n = AppPrefs.read(P.unreadBadge, true) ? _unread(b.aid) : 0;
     final c = AppPrefs.read(P.cacheBadge, false) ? ChapterCache.count(b.aid) : 0;
     if (n == 0 && c == 0) return null;
-    // 插画主题用燕尾小旗代替圆角标
+    // 插画主题用燕尾小旗代替圆角标，角色主题用蜡笔描边的小圆
     final scene = appPalettes[ref.read(paletteProvider)].scene;
+    final doodle = CharacterArt.of(context) != null;
     final scheme = Theme.of(context).colorScheme;
+    Widget badge(String t, Color bg, Color fg, {bool plain = false}) => scene
+        ? PennantBadge(t, color: bg, textColor: fg)
+        : doodle
+        ? DoodleBadge(t, color: bg, textColor: fg)
+        : Badge(label: Text(t), backgroundColor: plain ? null : bg);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (c > 0) scene ? PennantBadge('$c', color: scheme.secondary, textColor: RuinsColors.day.ink) : Badge(label: Text('$c'), backgroundColor: scheme.secondary),
+        if (c > 0) badge('$c', scheme.secondary, scene ? RuinsColors.day.ink : Colors.white),
         if (c > 0 && n > 0) const SizedBox(width: 3),
-        if (n > 0) scene ? PennantBadge('$n', color: scheme.primary, textColor: scheme.onPrimary) : Badge(label: Text('$n')),
+        if (n > 0) badge('$n', scheme.primary, scheme.onPrimary, plain: true),
       ],
     );
   }

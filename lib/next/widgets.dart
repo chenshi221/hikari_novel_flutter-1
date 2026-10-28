@@ -16,6 +16,7 @@ import 'image_cache.dart';
 import 'env.dart';
 import 'router.dart';
 import 'session.dart';
+import 'theme_doodle.dart';
 
 /// 宽屏（平板、电脑）上把内容限制在 760 宽并居中。
 Widget contentWidth(Widget child) => Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760), child: child));
@@ -66,10 +67,15 @@ class StatePanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final guest = ref.watch(sessionProvider) is! SessionLoggedIn;
+    final art = CharacterArt.of(context);
     return ListView(
       padding: const EdgeInsets.all(32),
       children: [
-        const SizedBox(height: 80),
+        if (art == null)
+          const SizedBox(height: 80)
+        else
+          // 角色主题：出错时抱头慌张，没内容时托腮发呆
+          Padding(padding: const EdgeInsets.only(top: 24, bottom: 12), child: Image.asset(error != null || onRetry != null ? art.error : art.empty, height: 140)),
         Text(title, textAlign: TextAlign.center, style: theme.textTheme.titleLarge),
         if (detail != null) ...[
           const SizedBox(height: 8),

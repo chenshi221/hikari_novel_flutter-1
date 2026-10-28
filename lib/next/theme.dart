@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'theme_doodle.dart';
+
 /// "Claude 风格"配色：暖米白底、陶土橙强调色、暖深灰暗色模式。
 class AppColors {
   const AppColors._();
@@ -31,7 +33,7 @@ class AppPalette {
 
   final String name;
 
-  /// 角色主题的图片前缀（assets/theme/`art`_full.png、`art`_0..3.png）；普通配色为 null
+  /// 角色主题的图片前缀（assets/theme/`art`_0..3.webp 导航图标，以及横幅、空状态等插画，见 theme_doodle.dart）；普通配色为 null
   final String? art;
 
   /// 角色主题的第二强调色（装饰、渐变用）
@@ -167,5 +169,6 @@ ThemeData buildAppTheme(Brightness brightness, [AppPalette palette = const AppPa
     bottomSheetTheme: palette.scene ? const BottomSheetThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12)))) : null,
     chipTheme: palette.scene ? ChipThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(r))) : null,
     segmentedButtonTheme: palette.scene ? SegmentedButtonThemeData(style: ButtonStyle(shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(r))))) : null,
+    extensions: [?characterArtOf(palette)],
   );
 }

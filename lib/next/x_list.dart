@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'theme_doodle.dart';
+
 /// 「我的」、设置、设置子页面共用的列表零件，照 X（推特）侧边栏的样子：没有卡片和边框，铺在页面底色上，
 /// 线条图标、黑白灰文字，靠字号、粗细、留白和细分隔线分层；强调色只用在开关、选中这些控件上。
 
@@ -351,18 +353,22 @@ class XEmpty extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final art = CharacterArt.of(context);
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(color: scheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
-              child: Icon(icon, size: 34, color: scheme.primary),
-            ),
+            if (art != null)
+              Image.asset(art.empty, width: 132, height: 132)
+            else
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(color: scheme.primary.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(icon, size: 34, color: scheme.primary),
+              ),
             const SizedBox(height: 16),
             Text(title, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: scheme.onSurface)),
             if (detail != null) ...[const SizedBox(height: 6), Text(detail!, textAlign: TextAlign.center, style: TextStyle(fontSize: 13.5, height: 1.6, color: scheme.onSurfaceVariant))],

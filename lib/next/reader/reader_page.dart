@@ -32,6 +32,8 @@ import '../rules.dart';
 import '../settings.dart';
 import '../stats.dart';
 import '../volumes.dart';
+import '../theme_doodle.dart';
+import '../theme_squire.dart';
 import '../widgets.dart';
 import '../x_list.dart';
 import 'paginator.dart';
@@ -90,6 +92,15 @@ class _Palette {
 
 /// 「晴空」背景的章节标题色和装饰小旗色
 const _skyAccent = (Color(0xFFA8452F), Color(0xFFD9A03F));
+
+/// 章节标题的颜色和标题下的装饰线：「晴空」背景是三角旗；角色主题是蜡笔线加小图案（发色按正文背景深浅挑）；其余没有
+(Color, Widget Function(double))? _headingAccent(BuildContext context, ReaderPrefs prefs, _Palette palette) {
+  if (prefs.theme == 5) return (_skyAccent.$1, (w) => PennantRule(line: _skyAccent.$1, flag: _skyAccent.$2, width: w));
+  final art = CharacterArt.of(context);
+  if (art == null) return null;
+  final line = palette.bg.computeLuminance() < 0.25 ? art.accentDark : art.accentLight;
+  return (line, (w) => DoodleRule(motif: art.motif, line: line, accent: art.secondary, width: w));
+}
 
 _Palette _paletteOf(ReaderPrefs prefs, ColorScheme scheme) => switch (prefs.theme) {
   0 => const _Palette(Color(0xFFF6F1E7), Color(0xFF2B2A27)),
@@ -778,6 +789,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
               }
               final reading = _speaking && prefs.ttsHighlight && _si < _segs.length && _ttsText == c.text ? _segs[_si] : null;
               InlineSpan spanOf(int from, int to) => buildSpan(c, from, to, style, noted, reading, Theme.of(context).colorScheme.primary);
+              final heading = _headingAccent(context, prefs, palette);
               final key = ValueKey((_cid, _epoch, prefs.mode, prefs.font, prefs.fontSize, prefs.lineHeight, prefs.margin, c.marks.length, c.text.length));
               void onMark(Mark m) => _editNote(m.rule);
               return prefs.mode == 0
@@ -788,7 +800,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       style: style,
                       margin: prefs.margin,
                       title: title,
-                      headingAccent: prefs.theme == 5 ? _skyAccent : null,
+                      headingAccent: heading,
                       startOffset: _offset,
                       onOffset: _saveOffset,
                       onEnd: _markRead,
@@ -812,7 +824,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       style: style,
                       margin: prefs.margin,
                       title: title,
-                      headingAccent: prefs.theme == 5 ? _skyAccent : null,
+                      headingAccent: heading,
                       curl: prefs.mode >= 2,
                       cover: prefs.mode == 3,
                       dual: prefs.dual,

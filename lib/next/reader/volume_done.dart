@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../cover_color.dart';
+import '../theme_doodle.dart';
 import '../volumes.dart';
 import '../widgets.dart';
 
@@ -76,6 +77,8 @@ class _VolumeDoneCardState extends State<_VolumeDoneCard> with SingleTickerProvi
     );
 
     final coverIn = _at(0, 0.55, Curves.easeOutBack);
+    final art = CharacterArt.of(context);
+    final cheerIn = _at(0.35, 0.8, Curves.easeOutBack);
     return SafeArea(
       child: Center(
         child: Material(
@@ -94,7 +97,10 @@ class _VolumeDoneCardState extends State<_VolumeDoneCard> with SingleTickerProvi
                       scale: 0.6 + 0.4 * coverIn.value,
                       child: Transform.rotate(angle: (1 - coverIn.value) * -0.12, child: Opacity(opacity: coverIn.value.clamp(0, 1), child: child)),
                     ),
-                    child: Container(
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
                       width: 150,
                       height: 150 / 0.7,
                       decoration: BoxDecoration(
@@ -105,6 +111,21 @@ class _VolumeDoneCardState extends State<_VolumeDoneCard> with SingleTickerProvi
                         ],
                       ),
                       child: ClipRRect(borderRadius: BorderRadius.circular(8), child: NetImage(widget.cover)),
+                    ),
+                        if (art != null)
+                          Positioned(
+                            right: -78,
+                            bottom: -22,
+                            child: AnimatedBuilder(
+                              animation: cheerIn,
+                              builder: (context, child) => Opacity(
+                                opacity: cheerIn.value.clamp(0, 1),
+                                child: Transform.translate(offset: Offset(0, 30 * (1 - cheerIn.value)), child: Transform.scale(scale: 0.7 + 0.3 * cheerIn.value, child: child)),
+                              ),
+                              child: Image.asset(art.cheer, width: 120, height: 120),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 28),

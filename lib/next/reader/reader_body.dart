@@ -7,7 +7,6 @@ import 'package:flutter/services.dart' show HapticFeedback;
 
 import '../rules.dart';
 import '../settings.dart';
-import '../theme_squire.dart';
 import '../widgets.dart';
 import 'page_curl.dart';
 import 'paginator.dart';
@@ -97,8 +96,8 @@ InlineSpan buildSpan(Chapter c, int from, int to, TextStyle base, Set<String> no
 }
 
 /// 每章开头的章节标题，高度固定成 [headingHeight] 算的值（分页按这个高度给第一页留位置）。
-/// [accent]：标题染色，并在标题下面的留白里画一条带三角旗的装饰线（「晴空」背景用；不占额外高度，不影响分页）
-Widget chapterHeading(String title, TextStyle body, double width, {(Color, Color)? accent}) {
+/// [accent]：标题染色，并在标题下面的留白里画一条装饰线（「晴空」背景的三角旗、角色主题的蜡笔线；不占额外高度，不影响分页）
+Widget chapterHeading(String title, TextStyle body, double width, {(Color, Widget Function(double width))? accent}) {
   final text = Text(title, style: headingStyle(body).copyWith(color: accent?.$1), textScaler: TextScaler.noScaling);
   return SizedBox(
     height: headingHeight(title, body, width),
@@ -109,7 +108,7 @@ Widget chapterHeading(String title, TextStyle body, double width, {(Color, Color
           : Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
-              children: [text, SizedBox(height: (body.fontSize ?? 18) * 0.35), PennantRule(line: accent.$1, flag: accent.$2, width: math.min(width * 0.45, 160))],
+              children: [text, SizedBox(height: (body.fontSize ?? 18) * 0.35), accent.$2(math.min(width * 0.45, 160))],
             ),
     ),
   );
@@ -262,7 +261,7 @@ class ScrollBody extends StatefulWidget {
 
   /// 章节名，显示在正文开头
   final String title;
-  final (Color, Color)? headingAccent;
+  final (Color, Widget Function(double width))? headingAccent;
   final int startOffset;
   final ValueChanged<int> onOffset;
 
@@ -573,7 +572,7 @@ class PagedBody extends StatefulWidget {
   /// 在页面上往下拉：加 / 取消书签；[marked] 是当前页有没有书签
   final VoidCallback? onPullDown;
   final bool Function()? marked;
-  final (Color, Color)? headingAccent;
+  final (Color, Widget Function(double width))? headingAccent;
 
   /// 最近一次排版用的单页大小和一屏几页：书签算页码时用，和正文排版一模一样
   static (Size, int)? lastLayout;
