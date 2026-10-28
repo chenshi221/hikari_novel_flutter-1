@@ -54,6 +54,13 @@ class P {
   static const updInclude = 'upd.include'; // List<String> 只更新这些分类，空是不限
   static const updExclude = 'upd.exclude'; // List<String> 不更新这些分类
 
+  // 外观
+  static const pureBlack = 'ui.pureBlack'; // bool 深色时用 AMOLED 纯黑底
+  static const sceneMotion = 'ui.sceneMotion'; // bool 插画主题的云和旗子动起来
+
+  // 阅读
+  static const volumeDone = 'reader.volumeDone'; // bool 读完一卷时弹庆祝卡片
+
   // 数据
   static const autoClear = 'data.autoClear'; // bool 每次打开 App 自动清理读过时缓存的章节
 

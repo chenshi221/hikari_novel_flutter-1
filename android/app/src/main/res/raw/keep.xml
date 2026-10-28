@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- audio_service 按名字找通知按钮的图标，release 包的资源压缩看不出它们被用到，会删掉 -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/audio_service_*" />

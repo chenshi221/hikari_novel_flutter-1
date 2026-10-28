@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../color_picker.dart';
 import '../reader/reader_page.dart';
 import '../rules.dart';
+import '../widgets.dart';
+import '../x_list.dart';
 
 /// 正则规则管理：替换（去广告、统一用字）和高亮（给人物名染色、点一下写备注）。改动后已打开的章节会重新生成。
 class RulesPage extends ConsumerStatefulWidget {
@@ -35,34 +37,49 @@ class _RulesPageState extends ConsumerState<RulesPage> {
     await _commit(next);
   }
 
+  Widget _row(int i, ReplaceRule r) {
+    final scheme = Theme.of(context).colorScheme;
+    final replace = r.kind == RuleKind.replace;
+    final scope = r.aid.isNotEmpty ? ' · 仅本书' : '';
+    return Dismissible(
+      key: ValueKey(r.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        color: scheme.error.withValues(alpha: 0.12),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 24),
+        child: Icon(Icons.delete_outline, color: scheme.error),
+      ),
+      onDismissed: (_) => _commit([..._rules]..removeAt(i)),
+      child: XTile(
+        leading: replace
+            ? const XLeading(icon: Icons.find_replace)
+            : XLeading(color: Color(r.color), child: Text('文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(r.color)))),
+        title: replace ? r.pattern : r.label,
+        subtitle: replace ? (r.replacement.isEmpty ? '删除匹配内容$scope' : '替换为「${r.replacement}」$scope') : '${r.kind == RuleKind.color ? '文字着色' : '背景高亮'}$scope${r.pattern == r.label ? '' : ' · ${r.pattern}'}',
+        onTap: () => _edit(i),
+        trailing: Switch(value: r.enabled, onChanged: (v) => _commit([..._rules]..[i] = r.copyWith(enabled: v))),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final replaces = [for (final (i, r) in _rules.indexed) if (r.kind == RuleKind.replace) (i, r)];
+    final marks = [for (final (i, r) in _rules.indexed) if (r.kind != RuleKind.replace) (i, r)];
     return Scaffold(
-      appBar: AppBar(title: const Text('正则规则'), actions: [IconButton(icon: const Icon(Icons.add), onPressed: () => _edit(null))]),
+      appBar: AppBar(title: const Text('正则规则'), actions: [IconButton(tooltip: '添加规则', icon: const Icon(Icons.add), onPressed: () => _edit(null))]),
       body: _rules.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text('还没有规则。\n替换：去掉章节里的广告、统一用字。\n高亮：给人物名染色，阅读时点一下可以写备注。', textAlign: TextAlign.center),
-              ),
-            )
-          : ListView(
+          ? XEmpty(icon: Icons.find_replace, title: '还没有规则', detail: '替换：去除章节中的广告、统一用字\n着色 / 高亮：标出人名等关键词，阅读时点按可添加备注', action: '添加规则', onAction: () => _edit(null))
+          : contentWidth(ListView(
+              padding: const EdgeInsets.only(bottom: 32),
               children: [
-                for (final (i, r) in _rules.indexed)
-                  Dismissible(
-                    key: ValueKey(r.id),
-                    background: Container(color: Theme.of(context).colorScheme.error.withValues(alpha: 0.15)),
-                    onDismissed: (_) => _commit([..._rules]..removeAt(i)),
-                    child: SwitchListTile(
-                      title: Text(r.kind != RuleKind.replace ? r.label : r.pattern, style: r.kind != RuleKind.replace ? TextStyle(color: Color(r.color), fontWeight: FontWeight.w600) : const TextStyle(fontFamily: 'monospace')),
-                      subtitle: Text(r.kind != RuleKind.replace ? '${r.kind == RuleKind.color ? '变色' : '高亮'}${r.aid.isNotEmpty ? '（单本书）' : ''} · ${r.pattern}' : (r.replacement.isEmpty ? '替换 → （删除）' : '替换 → ${r.replacement}')),
-                      value: r.enabled,
-                      onChanged: (v) => _commit([..._rules]..[i] = r.copyWith(enabled: v)),
-                      secondary: IconButton(icon: const Icon(Icons.edit_outlined), onPressed: () => _edit(i)),
-                    ),
-                  ),
+                const XNote('点按编辑，向左滑动删除。修改后已打开的章节会重新生成。'),
+                if (replaces.isNotEmpty) ...[const XGroupTitle('替换'), for (final (i, r) in replaces) _row(i, r)],
+                if (replaces.isNotEmpty && marks.isNotEmpty) const XDivider(),
+                if (marks.isNotEmpty) ...[const XGroupTitle('着色与高亮'), for (final (i, r) in marks) _row(i, r)],
               ],
-            ),
+            )),
     );
   }
 }
@@ -85,18 +102,18 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
             mainAxisSize: MainAxisSize.min,
             children: [
               SegmentedButton<RuleKind>(
-                segments: const [ButtonSegment(value: RuleKind.replace, label: Text('替换')), ButtonSegment(value: RuleKind.color, label: Text('变色')), ButtonSegment(value: RuleKind.highlight, label: Text('高亮'))],
+                segments: const [ButtonSegment(value: RuleKind.replace, label: Text('替换')), ButtonSegment(value: RuleKind.color, label: Text('着色')), ButtonSegment(value: RuleKind.highlight, label: Text('高亮'))],
                 selected: {kind},
                 onSelectionChanged: (s) => setLocal(() => kind = s.first),
               ),
               const SizedBox(height: 12),
-              TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配（正则）', errorText: error)),
+              TextField(controller: pattern, decoration: InputDecoration(labelText: '匹配内容（正则表达式）', errorText: error)),
               const SizedBox(height: 12),
               if (kind == RuleKind.replace)
-                TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空表示删除；$1 引用分组'))
+                TextField(controller: replacement, decoration: const InputDecoration(labelText: '替换为', helperText: r'留空则删除匹配内容；用 $1 引用分组'))
               else ...[
                 if (kind == RuleKind.highlight) ...[
-                  TextField(controller: name, decoration: const InputDecoration(labelText: '名字（备注按它归档）', helperText: '例如人物名，可留空')),
+                  TextField(controller: name, decoration: const InputDecoration(labelText: '名称（可选）', helperText: '例如人物名，备注按名称归类')),
                   const SizedBox(height: 12),
                 ],
                 ColorPickerField(color: color, highlight: kind == RuleKind.highlight, sample: name.text.isNotEmpty ? name.text : '示例', onChanged: (c) => setLocal(() => color = c)),
@@ -106,9 +123,9 @@ Future<ReplaceRule?> showRuleDialog(BuildContext context, {ReplaceRule? initial}
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-          TextButton(
+          FilledButton(
             onPressed: () {
-              final e = pattern.text.isEmpty ? '请输入正则' : ReplaceRule.validate(pattern.text);
+              final e = pattern.text.isEmpty ? '请输入正则表达式' : ReplaceRule.validate(pattern.text);
               if (e != null) {
                 setLocal(() => error = e);
               } else {

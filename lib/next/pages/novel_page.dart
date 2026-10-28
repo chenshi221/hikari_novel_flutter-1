@@ -364,7 +364,7 @@ class _BodyState extends ConsumerState<_Body> {
                         ? TextStyle(color: theme.colorScheme.primary, fontWeight: FontWeight.w600)
                         : (read.contains(c.cid) ? TextStyle(color: theme.colorScheme.onSurfaceVariant) : null),
                   ),
-                  trailing: c.cid == progress?.cid ? Text('读到这里', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)) : (ChapterCache.has(aid, c.cid) ? Icon(Icons.download_done, size: 16, color: theme.colorScheme.onSurfaceVariant) : null),
+                  trailing: c.cid == progress?.cid ? Text('读到这里', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary)) : (ChapterCache.has(aid, c.cid) ? Icon(Icons.download_for_offline_outlined, size: 16, color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5)) : null),
                   onTap: _picked.isNotEmpty ? () => _pick(c.cid) : () => _open(Routes.reader(aid, c.cid)),
                   onLongPress: () => _pick(c.cid),
                 )),

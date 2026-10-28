@@ -249,6 +249,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         vols: vols,
         cur: cur,
         coverOf: coverOf,
+        onClose: () => setState(() => _list = false),
         onPick: (i) {
           setState(() => _list = false);
           _pc.animateToPage(i, duration: Duration(milliseconds: math.min(250 + 40 * (i - cur).abs(), 700)), curve: Curves.easeInOutCubic);
@@ -286,6 +287,8 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         vol: v,
         index: cur,
         book: title,
+        bg: base,
+        onClose: () => setState(() => _open = false),
         onCache: (cid) {
           final chs = [for (final cv in novel?.catalogue ?? const <CatVolume>[]) ...cv.chapters];
           final c = chs.where((c) => c.cid == cid).firstOrNull;
@@ -297,16 +300,26 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
         },
       );
       final Widget? panel = _open ? details : (_list ? volList : null);
+      // 封面区上滑展开详情和目录，下滑收起
+      Widget swipe(Widget child) => GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragEnd: (d) {
+          final vy = d.primaryVelocity ?? 0;
+          if (vy < -250 && panel == null) setState(() => _open = true);
+          if (vy > 250 && panel != null) setState(() => _open = _list = false);
+        },
+        child: child,
+      );
       body = wide
           ? Row(
               children: [
                 Expanded(
                   child: Column(
                     children: [
-                      Expanded(child: carousel),
+                      Expanded(child: swipe(carousel)),
                       toggle,
                       scrubber,
-                      summary,
+                      swipe(summary),
                       const SizedBox(height: 24),
                     ],
                   ),
@@ -320,16 +333,17 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
           : LayoutBuilder(
               builder: (context, c) => Column(
                 children: [
+                  // 展开后封面缩小、拖动条收起，把地方让给目录
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 280),
                     curve: Curves.easeOutCubic,
-                    height: c.maxHeight * (panel != null ? 0.42 : 0.68),
-                    child: carousel,
+                    height: c.maxHeight * (panel != null ? 0.26 : 0.68),
+                    child: swipe(carousel),
                   ),
-                  toggle,
-                  scrubber,
+                  swipe(toggle),
+                  if (panel == null) scrubber,
                   Expanded(
-                    child: AnimatedSwitcher(duration: const Duration(milliseconds: 200), layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]), child: panel ?? summary),
+                    child: AnimatedSwitcher(duration: const Duration(milliseconds: 200), layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]), child: panel ?? swipe(summary)),
                   ),
                 ],
               ),
@@ -598,7 +612,7 @@ class _Summary extends StatelessWidget {
 
 /// 展开后的这一卷：进度、评分、继续读、换封面、阅读报告，以及这一卷的目录。
 class _Details extends StatefulWidget {
-  const _Details({super.key, required this.aid, required this.vol, required this.index, required this.chapterTitles, required this.book, required this.onCache});
+  const _Details({super.key, required this.aid, required this.vol, required this.index, required this.chapterTitles, required this.book, required this.onCache, required this.bg, required this.onClose});
 
   final String aid;
   final Vol vol;
@@ -606,6 +620,12 @@ class _Details extends StatefulWidget {
   final Map<String, String> chapterTitles;
   final String book;
   final void Function(String cid) onCache;
+
+  /// 页面最终的底色（封面取色）。不能用 Scaffold 当前的颜色：换卷时它正在渐变，取到的是上一卷的颜色
+  final Color bg;
+
+  /// 目录在最顶上还往下拉：收起，回到大封面
+  final VoidCallback onClose;
 
   @override
   State<_Details> createState() => _DetailsState();
@@ -650,60 +670,70 @@ class _DetailsState extends State<_Details> {
         child: Column(
           children: [
             Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: PullToClose(
+                onClose: widget.onClose,
+                child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                 children: [
-                  Text(
-                    v.title,
-                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(_progress(aid, v), style: muted),
-                  const SizedBox(height: 8),
+                  // 卷名、进度、星级挤在一行，按钮一行，尽量把地方留给目录
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(v.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 2),
+                            Text(_progress(aid, v), style: muted.copyWith(fontSize: 12)),
+                          ],
+                        ),
+                      ),
                       for (var i = 1; i <= 5; i++)
                         GestureDetector(
                           onTap: () async {
                             await Volumes.setRating(aid, v.title, rating == i ? 0 : i); // 再点一次当前星数就取消
                             if (mounted) setState(() {});
                           },
-                          child: Icon(i <= rating ? Icons.star_rounded : Icons.star_outline_rounded, color: const Color(0xFFFFC53D), size: 28),
+                          child: Icon(i <= rating ? Icons.star_rounded : Icons.star_outline_rounded, color: const Color(0xFFFFC53D), size: 22),
                         ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   Row(
                     children: [
                       Expanded(
                         child: FilledButton.icon(
+                          style: FilledButton.styleFrom(minimumSize: const Size(0, 40), textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                           onPressed: () => context.push(Routes.reader(aid, next)),
-                          icon: const Icon(Icons.play_arrow),
+                          icon: const Icon(Icons.play_arrow, size: 20),
                           label: Text(label),
                         ),
                       ),
                       const SizedBox(width: 8),
                       IconButton.outlined(
                         tooltip: '换封面',
+                        visualDensity: VisualDensity.compact,
                         style: IconButton.styleFrom(
                           foregroundColor: Colors.white,
                           side: const BorderSide(color: Colors.white38),
                         ),
                         onPressed: () => pickVolumeCover(context, aid, v),
-                        icon: const Icon(Icons.image_outlined),
+                        icon: const Icon(Icons.image_outlined, size: 20),
                       ),
                       IconButton.outlined(
                         tooltip: '阅读报告',
+                        visualDensity: VisualDensity.compact,
                         style: IconButton.styleFrom(
                           foregroundColor: Colors.white,
                           side: const BorderSide(color: Colors.white38),
                         ),
                         onPressed: () => context.push(Routes.report(aid, vol: widget.index)),
-                        icon: const Icon(Icons.insights),
+                        icon: const Icon(Icons.insights, size: 20),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   for (final (i, cid) in v.cids.indexed)
                     ChapterSwipe(
                       aid: aid,
@@ -711,7 +741,7 @@ class _DetailsState extends State<_Details> {
                       cid: cid,
                       title: widget.chapterTitles[cid] ?? '第 ${i + 1} 章',
                       enabled: _picked.isEmpty,
-                      backdrop: Color.alphaBlend(Colors.black.withValues(alpha: 0.18), Scaffold.maybeOf(context)?.widget.backgroundColor ?? Colors.black),
+                      backdrop: Color.alphaBlend(Colors.black.withValues(alpha: 0.18), widget.bg),
                       onChanged: () => setState(() {}),
                       onCache: () => widget.onCache(cid),
                       child: ListTile(
@@ -732,6 +762,7 @@ class _DetailsState extends State<_Details> {
                       onLongPress: () => _pick(cid),
                     )),
                 ],
+              ),
               ),
             ),
             if (_picked.isNotEmpty)
@@ -808,50 +839,133 @@ class _DetailsToggle extends StatelessWidget {
   );
 }
 
-/// 全部卷的列表：点一行，轮播翻到那一卷
+/// 全部卷：三列封面网格（像 Apple Books 的系列页）。读完的打勾，在读的封面底下一条进度，当前这卷描边；点一卷，轮播翻到那一卷。
 class _VolList extends StatelessWidget {
-  const _VolList({required this.aid, required this.vols, required this.cur, required this.coverOf, required this.onPick});
+  const _VolList({required this.aid, required this.vols, required this.cur, required this.coverOf, required this.onPick, required this.onClose});
 
   final String aid;
   final List<Vol> vols;
   final int cur;
   final String Function(Vol) coverOf;
   final ValueChanged<int> onPick;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final done = Volumes.done(aid);
     final reading = readingVolume(aid);
+    final read = ReadState.read(aid);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
       child: Material(
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         clipBehavior: Clip.antiAlias,
-        child: ListView.builder(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: vols.length,
-          itemBuilder: (context, i) {
-            final v = vols[i];
-            final status = done.containsKey(v.title) ? '已读完' : (i == reading ? '在读' : null);
-            return ListTile(
-              dense: true,
-              selected: i == cur,
-              selectedTileColor: Colors.white.withValues(alpha: 0.12),
-              leading: SizedBox(
-                width: 34,
-                height: 34 / kCoverAspect,
-                child: ClipRRect(borderRadius: BorderRadius.circular(3), child: NetImage(coverOf(v))),
-              ),
-              title: Text(v.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: i == cur ? Colors.white : Colors.white70, fontWeight: i == cur ? FontWeight.w700 : null)),
-              trailing: status == null ? null : Text(status, style: TextStyle(color: status == '在读' ? Colors.white : Colors.white54, fontSize: 12)),
-              onTap: () => onPick(i),
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final n = (c.maxWidth / 120).floor().clamp(3, 6);
+            final w = (c.maxWidth - 32 - 12 * (n - 1)) / n;
+            return PullToClose(
+              onClose: onClose,
+              child: GridView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              // 一格 = 封面 + 两行卷名
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 14, crossAxisSpacing: 12, childAspectRatio: w / (w / kCoverAspect + 40)),
+              itemCount: vols.length,
+              itemBuilder: (context, i) {
+                final v = vols[i];
+                final finished = done.containsKey(v.title);
+                final total = v.textCids.length;
+                final progress = i == reading && !finished && total > 0 ? v.textCids.where(read.contains).length / total : null;
+                return GestureDetector(
+                  onTap: () => onPick(i),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AspectRatio(
+                        aspectRatio: kCoverAspect,
+                        child: DecoratedBox(
+                          position: DecorationPosition.foreground,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(6),
+                            border: i == cur ? Border.all(color: Colors.white, width: 2) : null,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ColoredBox(color: Colors.white10, child: NetImage(coverOf(v))),
+                                if (finished)
+                                  const Positioned(
+                                    top: 5,
+                                    right: 5,
+                                    child: DecoratedBox(
+                                      decoration: BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                                      child: Padding(padding: EdgeInsets.all(2), child: Icon(Icons.check, size: 14, color: Colors.white)),
+                                    ),
+                                  ),
+                                if (progress != null)
+                                  Positioned(left: 0, right: 0, bottom: 0, child: LinearProgressIndicator(value: progress, minHeight: 4, color: Colors.white, backgroundColor: Colors.black45)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        v.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, height: 1.3, color: i == cur ? Colors.white : Colors.white70, fontWeight: i == cur ? FontWeight.w700 : null),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             );
           },
         ),
       ),
     );
   }
+}
+
+/// 列表滚到最顶上以后继续往下拉超过一段距离：松手前就触发 [onClose]（每次拖动只触发一次）。
+class PullToClose extends StatefulWidget {
+  const PullToClose({super.key, required this.onClose, required this.child});
+
+  final VoidCallback onClose;
+  final Widget child;
+
+  @override
+  State<PullToClose> createState() => _PullToCloseState();
+}
+
+class _PullToCloseState extends State<PullToClose> {
+  double _pull = 0;
+  bool _fired = false;
+
+  bool _on(ScrollNotification n) {
+    if (n.depth != 0) return false;
+    if (n is ScrollStartNotification) {
+      _pull = 0;
+      _fired = false;
+    } else if (n is OverscrollNotification && n.dragDetails != null && n.overscroll < 0) {
+      _pull -= n.overscroll;
+    } else if (n is ScrollUpdateNotification && n.dragDetails != null && n.metrics.pixels < 0) {
+      _pull = -n.metrics.pixels; // iOS 回弹式滚动
+    }
+    if (_pull > 70 && !_fired) {
+      _fired = true;
+      widget.onClose();
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) => NotificationListener<ScrollNotification>(onNotification: _on, child: widget.child);
 }
 
 /// 翻开书的动画：封面以左边书脊为轴往外翻开，同时连书页一起放大铺满屏幕；铺满时（[onOpened]）推出阅读页，

@@ -74,6 +74,13 @@ class ImageStore {
     return _inflight[url] = f;
   }
 
+  /// 本地缓存文件的路径（没缓存就先下载）：给通知栏封面这种只认文件的地方用
+  Future<String> path(String rawUrl) async {
+    final url = _norm(rawUrl);
+    await load(url);
+    return p.join((await _cacheDir()).path, _name(url));
+  }
+
   Future<void> _slot(String url) {
     if (_running < _maxNet) {
       _running++;
@@ -122,6 +129,22 @@ class ImageStore {
       _memUsed -= _mem.remove(_mem.keys.first)!.length;
     }
     return bytes;
+  }
+
+  /// 把磁盘上已有的这些图按顺序读进内存（不联网），内存用到一半就停，免得把别的图挤掉。
+  Future<void> warm(Iterable<String> urls) async {
+    final dir = await _cacheDir();
+    for (final raw in urls) {
+      if (_memUsed > _memBytes ~/ 2) return;
+      final url = _norm(raw);
+      if (raw.isEmpty || _mem.containsKey(url) || _inflight.containsKey(url)) continue;
+      final f = File(p.join(dir.path, _name(url)));
+      if (!await f.exists()) continue;
+      final bytes = await f.readAsBytes();
+      if (_mem.containsKey(url)) continue;
+      _memUsed += bytes.length;
+      _mem[url] = bytes;
+    }
   }
 
   /// 删掉这些图的缓存（内存和磁盘）
