@@ -45,17 +45,15 @@
 - 坚果云 WebDAV 多设备同步（进度、书签、统计、规则），本地备份导入导出
 - 发现页：推荐、排行、分类、完结；搜索（按书名 / 作者）；书评与回复
 - 详情页：目录倒序、多选章节批量标记已读 / 未读
-- Material Design 3，深浅色，多套配色（含角色主题）；手机、平板、电脑自适应
-- 网络：可切换 wenku8.net / wenku8.cc 线路、HTTP 代理；默认用系统网络栈（安卓 Cronet、苹果 NSURLSession），被 Cloudflare 拦截时内置浏览器验证
+- Material Design 3，深浅色，多套配色（含角色主题）；手机、平板自适应
+- 网络：可切换 wenku8.net / wenku8.cc 线路、HTTP 代理；默认用系统网络栈（Cronet），被 Cloudflare 拦截时内置浏览器验证
 
 ## 📱 支持平台
 
 | 平台 | 状态 |
 |---|---|
-| Android | 主要测试平台（release 包只含 arm64） |
-| macOS | 可用，未签名 |
-| iOS | 理论上支持，未测试 |
-| Windows / Linux | 未测试 |
+| Android | 唯一支持的平台（release 包只含 arm64） |
+| iOS / macOS / Windows / Linux | 不再支持（工程目录已删除，需要的话从 git 历史找回） |
 | Web | 不支持（仅开发时用 `tool/preview_proxy.dart` 预览界面） |
 
 ## 🖼️ 截图
@@ -79,9 +77,8 @@
 1. 安装 [Flutter](https://docs.flutter.dev/get-started/install)（开发用的是 stable 3.47）
 2. 克隆本仓库，执行 `flutter pub get`
 3. 编译：
-   - Android：`flutter build apk --release --target-platform android-arm64 --dart-define=cronetHttpNoPlay=true`
-     （`cronetHttpNoPlay` 让系统网络栈用内置的 Cronet，不依赖 Google 服务）
-   - macOS：`flutter build macos --release`
+   - `flutter build apk --release --target-platform android-arm64 --dart-define=cronetHttpNoPlay=true --obfuscate --split-debug-info=build/symbols -t lib/next/main.dart`
+     （`cronetHttpNoPlay` 让系统网络栈用内置的 Cronet，不依赖 Google 服务；`--obfuscate --split-debug-info` 把调试符号拆出包外，包更小，崩溃堆栈要用 `build/symbols` 还原）
 4. 测试：`flutter test`
 
 入口是 `lib/next/main.dart`（`lib/main.dart` 只是转过去）。
