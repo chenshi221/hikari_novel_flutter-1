@@ -204,7 +204,7 @@ class _VolumesPageState extends ConsumerState<VolumesPage> with SingleTickerProv
     ref.watch(volumeChangesProvider);
     final novel = ref.watch(novelProvider(aid)).value; // 顺带把目录存下来，也用来显示章节名
     final vols = Volumes.of(aid);
-    final title = novel?.detail.title ?? (LibraryStore.get(aid)?['title'] as String?) ?? ReadingStats.info(aid).title;
+    final title = LibraryStore.shown(aid, novel?.detail.title ?? (LibraryStore.get(aid)?['title'] as String?) ?? ReadingStats.info(aid).title);
     final fallback = novel?.detail.imgUrl ?? (LibraryStore.get(aid)?['img'] as String?) ?? '';
     final queue = ref.read(volumeCoverQueueProvider);
     String coverOf(Vol v) => queue.volCover(aid, v, fallback);

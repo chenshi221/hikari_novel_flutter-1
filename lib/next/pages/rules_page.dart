@@ -74,7 +74,6 @@ class _RulesPageState extends ConsumerState<RulesPage> {
           : contentWidth(ListView(
               padding: const EdgeInsets.only(bottom: 32),
               children: [
-                const XNote('点按编辑，向左滑动删除。修改后已打开的章节会重新生成。'),
                 if (replaces.isNotEmpty) ...[const XGroupTitle('替换'), for (final (i, r) in replaces) _row(i, r)],
                 if (replaces.isNotEmpty && marks.isNotEmpty) const XDivider(),
                 if (marks.isNotEmpty) ...[const XGroupTitle('着色与高亮'), for (final (i, r) in marks) _row(i, r)],

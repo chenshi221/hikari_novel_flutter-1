@@ -122,7 +122,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
         padding: const EdgeInsets.only(bottom: 32),
         children: [
           card,
-          const XNote('在多台设备上填写同一账号和文件夹，阅读进度、书签、历史、已读章节、规则备注和阅读统计会自动合并。章节缓存和外观设置不参与同步。'),
           const XDivider(),
           const XGroupTitle('WebDAV 账号'),
           field(_url, 'WebDAV 地址', Icons.link, type: TextInputType.url),
@@ -151,12 +150,10 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           ),
           const XDivider(),
           const XGroupTitle('手动备份'),
-          XTile(leading: const XLeading(icon: Icons.upload_outlined), title: '导出同步数据', subtitle: '生成 JSON 文件，通过系统分享保存或发送', onTap: _export),
-          XTile(leading: const XLeading(icon: Icons.download_outlined), title: '导入同步数据', subtitle: '选择导出的文件，按同步规则合并到本机，不会覆盖', onTap: _import),
+          XTile(leading: const XLeading(icon: Icons.upload_outlined), title: '导出同步数据', onTap: _export),
+          XTile(leading: const XLeading(icon: Icons.download_outlined), title: '导入同步数据', subtitle: '合并到本机，不覆盖', onTap: _import),
           const XDivider(),
           const XGroupTitle('说明'),
-          const XNote('配置完成后，App 启动、回到前台和进入后台时会自动同步（3 分钟内不重复）。密码优先保存在系统钥匙串中，不可用时保存在本机应用数据里。'),
-          const XNote('书签与规则的删除、规则的修改会同步（删除记录保留 90 天，超过 90 天未同步的设备可能带回已删除的项）；备注的修改和删除不同步。'),
         ],
       )),
     );

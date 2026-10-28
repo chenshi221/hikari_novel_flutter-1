@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../cache.dart';
 import '../history.dart';
 import '../progress.dart';
+import '../library.dart';
 import '../router.dart';
 import '../widgets.dart';
 import 'updates_page.dart';
@@ -41,7 +42,7 @@ class _HistoryPageState extends State<HistoryPage> {
           },
           child: ListTile(
             leading: SizedBox(width: 40, height: 54, child: CoverImage(e.img)),
-            title: Text(e.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            title: Text(LibraryStore.shown(e.aid, e.title), maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text('${e.chapter} · ${hhmm(e.time)}', maxLines: 1, overflow: TextOverflow.ellipsis),
             trailing: IconButton(icon: const Icon(Icons.info_outline), tooltip: '详情', onPressed: () => context.push(Routes.novel(e.aid))),
             onTap: () => context.push(Routes.reader(e.aid, e.cid)),

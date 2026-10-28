@@ -50,13 +50,13 @@ class ReadingStats {
   /// 书名、作者、封面：统计里记的没有时（例如离线时读的），依次从本地书架、阅读历史、离线缓存里找；都没有才显示书号。
   static ({String title, String author, String img}) info(String aid) {
     final m = meta(aid);
-    if (m != null && m.title.isNotEmpty) return m;
+    if (m != null && m.title.isNotEmpty) return (title: LibraryStore.shown(aid, m.title), author: m.author, img: m.img);
     final lib = LibraryStore.get(aid);
     final hist = ReadingHistory.all().where((e) => e.aid == aid).firstOrNull;
     final cached = ChapterCache.books()[aid];
     final title = (lib?['title'] as String?) ?? hist?.title ?? cached?.$1;
     final img = [m?.img, lib?['img'] as String?, hist?.img, cached?.$3].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? '';
-    return (title: title ?? '书号 $aid', author: m?.author ?? '', img: img);
+    return (title: LibraryStore.shown(aid, title ?? '书号 $aid'), author: m?.author ?? '', img: img);
   }
 
   static Future<void> setMeta(String aid, String title, String author, String img) async {
