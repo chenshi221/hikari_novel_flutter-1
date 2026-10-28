@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
@@ -11,6 +12,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../models/cat_chapter.dart';
 import '../../models/cat_volume.dart';
+import '../app_prefs.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
 import '../color_picker.dart';
@@ -18,17 +20,24 @@ import '../data.dart';
 import '../env.dart';
 import '../fonts.dart';
 import '../history.dart';
+import '../image_cache.dart' show imageStoreProvider;
+import '../incognito.dart';
 import '../net_state.dart';
 import '../pages/novel_page.dart';
 import '../pages/rules_page.dart' show showRuleDialog;
 import '../progress.dart';
 import '../read_state.dart';
+import '../router.dart';
 import '../rules.dart';
 import '../settings.dart';
 import '../stats.dart';
+import '../volumes.dart';
 import '../widgets.dart';
+import '../x_list.dart';
 import 'paginator.dart';
 import 'reader_body.dart';
+import 'tts_notice.dart';
+import 'volume_done.dart';
 
 /// 每个非空行当一段：去掉网页里零散的空白，统一首行缩进两个全角空格。
 String formatChapter(String raw) => raw.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).map((l) => '　　$l').join('\n');
@@ -51,6 +60,27 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
   return Chapter(text: text, images: raw.images, marks: ReplaceRules.marks(text, null, key.$1));
 });
 
+/// 书签在本章第几屏：按现在的阅读设置（字号、行距、边距、字体、双页）重新排版算出来，所以改了设置页码也跟着对。
+/// 返回 (第几屏从 1 起, 共几屏)；滚动模式、没缓存过的章节返回 null（不为了算页码去联网）。
+Future<(int, int)?> bookmarkPage(WidgetRef ref, BuildContext context, String aid, String cid, String title, int offset) async {
+  final prefs = ref.read(readerPrefsProvider);
+  if (prefs.mode == 0 || ChapterCache.length(aid, cid) == null) return null;
+  final size = MediaQuery.sizeOf(context);
+  final view = MediaQuery.viewPaddingOf(context);
+  final c = await ref.read(chapterProvider((aid, cid)).future);
+  final f = FontStore.resolve(prefs.font);
+  final style = readerStyle(prefs, const Color(0xFF000000), family: f.family, fallback: f.fallback);
+  // 这次运行里排过版就直接用正文实际的版面（弹窗里的边距和阅读页不一样，不能自己算）；
+  // 否则照 PagedBody 的算法：上下各留出标题 / 页脚的位置，宽屏开双页时一屏两页
+  final fallbackCols = prefs.dual && size.width >= 900 ? 2 : 1;
+  final (box, cols) = PagedBody.lastLayout ?? (Size(size.width / fallbackCols - prefs.margin * 2, size.height - view.top - view.bottom - 72), fallbackCols);
+  final starts = c.text.trim().isEmpty ? const <int>[] : paginate(c.text, style, box, strut: readerStrut(style), firstTop: headingHeight(title, style, box.width));
+  final total = starts.length + c.images.length;
+  if (total == 0) return null;
+  final page = offset > c.text.length ? math.min(starts.length + offset - c.text.length - 1, total - 1) : (starts.isEmpty ? 0 : pageOfOffset(starts, offset));
+  return (page ~/ cols + 1, (total + cols - 1) ~/ cols);
+}
+
 class _Palette {
   const _Palette(this.bg, this.fg);
 
@@ -58,10 +88,15 @@ class _Palette {
   final Color fg;
 }
 
+/// 「晴空」背景的章节标题色和装饰小旗色
+const _skyAccent = (Color(0xFFA8452F), Color(0xFFD9A03F));
+
 _Palette _paletteOf(ReaderPrefs prefs, ColorScheme scheme) => switch (prefs.theme) {
   0 => const _Palette(Color(0xFFF6F1E7), Color(0xFF2B2A27)),
   1 => const _Palette(Color(0xFFCFE6D0), Color(0xFF263A27)),
   2 => const _Palette(Color(0xFF1C1C1A), Color(0xFFBDBBB2)),
+  4 => const _Palette(Colors.black, Color(0xFF9E9C94)), // AMOLED 纯黑，字再暗一点免得刺眼
+  5 => const _Palette(Color(0xFFF4ECDC), Color(0xFF3B2C20)), // 晴空：云朵的米白底、深褐字，章节标题赭红带旗
   _ => _Palette(scheme.surface, scheme.onSurface),
 };
 
@@ -110,19 +145,26 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   late String _cid = widget.cid;
   bool _bar = false;
   int _epoch = 0; // 同一章内跳转（书签）时递增，让正文重新定位
+  late final _doneAtOpen = Volumes.done(widget.aid).keys.toSet(); // 打开时已经读完的卷：重读它们不再庆祝
+  final _celebrated = <String>{};
+  int _dir = 1; // 上次换章的方向：1 往后，-1 往前（换章动画往哪边滑）
   int _offset = 0; // 当前读到的字符偏移
   Object? _shown; // 正文第一次显示的标记 (cid, epoch)，用来在那一刻初始化 _offset
   int? _initial; // 从书签进来时的起点，只用一次
   String? _recorded;
   String? _selected;
-  double? _slide;
+  double? _slide; // 正在拖底部进度条：拖到的页（滚动模式是百分比）
+  bool _scrubbing = false;
+  // 返回之前的位置（Kindle 那样）：拖进度条、切章、从目录跳走前记下离开的位置，菜单里出一个「返回」按钮，点了能来回切
+  ({String cid, int offset, String title, String label})? _back;
+  int _backTurns = 0; // 跳走后又自己翻了几页：翻够 3 页就当已经接着读下去了，不再提示返回
   String? _bookTitle;
   String _chapterTitle = '';
 
   // ---- 朗读：按句依次朗读，高亮正在读的句子并跟着翻页，读完一章自动读下一章 ----
   final _tts = FlutterTts();
   bool _speaking = false;
-  bool _resumeTts = false;
+  bool _paused = false; // 从通知栏暂停：句子位置留着，继续时从这句重读
   List<(int, int)> _segs = const []; // 每句在章节正文里的 [start, end)
   String _ttsText = '';
   int _si = 0;
@@ -193,6 +235,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     super.initState();
     _vol.setMethodCallHandler((call) async {
       final inv = ref.read(readerPrefsProvider).volumeInvert;
+      // 菜单开着时按音量键先只收起菜单，再按才翻页
+      if (_bar && (call.method == 'volumeUp' || call.method == 'volumeDown')) return _toggleBar();
       if (call.method == (inv ? 'volumeUp' : 'volumeDown')) _nav.next?.call();
       if (call.method == (inv ? 'volumeDown' : 'volumeUp')) _nav.prev?.call();
     });
@@ -218,6 +262,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _pos.dispose();
     _turnTimer?.cancel();
     _tts.stop();
+    if (_speaking) _notice?.hide();
     WidgetsBinding.instance.removeObserver(this);
     _flushStats();
     WakelockPlus.disable();
@@ -226,14 +271,18 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   }
 
   /// 从当前阅读位置所在的句子开始读。
-  Future<void> _startTts(Chapter c) async {
+  Future<void> _startTts(Chapter c, {bool fromStart = false}) async {
     _ttsText = c.text;
     _segs = splitSentences(c.text);
     if (_segs.isEmpty) return;
-    final at = _resumeTts ? 0 : _offset;
+    final at = fromStart ? 0 : _offset;
     _si = _segs.indexWhere((e) => e.$2 > at);
     if (_si < 0) _si = _segs.length - 1;
-    setState(() => _speaking = true);
+    setState(() {
+      _speaking = true;
+      _paused = false;
+    });
+    _showNotice();
     await _applyTtsPrefs();
     await _speakNext();
   }
@@ -250,8 +299,55 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     }
   }
 
+  TtsNotice? _notice;
+
+  /// 通知栏卡片：书名、章节名、封面，按钮接到这里的暂停 / 继续 / 跳句 / 停止
+  Future<void> _showNotice() async {
+    final n = _notice = await TtsNotice.get();
+    if (n == null || !_speaking || !mounted) return;
+    n
+      ..onPlay = _resumeSpeech
+      ..onPause = _pauseSpeech
+      ..onStop = _stopTts
+      ..onNext = (() => _skipSentence(1))
+      ..onPrev = (() => _skipSentence(-1));
+    final novel = ref.read(novelProvider(widget.aid)).value;
+    final chapter = novel?.catalogue.expand((v) => v.chapters).where((c) => c.cid == _cid).firstOrNull?.title ?? _chapterTitle;
+    final img = novel?.detail.imgUrl ?? '';
+    // 封面用 App 自己缓存的文件：通知自己联网下载过不了网站的验证
+    String? cover;
+    try {
+      if (img.isNotEmpty) cover = await ref.read(imageStoreProvider).path(img);
+    } catch (_) {}
+    if (!_speaking || !mounted) return;
+    n.show(book: novel?.detail.title ?? '', chapter: chapter, cover: cover, playing: !_paused);
+  }
+
+  void _pauseSpeech() {
+    if (!_speaking || _paused) return;
+    _paused = true;
+    _jumped = DateTime.now(); // 被打断的这句的"读完"回调不算
+    _tts.stop();
+    _showNotice();
+  }
+
+  void _resumeSpeech() {
+    if (!_speaking || !_paused) return;
+    _paused = false;
+    _showNotice();
+    _speakNext();
+  }
+
+  /// 下一章；开了"跳过已读章节"时是后面第一个没读过的（全读过就没有下一章）
+  CatChapter? _nextIn(List<CatChapter> chapters, int index, ReaderPrefs prefs) {
+    if (index < 0) return null;
+    if (!prefs.skipRead) return index < chapters.length - 1 ? chapters[index + 1] : null;
+    final readSet = ReadState.read(widget.aid);
+    return chapters.skip(index + 1).where((c) => !readSet.contains(c.cid)).firstOrNull;
+  }
+
   Future<void> _speakNext() async {
-    if (!_speaking) return;
+    if (!_speaking || _paused) return;
     if (_sleepAt != null && DateTime.now().isAfter(_sleepAt!)) return _stopTts();
     if (_si < _segs.length) {
       final (s, e) = _segs[_si];
@@ -260,10 +356,20 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       await _tts.speak(_ttsText.substring(s, e).trim());
       return;
     }
-    final next = _nextChapter;
-    if (next == null || _stopAtChapterEnd || !ref.read(readerPrefsProvider).ttsAutoNext) return _stopTts();
-    _resumeTts = true;
+    // 下一章当场算：熄屏时界面不重建，build 里的 _nextChapter 可能还停在上一章
+    final prefs = ref.read(readerPrefsProvider);
+    final chapters = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).toList() ?? const <CatChapter>[];
+    final next = _nextIn(chapters, chapters.indexWhere((c) => c.cid == _cid), prefs);
+    if (next == null || _stopAtChapterEnd || !prefs.ttsAutoNext) return _stopTts();
+    _nextChapter = next;
     _go(next.cid, keepTts: true);
+    // 不等界面重建，直接取下一章接着读（熄屏时界面不重建）
+    try {
+      final c = await ref.read(chapterProvider((widget.aid, next.cid)).future);
+      if (mounted && _speaking && _cid == next.cid) await _startTts(c, fromStart: true);
+    } catch (_) {
+      _stopTts();
+    }
   }
 
   /// 上一句 / 下一句。
@@ -280,10 +386,11 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       _flushStats();
       _watch.stop();
     }
-    _resumeTts = false;
+    _paused = false;
     _sleepAt = null;
     _stopAtChapterEnd = false;
     await _tts.stop();
+    _notice?.hide();
     if (mounted) setState(() => _speaking = false);
   }
 
@@ -329,9 +436,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _flushStats(); // 离开这章前把时间记到这章
     if (!keepTts && _speaking) _stopTts();
     final next = _nextChapter;
-    if (next != null && cid == next.cid) _markRead();
+    final forward = next != null && cid == next.cid;
+    // 往后翻出了这一卷、这卷刚好读完：换过去之后弹庆祝卡片
+    final finished = forward && Volumes.indexOf(widget.aid, cid) != Volumes.indexOf(widget.aid, _cid) ? _justFinished() : null;
+    if (forward) _markRead();
     ReadingProgress.save(widget.aid, cid, offset);
+    final order = ref.read(novelProvider(widget.aid)).value?.catalogue.expand((v) => v.chapters).map((c) => c.cid).toList() ?? const <String>[];
+    if (finished != null) WidgetsBinding.instance.addPostFrameCallback((_) => _celebrate(finished, hasNext: true));
     setState(() {
+      if (cid != _cid) _dir = order.indexOf(cid) >= order.indexOf(_cid) ? 1 : -1;
       if (cid != _cid) _offset = offset == kToEnd ? 0 : offset;
       _pos.value = _offset;
       _cid = cid;
@@ -342,12 +455,95 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     });
   }
 
+  /// 当前这章所在的卷，读完这章就整卷读完了、而且这次还没庆祝过：返回卷序号，否则 null。
+  int? _justFinished() {
+    if (Incognito.on || !AppPrefs.read(P.volumeDone, true)) return null;
+    final i = Volumes.indexOf(widget.aid, _cid);
+    if (i < 0) return null;
+    final v = Volumes.of(widget.aid)[i];
+    if (_doneAtOpen.contains(v.title) || _celebrated.contains(v.title) || v.textCids.isEmpty) return null;
+    final read = ReadState.read(widget.aid);
+    return v.textCids.every((c) => c == _cid || read.contains(c)) ? i : null;
+  }
+
+  Future<void> _celebrate(int index, {required bool hasNext}) async {
+    final v = Volumes.of(widget.aid)[index];
+    if (!mounted || !_celebrated.add(v.title)) return;
+    _flushStats();
+    final fallback = ref.read(novelProvider(widget.aid)).value?.detail.imgUrl ?? '';
+    final cover = ref.read(volumeCoverQueueProvider).volCover(widget.aid, v, fallback);
+    final r = await showVolumeDone(context, aid: widget.aid, vol: v, index: index, cover: cover, hasNext: hasNext);
+    if (r == VolumeDoneAction.shelf && mounted) context.go(Routes.bookshelf);
+  }
+
+  /// 换章时的衔接：翻页模式新的一章像翻过一页那样从翻页方向滑进来、旧的滑出去；滚动模式淡入。关了翻页动画就直接换。
+  /// [child] 按章节 id 做 key，所以同一章里改字号、跳书签不会触发。
+  Widget _chapterSwitch(ReaderPrefs prefs, Widget child) {
+    if (!prefs.pageAnim) return child;
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: Duration(milliseconds: prefs.mode == 0 ? 220 : 300),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
+        transitionBuilder: (c, a) {
+          if (prefs.mode == 0) return FadeTransition(opacity: a, child: c);
+          final incoming = c.key == ValueKey(_cid);
+          // 离开的那章动画从 1 倒着走到 0，所以终点写在 begin 上
+          final from = Offset(incoming ? _dir.toDouble() : -_dir.toDouble(), 0);
+          return SlideTransition(position: Tween(begin: from, end: Offset.zero).animate(a), child: IgnorePointer(ignoring: !incoming, child: c));
+        },
+        child: child,
+      ),
+    );
+  }
+
+  /// 本卷进度：前面的章按读完算，加上这章读到的比例 [f]，每章一样重。找不到所在的卷时就是本章进度。
+  double _volumeProgress(double f) {
+    final v = Volumes.of(widget.aid).where((v) => v.cids.contains(_cid)).firstOrNull;
+    if (v == null) return f;
+    return (v.cids.indexOf(_cid) + f) / v.cids.length;
+  }
+
   void _markRead() {
     final len = ref.read(chapterProvider((widget.aid, _cid))).value?.text.length ?? 0;
     ReadState.mark(widget.aid, _cid, len);
   }
 
+  void _markBack() {
+    final len = ref.read(chapterProvider((widget.aid, _cid))).value?.text.length ?? 0;
+    final label = ref.read(readerPrefsProvider).mode == 0 ? '${len == 0 ? 0 : (_offset * 100 ~/ len).clamp(0, 100)}%' : '第 ${_nav.page.value.$1 + 1} 页';
+    _back = (cid: _cid, offset: _offset, title: _chapterTitle, label: label);
+    _backTurns = 0;
+  }
+
+  /// 回到记下的位置，同时把现在的位置记成新的「返回」点
+  void _returnBack() {
+    final b = _back;
+    if (b == null) return;
+    _markBack();
+    if (b.cid != _cid) {
+      _go(b.cid, offset: b.offset);
+      return;
+    }
+    ReadingProgress.save(widget.aid, _cid, b.offset);
+    _scrubbing = true; // 重新定位触发的保存进度不收起菜单、不算翻页
+    setState(() {
+      _initial = b.offset;
+      _shown = null;
+      _epoch++;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrubbing = false);
+  }
+
   void _saveOffset(int offset) {
+    if (_back != null && !_scrubbing && offset != _offset && ++_backTurns >= 3) _back = null;
+    // 翻了页（点、滑、音量键）就收起菜单；拖底部进度条跳页、朗读跟着翻页时不收
+    final following = _speaking && DateTime.now().difference(_spokeAt).inMilliseconds <= 1200;
+    if (_bar && !_scrubbing && !following && offset != _offset) {
+      setState(() => _bar = false);
+      _setUi();
+    }
     _offset = offset;
     _pos.value = offset;
     ReadingProgress.save(widget.aid, _cid, offset);
@@ -531,11 +727,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     final chapters = novel?.catalogue.expand((v) => v.chapters).toList() ?? const <CatChapter>[];
     final index = chapters.indexWhere((c) => c.cid == _cid);
     final prev = index > 0 ? chapters[index - 1] : null;
-    // 开了"跳过已读章节"：下一章是后面第一个没读过的（全读过就没有下一章）
-    final readSet = prefs.skipRead ? ReadState.read(widget.aid) : const <String>{};
-    final next = index < 0
-        ? null
-        : (prefs.skipRead ? chapters.skip(index + 1).where((c) => !readSet.contains(c.cid)).firstOrNull : (index < chapters.length - 1 ? chapters[index + 1] : null));
+    final next = _nextIn(chapters, index, prefs);
     _nextChapter = next;
     final content = ref.watch(chapterProvider((widget.aid, _cid)));
     // 章节一加载好就预加载后面几章（用 read 触发，且每章只触发一次）
@@ -566,7 +758,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       backgroundColor: palette.bg,
       body: _filtered(prefs, Stack(
         children: [
-          content.when(
+          _chapterSwitch(prefs, KeyedSubtree(key: ValueKey(_cid), child: content.when(
             loading: () => Center(child: CircularProgressIndicator(color: palette.fg)),
             error: (e, _) => StatePanel(title: '章节加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(chapterProvider((widget.aid, _cid)))),
             data: (c) {
@@ -584,9 +776,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   ReadingStats.setMeta(widget.aid, novel.detail.title, novel.detail.author, novel.detail.imgUrl);
                 });
               }
-              if (_resumeTts) {
-                scheduleMicrotask(() => _startTts(c));
-              }
               final reading = _speaking && prefs.ttsHighlight && _si < _segs.length && _ttsText == c.text ? _segs[_si] : null;
               InlineSpan spanOf(int from, int to) => buildSpan(c, from, to, style, noted, reading, Theme.of(context).colorScheme.primary);
               final key = ValueKey((_cid, _epoch, prefs.mode, prefs.font, prefs.fontSize, prefs.lineHeight, prefs.margin, c.marks.length, c.text.length));
@@ -598,18 +787,23 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       spanOf: spanOf,
                       style: style,
                       margin: prefs.margin,
+                      title: title,
+                      headingAccent: prefs.theme == 5 ? _skyAccent : null,
                       startOffset: _offset,
                       onOffset: _saveOffset,
                       onEnd: _markRead,
                       onNext: next == null ? null : () => _go(next.cid),
                       wrap: _selectable,
                       onTapZone: _toggleBar,
+                      menuOpen: () => _bar,
                       tapZone: prefs.tapZone,
                       tapInvert: prefs.tapInvert,
                       onMark: onMark,
                       follow: reading?.$1,
                       nav: _nav,
                       hasSelection: () => _hasSelection,
+                      onPullDown: _addBookmark,
+                      marked: () => Bookmarks.has(widget.aid, _cid, _offset),
                     )
                   : PagedBody(
                       key: key,
@@ -618,21 +812,27 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       style: style,
                       margin: prefs.margin,
                       title: title,
+                      headingAccent: prefs.theme == 5 ? _skyAccent : null,
                       curl: prefs.mode >= 2,
                       cover: prefs.mode == 3,
                       dual: prefs.dual,
                       status: _status,
                       showFooter: prefs.showStatus,
                       animate: prefs.pageAnim,
+                      volumeProgress: _volumeProgress,
+                      onPullDown: _addBookmark,
+                      marked: () => Bookmarks.has(widget.aid, _cid, _offset),
                       background: palette.bg,
                       color: palette.fg,
                       startOffset: _offset,
                       onOffset: _saveOffset,
                       onEnd: _markRead,
                       onPrev: prev == null ? null : () => _go(prev.cid, offset: kToEnd),
-                      onNext: next == null ? null : () => _go(next.cid),
+                      // 全书最后一章再往后翻：这卷刚读完就庆祝一下
+                      onNext: next == null ? (_justFinished() == null ? null : () => _celebrate(_justFinished()!, hasNext: false)) : () => _go(next.cid),
                       wrap: _selectable,
                       onTapZone: _toggleBar,
+                      menuOpen: () => _bar,
                       tapZone: prefs.tapZone,
                       tapInvert: prefs.tapInvert,
                       onMark: onMark,
@@ -641,7 +841,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       hasSelection: () => _hasSelection,
                     );
             },
-          ),
+          ))),
           if (prefs.mode == 0 && prefs.showStatus && content.hasValue)
             Positioned(
               left: 0,
@@ -656,7 +856,8 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       valueListenable: _pos,
                       builder: (_, pos, _) {
                         final len = content.value!.text.length;
-                        return ReaderFooter(status: _status, right: '${len == 0 ? 0 : (pos * 100 ~/ len).clamp(0, 100)}%', style: TextStyle(fontSize: 11, color: palette.fg.withValues(alpha: 0.5)));
+                        final f = len == 0 ? 0.0 : (pos / len).clamp(0.0, 1.0);
+                        return ReaderFooter(status: _status, right: '本章 ${(f * 100).floor()}% · 本卷 ${(_volumeProgress(f) * 100).floor()}%', style: TextStyle(fontSize: 11, color: palette.fg.withValues(alpha: 0.5)));
                       },
                     ),
                   ),
@@ -706,29 +907,79 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Row(
-                        children: [
-                          IconButton(tooltip: '上一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.chevron_left), onPressed: prev == null ? null : () => _go(prev.cid)),
-                          if (chapters.length > 1) ...[
-                            Text('${index + 1}/${chapters.length}', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.fg)),
-                            Expanded(
-                              child: Slider(
-                                min: 0,
-                                max: (chapters.length - 1).toDouble(),
-                                divisions: chapters.length - 1,
-                                value: (_slide ?? index).clamp(0, chapters.length - 1).toDouble(),
-                                onChanged: (v) => setState(() => _slide = v),
-                                onChangeEnd: (v) {
-                                  _slide = null;
-                                  _go(chapters[v.round()].cid);
-                                },
-                              ),
-                            ),
-                          ] else
-                            const Spacer(),
-                          IconButton(tooltip: '下一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.chevron_right), onPressed: next == null ? null : () => _go(next.cid)),
-                        ],
-                      ),
+                      // 拖的是本章的页（滚动模式是本章的比例），拖的时候上面显示章节名和页码，松手跳过去；跨章用两边的按钮或目录
+                      if (content.hasValue)
+                        ValueListenableBuilder<(int, int)>(
+                          valueListenable: _nav.page,
+                          builder: (context, pg, _) {
+                            final paged = prefs.mode != 0;
+                            final len = content.value!.text.length;
+                            final total = paged ? pg.$2 : 100;
+                            final cur = paged ? pg.$1 : (len == 0 ? 0 : (_pos.value * 100 ~/ len).clamp(0, 100));
+                            final shown = (_slide ?? cur.toDouble()).round();
+                            final label = paged ? '${shown + 1} / $total' : '$shown%';
+                            return Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(16, 6, 8, 0),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          _slide == null ? label : '$title · $label',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: palette.fg, fontWeight: _slide == null ? null : FontWeight.w600),
+                                        ),
+                                      ),
+                                      if (_back case final b? when _slide == null)
+                                        ConstrainedBox(
+                                          constraints: const BoxConstraints(maxWidth: 220),
+                                          child: TextButton.icon(
+                                            style: TextButton.styleFrom(foregroundColor: palette.fg, visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 10), side: BorderSide(color: palette.fg.withValues(alpha: 0.25))),
+                                            onPressed: _returnBack,
+                                            icon: const Icon(Icons.undo_rounded, size: 16),
+                                            label: Text(b.cid == _cid ? '返回${b.label}' : '返回「${b.title}」', maxLines: 1, overflow: TextOverflow.ellipsis),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    IconButton(tooltip: '上一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.skip_previous_rounded), onPressed: prev == null ? null : () {
+                                      _markBack();
+                                      _go(prev.cid);
+                                    }),
+                                    Expanded(
+                                      child: total > 1
+                                          ? Slider(
+                                              min: 0,
+                                              max: (total - 1).toDouble(),
+                                              divisions: paged ? total - 1 : null,
+                                              value: (_slide ?? cur.toDouble()).clamp(0, total - 1).toDouble(),
+                                              onChanged: (v) => setState(() => _slide = v),
+                                              onChangeEnd: (v) {
+                                                setState(() => _slide = null);
+                                                _markBack();
+                                                _scrubbing = true; // 跳页触发的保存进度不收起菜单
+                                                paged ? _nav.toPage?.call(v.round()) : _nav.toFraction?.call(v / 100);
+                                                WidgetsBinding.instance.addPostFrameCallback((_) => _scrubbing = false);
+                                              },
+                                            )
+                                          : const SizedBox(height: 48),
+                                    ),
+                                    IconButton(tooltip: '下一章', color: palette.fg, disabledColor: palette.fg.withValues(alpha: 0.3), icon: const Icon(Icons.skip_next_rounded), onPressed: next == null ? null : () {
+                                      _markBack();
+                                      _go(next.cid);
+                                    }),
+                                  ],
+                                ),
+                              ],
+                            );
+                          },
+                        ),
                       Row(
                         children: [
                           for (final (icon, label, onTap) in <(IconData, String, VoidCallback)>[
@@ -814,9 +1065,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                   selected: c.cid == current,
                                   leading: read.contains(c.cid) ? const Icon(Icons.check, size: 16) : null,
                                   title: Text(c.title, style: read.contains(c.cid) && c.cid != current ? TextStyle(color: theme.colorScheme.onSurfaceVariant) : null),
-                                  trailing: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 16) : null,
+                                  trailing: ChapterCache.has(widget.aid, c.cid) ? Icon(Icons.download_for_offline_outlined, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)) : null,
                                   onTap: () {
                                     Navigator.pop(context);
+                                    if (c.cid != _cid) _markBack();
                                     _go(c.cid);
                                   },
                                 ),
@@ -834,7 +1086,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                                   for (final b in marks)
                                     ListTile(
                                       title: Text(b.excerpt.isEmpty ? b.chapter : b.excerpt, maxLines: 2, overflow: TextOverflow.ellipsis),
-                                      subtitle: Text(b.chapter, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      subtitle: FutureBuilder(
+                                        future: bookmarkPage(ref, context, b.aid, b.cid, b.chapter, b.offset),
+                                        builder: (_, snap) => Text([b.chapter, if (snap.data case (final p, final n)) '第 $p / $n 页'].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      ),
                                       onTap: () {
                                         Navigator.pop(context);
                                         _go(b.cid, offset: b.offset == 0 ? 1 : b.offset);
@@ -892,52 +1147,45 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
             ref.read(readerPrefsProvider.notifier).update(prefs.copyWith());
           }
 
+          final hm = _sleepAt == null ? '' : '${_sleepAt!.hour.toString().padLeft(2, '0')}:${_sleepAt!.minute.toString().padLeft(2, '0')}';
           return SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              padding: const EdgeInsets.only(bottom: 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (_speaking)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        OutlinedButton.icon(onPressed: () => _skipSentence(-1), icon: const Icon(Icons.skip_previous), label: const Text('上一句')),
-                        OutlinedButton.icon(onPressed: () => _skipSentence(1), icon: const Icon(Icons.skip_next), label: const Text('下一句')),
-                      ],
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+                      child: Row(
+                        children: [
+                          Expanded(child: OutlinedButton.icon(onPressed: () => _skipSentence(-1), icon: const Icon(Icons.skip_previous), label: const Text('上一句'))),
+                          const SizedBox(width: 12),
+                          Expanded(child: OutlinedButton.icon(onPressed: () => _skipSentence(1), icon: const Icon(Icons.skip_next), label: const Text('下一句'))),
+                        ],
+                      ),
                     ),
-                  Text('语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
-                  Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
-                  Text('音调 ${prefs.ttsPitch.toStringAsFixed(1)}'),
-                  Slider(min: 0.5, max: 2.0, divisions: 15, value: prefs.ttsPitch, onChanged: (v) => set(prefs.copyWith(ttsPitch: v))),
-                  const Text('声音'),
+                  const XGroupTitle('语音'),
+                  XSlider(title: '语速', label: prefs.ttsRate.toStringAsFixed(1), slider: Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v)))),
+                  XSlider(title: '音调', label: prefs.ttsPitch.toStringAsFixed(1), slider: Slider(min: 0.5, max: 2.0, divisions: 15, value: prefs.ttsPitch, onChanged: (v) => set(prefs.copyWith(ttsPitch: v)))),
                   FutureBuilder<List<String>>(
                     future: _zhVoices(),
-                    builder: (context, snap) {
-                      final names = snap.data ?? const <String>[];
-                      return Wrap(
-                        spacing: 8,
-                        children: [
-                          ChoiceChip(label: const Text('系统默认'), selected: prefs.ttsVoice.isEmpty, onSelected: (_) => set(prefs.copyWith(ttsVoice: ''))),
-                          for (final n in names) ChoiceChip(label: Text(n), selected: prefs.ttsVoice == n, onSelected: (_) => set(prefs.copyWith(ttsVoice: n))),
-                        ],
-                      );
-                    },
+                    builder: (context, snap) => XChips<String>(title: '音色', value: prefs.ttsVoice, options: {'': '系统默认', for (final n in snap.data ?? const <String>[]) n: n}, onChanged: (v) => set(prefs.copyWith(ttsVoice: v))),
                   ),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('高亮正在读的句子，并跟着翻页'), value: prefs.ttsHighlight, onChanged: (v) => set(prefs.copyWith(ttsHighlight: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('读完一章自动读下一章'), value: prefs.ttsAutoNext, onChanged: (v) => set(prefs.copyWith(ttsAutoNext: v))),
-                  const Text('定时关闭'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      ChoiceChip(label: const Text('关'), selected: _sleepAt == null && !_stopAtChapterEnd, onSelected: (_) => sleep(null, false)),
-                      for (final m in [15, 30, 60])
-                        ChoiceChip(label: Text('$m 分钟'), selected: false, onSelected: (_) => sleep(DateTime.now().add(Duration(minutes: m)), false)),
-                      ChoiceChip(label: const Text('读完本章'), selected: _stopAtChapterEnd, onSelected: (_) => sleep(null, true)),
-                    ],
+                  const XDivider(),
+                  const XGroupTitle('朗读方式'),
+                  XSwitch(title: '跟读高亮', subtitle: '高亮当前朗读的句子，并自动翻到对应页面', value: prefs.ttsHighlight, onChanged: (v) => set(prefs.copyWith(ttsHighlight: v))),
+                  XSwitch(title: '自动朗读下一章', value: prefs.ttsAutoNext, onChanged: (v) => set(prefs.copyWith(ttsAutoNext: v))),
+                  const XDivider(),
+                  const XGroupTitle('定时停止'),
+                  // 分钟数选过就算"定时中"，不再标出选的是哪一档
+                  XChips<int>(
+                    value: _stopAtChapterEnd ? -1 : (_sleepAt == null ? 0 : null),
+                    options: const {0: '关闭', 15: '15 分钟', 30: '30 分钟', 60: '60 分钟', -1: '本章结束'},
+                    onChanged: (m) => m == 0 ? sleep(null, false) : (m < 0 ? sleep(null, true) : sleep(DateTime.now().add(Duration(minutes: m)), false)),
                   ),
-                  if (_sleepAt != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text('将在 ${_sleepAt!.hour.toString().padLeft(2, '0')}:${_sleepAt!.minute.toString().padLeft(2, '0')} 停止', style: Theme.of(context).textTheme.bodySmall)),
+                  if (_sleepAt != null) XNote('将于 $hm 停止朗读'),
                 ],
               ),
             ),
@@ -969,107 +1217,105 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
         builder: (context, ref, _) {
           final prefs = ref.watch(readerPrefsProvider);
           void set(ReaderPrefs p) => ref.read(readerPrefsProvider.notifier).update(p);
-          Widget title(String t) => Padding(padding: const EdgeInsets.only(top: 12, bottom: 6), child: Text(t));
+          final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+          final scheme = Theme.of(context).colorScheme;
+          const tapZones = {0: '默认', 1: 'L 形', 2: 'Kindle 式', 3: '边缘式', 4: '仅呼出菜单'};
+          const tapHelp = ['翻页模式下点击左右两侧翻页、中间呼出菜单；滚动模式下点击任意位置呼出菜单', '点击上方和左中部向前翻页，下方和右中部向后翻页，中间呼出菜单', '点击顶部一栏呼出菜单，左侧向前翻页，其余区域向后翻页', '点击左右两侧向后翻页，底部中间向前翻页，中间呼出菜单', '点击任意位置只呼出菜单，用音量键或滑动翻页'];
           return SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              padding: const EdgeInsets.only(bottom: 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('亮度${((1 - prefs.dim) * 100).round()}%'),
+                  const XGroupTitle('显示'),
+                  // 一排背景色样：色块里写个"文"字，选中的外面一圈
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        for (final (i, name) in ['纸张', '护眼', '夜间', '跟随应用', '纯黑', '晴空'].indexed)
+                          GestureDetector(
+                            onTap: () => set(prefs.copyWith(theme: i)),
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: 42,
+                                  height: 42,
+                                  padding: const EdgeInsets.all(2.5),
+                                  decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: prefs.theme == i ? scheme.primary : Colors.transparent, width: 2)),
+                                  child: Builder(builder: (context) {
+                                    final pal = _paletteOf(prefs.copyWith(theme: i), scheme);
+                                    return DecoratedBox(
+                                      decoration: BoxDecoration(shape: BoxShape.circle, color: pal.bg, border: Border.all(color: scheme.outline)),
+                                      child: Center(child: Text('文', style: TextStyle(fontSize: 14, color: i == 5 ? _skyAccent.$1 : pal.fg))),
+                                    );
+                                  }),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(name, maxLines: 1, style: TextStyle(fontSize: 12, color: prefs.theme == i ? scheme.primary : scheme.onSurfaceVariant, fontWeight: prefs.theme == i ? FontWeight.w600 : null)),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                   // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
-                  Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v))),
-                  Text('字号 ${prefs.fontSize.round()}'),
-                  Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v))),
-                  Text('行距 ${prefs.lineHeight.toStringAsFixed(1)}'),
-                  Slider(min: 1.3, max: 2.4, divisions: 11, value: prefs.lineHeight, onChanged: (v) => set(prefs.copyWith(lineHeight: v))),
-                  Text('页边距 ${prefs.margin.round()}'),
-                  Slider(min: 8, max: 48, divisions: 20, value: prefs.margin, onChanged: (v) => set(prefs.copyWith(margin: v))),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final e in FontStore.names.entries)
-                        ChoiceChip(
-                          label: Text(e.value),
-                          selected: prefs.font == e.key,
-                          onSelected: (_) async {
-                            if (e.key == 2 && FontStore.customFamily == null && !await FontStore.pick()) return;
-                            set(prefs.copyWith(font: e.key));
-                          },
-                        ),
+                  XSlider(title: '页面亮度', label: '${((1 - prefs.dim) * 100).round()}%', slider: Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v)))),
+                  if (android) ...[
+                    XSwitch(title: '独立屏幕亮度', subtitle: '不跟随系统亮度，最高可调得比系统更亮；退出阅读后恢复', value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
+                    if (prefs.customBrightness) XSlider(title: '屏幕亮度', label: '${(prefs.brightness * 100).round()}%', slider: Slider(min: 0.02, max: 1.0, value: prefs.brightness.clamp(0.02, 1.0), onChanged: (v) => set(prefs.copyWith(brightness: v)))),
+                  ],
+                  XSlider(title: '暖色滤镜', label: prefs.warm == 0 ? '关闭' : '${(prefs.warm * 200).round()}%', slider: Slider(min: 0, max: 0.5, divisions: 10, value: prefs.warm, onChanged: (v) => set(prefs.copyWith(warm: v)))),
+                  XSwitch(title: '灰度', value: prefs.grayscale, onChanged: (v) => set(prefs.copyWith(grayscale: v))),
+                  XSwitch(title: '反色', value: prefs.invert, onChanged: (v) => set(prefs.copyWith(invert: v))),
+                  const XDivider(),
+                  const XGroupTitle('排版'),
+                  XSlider(title: '字号', label: '${prefs.fontSize.round()}', slider: Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v)))),
+                  XSlider(title: '行距', label: prefs.lineHeight.toStringAsFixed(1), slider: Slider(min: 1.3, max: 2.4, divisions: 11, value: prefs.lineHeight, onChanged: (v) => set(prefs.copyWith(lineHeight: v)))),
+                  XSlider(title: '页边距', label: '${prefs.margin.round()}', slider: Slider(min: 8, max: 48, divisions: 20, value: prefs.margin, onChanged: (v) => set(prefs.copyWith(margin: v)))),
+                  XChips<int>(
+                    title: '字体',
+                    value: prefs.font,
+                    options: FontStore.names,
+                    onChanged: (k) async {
+                      if (k == 2 && FontStore.customFamily == null && !await FontStore.pick()) return;
+                      set(prefs.copyWith(font: k));
+                    },
+                    extra: [
                       if (!isWebPreview)
                         ActionChip(
-                          label: const Text('选择字体文件…'),
+                          avatar: const Icon(Icons.upload_file_outlined, size: 18),
+                          label: const Text('导入字体'),
                           onPressed: () async {
                             if (await FontStore.pick()) set(prefs.copyWith(font: 2));
                           },
                         ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final (i, name) in ['纸张', '护眼', '夜间', '跟随应用'].indexed) ChoiceChip(label: Text(name), selected: prefs.theme == i, onSelected: (_) => set(prefs.copyWith(theme: i))),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  SegmentedButton<int>(
-                    segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真')), ButtonSegment(value: 3, label: Text('覆盖'))],
-                    selected: {prefs.mode},
-                    onSelectionChanged: (s) => set(prefs.copyWith(mode: s.first)),
-                  ),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('宽屏双页'), subtitle: const Text('窗口宽度 ≥ 900 时，左右翻页模式一屏显示两页'), value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
-                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
-                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('音量键翻页'), subtitle: const Text('下音量键下一页，上音量键上一页；朗读时仍调音量'), value: prefs.volumeKeys, onChanged: (v) => set(prefs.copyWith(volumeKeys: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('保持屏幕常亮'), value: prefs.keepScreenOn, onChanged: (v) => set(prefs.copyWith(keepScreenOn: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('全屏阅读'), subtitle: const Text('隐藏状态栏，点菜单时才出来'), value: prefs.fullscreen, onChanged: (v) => set(prefs.copyWith(fullscreen: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('显示页脚'), subtitle: const Text('时间、电量、页码 / 进度'), value: prefs.showStatus, onChanged: (v) => set(prefs.copyWith(showStatus: v))),
-                  title('点击分区'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final (i, name) in ['默认', 'L 型', 'Kindle 式', '边缘式', '只呼出菜单'].indexed) ChoiceChip(label: Text(name), selected: prefs.tapZone == i, onSelected: (_) => set(prefs.copyWith(tapZone: i))),
-                    ],
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      const ['翻页模式：点左右两边翻页，点中间呼出菜单；滚动模式：点哪里都呼出菜单', '上面和左中上一页，下面和右中下一页，中间呼出菜单', '上面一排呼出菜单，左边上一页，其余下一页', '左右两边下一页，底部中间上一页，中间呼出菜单', '点哪里都只呼出菜单，用音量键或滑动翻页'][prefs.tapZone],
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  if (prefs.tapZone != 4) ...[
-                    title('点击反转'),
-                    Wrap(
-                      spacing: 8,
-                      children: [
-                        for (final (i, name) in ['不反转', '水平', '垂直', '两者'].indexed) ChoiceChip(label: Text(name), selected: prefs.tapInvert == i, onSelected: (_) => set(prefs.copyWith(tapInvert: i))),
-                      ],
-                    ),
+                  const XDivider(),
+                  const XGroupTitle('翻页'),
+                  XSegments<int>(value: prefs.mode, options: const {0: '滚动', 1: '滑动', 2: '仿真', 3: '覆盖'}, onChanged: (v) => set(prefs.copyWith(mode: v))),
+                  if (prefs.mode == 1) XSwitch(title: '翻页动画', subtitle: '滑动翻页时显示过渡动画', value: prefs.pageAnim, onChanged: (v) => set(prefs.copyWith(pageAnim: v))),
+                  XSwitch(title: '宽屏双页', subtitle: '窗口宽度不小于 900 时，翻页模式下并排显示两页', value: prefs.dual, onChanged: (v) => set(prefs.copyWith(dual: v))),
+                  XChoice<int>(title: '点击区域', subtitle: tapHelp[prefs.tapZone], value: prefs.tapZone, options: tapZones, onChanged: (v) => set(prefs.copyWith(tapZone: v))),
+                  if (prefs.tapZone != 4) XChoice<int>(title: '反转点击区域', value: prefs.tapInvert, options: const {0: '不反转', 1: '左右反转', 2: '上下反转', 3: '全部反转'}, onChanged: (v) => set(prefs.copyWith(tapInvert: v))),
+                  if (android) ...[
+                    XSwitch(title: '音量键翻页', subtitle: prefs.volumeInvert ? '音量 + 下一页，音量 − 上一页；朗读时仍调节音量' : '音量 − 下一页，音量 + 上一页；朗读时仍调节音量', value: prefs.volumeKeys, onChanged: (v) => set(prefs.copyWith(volumeKeys: v))),
+                    if (prefs.volumeKeys) XSwitch(title: '反转音量键', value: prefs.volumeInvert, onChanged: (v) => set(prefs.copyWith(volumeInvert: v))),
                   ],
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('翻到下一章时跳过已读章节'), value: prefs.skipRead, onChanged: (v) => set(prefs.copyWith(skipRead: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('切章时提示章节名'), value: prefs.chapterToast, onChanged: (v) => set(prefs.copyWith(chapterToast: v))),
-                  if (prefs.mode == 1) SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('翻页动画'), subtitle: const Text('滑动模式翻页时的过渡'), value: prefs.pageAnim, onChanged: (v) => set(prefs.copyWith(pageAnim: v))),
-                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && prefs.volumeKeys)
-                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('音量键方向反过来'), subtitle: const Text('开了以后：上音量键下一页，下音量键上一页'), value: prefs.volumeInvert, onChanged: (v) => set(prefs.copyWith(volumeInvert: v))),
-                  title('往后预加载'),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final n in const [0, 1, 2, 3, 5]) ChoiceChip(label: Text(n == 0 ? '关' : '$n 章'), selected: prefs.prefetch == n, onSelected: (_) => set(prefs.copyWith(prefetch: n))),
-                    ],
-                  ),
-                  if (prefs.prefetch > 0) SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('只在 Wi-Fi 下预加载'), value: prefs.prefetchWifi, onChanged: (v) => set(prefs.copyWith(prefetchWifi: v))),
-                  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
-                    SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('自定义屏幕亮度'), subtitle: const Text('可以比系统亮度更亮，退出阅读后恢复'), value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
-                    if (prefs.customBrightness) Slider(min: 0.02, max: 1.0, value: prefs.brightness.clamp(0.02, 1.0), onChanged: (v) => set(prefs.copyWith(brightness: v))),
-                  ],
-                  title('暖色滤镜 ${(prefs.warm * 200).round()}%'),
-                  Slider(min: 0, max: 0.5, divisions: 10, value: prefs.warm, onChanged: (v) => set(prefs.copyWith(warm: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('灰度'), value: prefs.grayscale, onChanged: (v) => set(prefs.copyWith(grayscale: v))),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('反色'), value: prefs.invert, onChanged: (v) => set(prefs.copyWith(invert: v))),
+                  const XDivider(),
+                  const XGroupTitle('章节'),
+                  XSwitch(title: '自动跳过已读章节', subtitle: '翻到下一章时，跳过已经读过的章节', value: prefs.skipRead, onChanged: (v) => set(prefs.copyWith(skipRead: v))),
+                  XSwitch(title: '切换章节时显示标题', value: prefs.chapterToast, onChanged: (v) => set(prefs.copyWith(chapterToast: v))),
+                  XChoice<int>(title: '预加载章节', subtitle: '提前下载后面的章节，翻页时不用等', value: prefs.prefetch, options: const {0: '关闭', 1: '后 1 章', 2: '后 2 章', 3: '后 3 章', 5: '后 5 章'}, onChanged: (v) => set(prefs.copyWith(prefetch: v))),
+                  if (prefs.prefetch > 0) XSwitch(title: '仅在 Wi-Fi 下预加载', value: prefs.prefetchWifi, onChanged: (v) => set(prefs.copyWith(prefetchWifi: v))),
+                  const XDivider(),
+                  const XGroupTitle('屏幕'),
+                  XSwitch(title: '屏幕常亮', subtitle: '阅读时不自动锁屏', value: prefs.keepScreenOn, onChanged: (v) => set(prefs.copyWith(keepScreenOn: v))),
+                  XSwitch(title: '沉浸式阅读', subtitle: '隐藏系统状态栏，呼出菜单时显示', value: prefs.fullscreen, onChanged: (v) => set(prefs.copyWith(fullscreen: v))),
+                  XSwitch(title: '页脚信息', subtitle: '在页面底部显示时间、电量和阅读进度', value: prefs.showStatus, onChanged: (v) => set(prefs.copyWith(showStatus: v))),
                 ],
               ),
             ),

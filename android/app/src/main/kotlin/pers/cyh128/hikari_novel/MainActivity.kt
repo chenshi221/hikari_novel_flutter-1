@@ -5,12 +5,13 @@ import android.content.pm.PackageManager
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.annotation.NonNull
-import io.flutter.embedding.android.FlutterFragmentActivity
+import androidx.core.app.NotificationManagerCompat
+import com.ryanheise.audioservice.AudioServiceFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
-// 生物识别锁（local_auth）要求 Activity 是 FragmentActivity
-class MainActivity : FlutterFragmentActivity() {
+// 生物识别锁（local_auth）要求 Activity 是 FragmentActivity；朗读通知（audio_service）要求用它的 Activity 共享引擎
+class MainActivity : AudioServiceFragmentActivity() {
     private val intentChannelName = "hikari/system_intents"
     private val readerVolumeChannelName = "hikari/reader_volume_keys"
     private var readerVolumeChannel: MethodChannel? = null
@@ -35,6 +36,16 @@ class MainActivity : FlutterFragmentActivity() {
                 val lp = window.attributes
                 lp.screenBrightness = if (v < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else v.coerceIn(0.01f, 1f)
                 window.attributes = lp
+                result.success(null)
+            } else {
+                result.notImplemented()
+            }
+        }
+
+        // 停止朗读时删掉朗读通知（audio_service 的通知 id 固定是 1124；服务被 App 绑着，它自己删不掉）
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/tts").setMethodCallHandler { call, result ->
+            if (call.method == "cancelNotice") {
+                NotificationManagerCompat.from(this).cancel(1124)
                 result.success(null)
             } else {
                 result.notImplemented()

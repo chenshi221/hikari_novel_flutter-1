@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -142,7 +143,7 @@ class NetImage extends ConsumerWidget {
         builder: (context, c) {
           // 裁剪时整张图比格子大：裁出来的那块才铺满格子
           final box = Size(_bucket(c.maxWidth * dpr / (crop?.width ?? 1)), _bucket(c.maxHeight * dpr / (crop?.height ?? 1)));
-          return build(_Fitted(b, box, fit == BoxFit.cover));
+          return build(_Fitted(url, b, box, fit == BoxFit.cover));
         },
       );
     }
@@ -150,8 +151,8 @@ class NetImage extends ConsumerWidget {
     // 内存里有就同步直接画，返回页面时不会先空一帧再出来
     final hit = store.peek(url);
     if (hit != null) return image(hit);
-    // 只有这次刚从网上下载的才淡入，从磁盘读的直接显示
-    return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: store.downloaded(url)), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+    // 不在内存里的（刚下载的、从磁盘读的）都短短淡入一下，比突然蹦出来顺眼；内存里有的上面已经同步画了
+    return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: true), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
   }
 
   /// 往上取到几个固定档位（每档大 25%）：格子大小一直在变时（比如封面飞过去的动画）不用每帧都重新解码
@@ -171,9 +172,11 @@ class NetImage extends ConsumerWidget {
 }
 
 /// 按格子大小解码。高清封面原图 1440×2048，原样解码一张占 12 MB，Flutter 的图片缓存（100 MB）装不下一屏书架，滑回来又得重新解码。
+/// 按地址认图（不按字节对象）：内存里的字节被挤掉、再从磁盘读回来时，Flutter 图片缓存里解码好的那张还能接着用。
 class _Fitted extends ImageProvider<_Fitted> {
-  const _Fitted(this.bytes, this.box, this.cover);
+  const _Fitted(this.url, this.bytes, this.box, this.cover);
 
+  final String url;
   final Uint8List bytes;
   final Size box; // 物理像素；无限表示这个方向不限
   final bool cover; // 铺满格子（取两边缩放比里大的那个），否则整张放进格子
@@ -194,10 +197,10 @@ class _Fitted extends ImageProvider<_Fitted> {
   );
 
   @override
-  bool operator ==(Object other) => other is _Fitted && identical(other.bytes, bytes) && other.box == box && other.cover == cover;
+  bool operator ==(Object other) => other is _Fitted && other.url == url && other.box == box && other.cover == cover;
 
   @override
-  int get hashCode => Object.hash(identityHashCode(bytes), box, cover);
+  int get hashCode => Object.hash(url, box, cover);
 }
 
 Widget _fadeIn(BuildContext context, Widget child, int? frame, bool sync) =>
@@ -340,6 +343,7 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
         },
         child: LayoutBuilder(
           builder: (context, c) => CustomScrollView(
+            scrollCacheExtent: const ScrollCacheExtent.viewport(0.8), // 提前排上下面几行的封面
             slivers: [
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),

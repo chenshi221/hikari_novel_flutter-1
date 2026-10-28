@@ -75,7 +75,7 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                               dense: true,
                               leading: Checkbox(value: _picked.contains(c.cid), onChanged: (_) => setState(() => _picked.contains(c.cid) ? _picked.remove(c.cid) : _picked.add(c.cid))),
                               title: Text(c.title),
-                              trailing: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_done, size: 18) : null,
+                              trailing: ChapterCache.has(widget.aid, c.cid) ? const Icon(Icons.download_for_offline_outlined, size: 18) : null,
                               onTap: () => context.push(Routes.reader(widget.aid, c.cid)),
                             ),
                         ],

@@ -32,6 +32,16 @@ void main() {
     expect(pageOfOffset(starts, text.length), starts.length - 1);
   });
 
+  test('章节标题：第一页给标题让出高度，后面每页照常', () {
+    final head = headingHeight('第一章 很长很长的标题', style, 200);
+    expect(head, greaterThan(16 * 1.35));
+    final plain = paginate(text, style, const Size(200, 300));
+    final titled = paginate(text, style, const Size(200, 300), firstTop: head);
+    expect(titled[1], lessThan(plain[1]));
+    expect(titled.length, greaterThanOrEqualTo(plain.length));
+    expect(headingHeight('  ', style, 200), 0);
+  });
+
   test('空文本只有一页', () => expect(paginate('', style, const Size(200, 300)), [0]));
 
   test('章节格式化：每段两个全角空格缩进，去掉空行和多余空白', () {

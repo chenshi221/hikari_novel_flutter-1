@@ -104,8 +104,10 @@ class ChapterSwipe extends ConsumerWidget {
     final right = p.right == SwipeAct.cache && !canCache ? SwipeAct.off : p.right;
     final left = p.left == SwipeAct.cache && !canCache ? SwipeAct.off : p.left;
     if (!enabled || (right == SwipeAct.off && left == SwipeAct.off)) return child;
-    return Dismissible(
+    return _Moving(
+      builder: (moving, onUpdate) => Dismissible(
       key: ValueKey('swipe:$aid:$cid'),
+      onUpdate: onUpdate,
       direction: right == SwipeAct.off ? DismissDirection.endToStart : (left == SwipeAct.off ? DismissDirection.startToEnd : DismissDirection.horizontal),
       dismissThresholds: const {DismissDirection.startToEnd: 0.3, DismissDirection.endToStart: 0.3},
       background: _bg(right, scheme, Alignment.centerLeft),
@@ -114,7 +116,29 @@ class ChapterSwipe extends ConsumerWidget {
         await _run(dir == DismissDirection.startToEnd ? right : left);
         return false;
       },
-      child: ColoredBox(color: backdrop ?? Scaffold.maybeOf(context)?.widget.backgroundColor ?? Theme.of(context).colorScheme.surface, child: child),
+      // 只在滑的时候垫底色：平时透明，页面背景渐变时不会和它错开
+      child: ColoredBox(color: moving ? backdrop ?? Scaffold.maybeOf(context)?.widget.backgroundColor ?? Theme.of(context).colorScheme.surface : Colors.transparent, child: child),
+    ),
     );
   }
+}
+
+/// 记住这一行是不是正在被滑开
+class _Moving extends StatefulWidget {
+  const _Moving({required this.builder});
+
+  final Widget Function(bool moving, DismissUpdateCallback onUpdate) builder;
+
+  @override
+  State<_Moving> createState() => _MovingState();
+}
+
+class _MovingState extends State<_Moving> {
+  bool _moving = false;
+
+  @override
+  Widget build(BuildContext context) => widget.builder(_moving, (d) {
+    final m = d.progress > 0;
+    if (m != _moving) setState(() => _moving = m);
+  });
 }

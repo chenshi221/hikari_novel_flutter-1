@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../sync.dart';
 import '../widgets.dart';
+import '../x_list.dart';
 
 /// 同步设置：坚果云（或其他 WebDAV）。应用密码在坚果云网页端"账户信息 → 安全选项 → 第三方应用管理"里生成。
 class SyncPage extends ConsumerStatefulWidget {
@@ -82,55 +83,80 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   @override
   Widget build(BuildContext context) {
     final status = ref.watch(syncProvider);
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     final last = Sync.lastSync;
+    final busy = _busy || status.busy;
+    final lastText = last > 0 ? '上次同步：${'${DateTime.fromMillisecondsSinceEpoch(last)}'.split('.').first.substring(0, 16)}' : '尚未同步';
+    // 顶上一块状态卡：图标、是否已配置、上次同步时间；测试 / 同步的结果也显示在这里
+    final message = _note ?? status.message;
+    final card = Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: scheme.surfaceContainer, borderRadius: BorderRadius.circular(14)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          XLeading(icon: Sync.configured ? Icons.cloud_done_outlined : Icons.cloud_off_outlined, color: Sync.configured ? scheme.primary : null),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(Sync.configured ? '已配置 WebDAV 同步' : '未配置同步', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600, color: scheme.onSurface)),
+                const SizedBox(height: 2),
+                Text(lastText, style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+                if (message != null) ...[const SizedBox(height: 6), Text(message, style: TextStyle(fontSize: 13, height: 1.4, color: message == '连接成功' ? scheme.primary : scheme.onSurface))],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    Widget field(TextEditingController c, String label, IconData icon, {String? helper, bool secret = false, TextInputType? type}) => Padding(
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+      child: TextField(controller: c, obscureText: secret, autocorrect: false, keyboardType: type, decoration: InputDecoration(labelText: label, helperText: helper, helperMaxLines: 2, prefixIcon: Icon(icon, size: 20))),
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('同步')),
       body: contentWidth(ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.only(bottom: 32),
         children: [
-          Text('在多台设备上填同一个账号和文件夹，进度、书签、历史、已读章节、规则备注和阅读统计会互相合并。章节缓存和外观设置不同步。', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          const SizedBox(height: 16),
-          TextField(controller: _url, decoration: const InputDecoration(labelText: 'WebDAV 地址'), keyboardType: TextInputType.url),
-          const SizedBox(height: 12),
-          TextField(controller: _user, decoration: const InputDecoration(labelText: '账号（坚果云注册邮箱）'), autocorrect: false),
-          const SizedBox(height: 12),
-          TextField(controller: _pass, decoration: const InputDecoration(labelText: '应用密码（不是登录密码）'), obscureText: true),
-          const SizedBox(height: 12),
-          TextField(controller: _folder, decoration: const InputDecoration(labelText: '同步文件夹', helperText: '会在 WebDAV 根目录下自动创建')),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(child: OutlinedButton(onPressed: _busy || status.busy ? null : _test, child: const Text('测试连接'))),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  onPressed: _busy || status.busy
-                      ? null
-                      : () async {
-                          await _save();
-                          await ref.read(syncProvider.notifier).run();
-                        },
-                  child: status.busy ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('立即同步'),
+          card,
+          const XNote('在多台设备上填写同一账号和文件夹，阅读进度、书签、历史、已读章节、规则备注和阅读统计会自动合并。章节缓存和外观设置不参与同步。'),
+          const XDivider(),
+          const XGroupTitle('WebDAV 账号'),
+          field(_url, 'WebDAV 地址', Icons.link, type: TextInputType.url),
+          field(_user, '账号', Icons.person_outline, helper: '坚果云填写注册邮箱'),
+          field(_pass, '应用密码', Icons.key_outlined, secret: true, helper: '不是登录密码。坚果云在网页端「账户信息 → 安全选项 → 第三方应用管理」中生成'),
+          field(_folder, '同步文件夹', Icons.folder_outlined, helper: '将在 WebDAV 根目录下自动创建'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+            child: Row(
+              children: [
+                Expanded(child: OutlinedButton(onPressed: busy ? null : _test, child: const Text('测试连接'))),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: busy
+                        ? null
+                        : () async {
+                            await _save();
+                            await ref.read(syncProvider.notifier).run();
+                          },
+                    child: status.busy ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('立即同步'),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
-          if (_note != null) Text(_note!),
-          if (status.message != null) Text(status.message!),
-          if (last > 0) Text('上次同步：${DateTime.fromMillisecondsSinceEpoch(last)}'.split('.').first, style: theme.textTheme.bodySmall),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(child: OutlinedButton(onPressed: _export, child: const Text('导出备份'))),
-              const SizedBox(width: 12),
-              Expanded(child: OutlinedButton(onPressed: _import, child: const Text('导入备份'))),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text('已配置后，App 启动、回到前台和进入后台时会自动同步（3 分钟内不重复）。密码优先存在系统钥匙串，不可用时存在本机应用数据里。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          Text('书签和规则的删除、规则的修改会同步（记录保留 90 天，更久没同步的设备可能把已删的带回来）；备注的删改不同步。', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          const XDivider(),
+          const XGroupTitle('手动备份'),
+          XTile(leading: const XLeading(icon: Icons.upload_outlined), title: '导出同步数据', subtitle: '生成 JSON 文件，通过系统分享保存或发送', onTap: _export),
+          XTile(leading: const XLeading(icon: Icons.download_outlined), title: '导入同步数据', subtitle: '选择导出的文件，按同步规则合并到本机，不会覆盖', onTap: _import),
+          const XDivider(),
+          const XGroupTitle('说明'),
+          const XNote('配置完成后，App 启动、回到前台和进入后台时会自动同步（3 分钟内不重复）。密码优先保存在系统钥匙串中，不可用时保存在本机应用数据里。'),
+          const XNote('书签与规则的删除、规则的修改会同步（删除记录保留 90 天，超过 90 天未同步的设备可能带回已删除的项）；备注的修改和删除不同步。'),
         ],
       )),
     );

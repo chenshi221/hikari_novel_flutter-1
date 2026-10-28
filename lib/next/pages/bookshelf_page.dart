@@ -11,11 +11,15 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../app_prefs.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
+import '../image_cache.dart';
 import '../library.dart';
 import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
 import '../session.dart';
+import '../settings.dart';
+import '../theme.dart';
+import '../theme_squire.dart';
 import '../updates.dart';
 import '../volumes.dart';
 import '../widgets.dart';
@@ -209,13 +213,26 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   List<String> _ids = [];
   String _shown = ''; // 标签栏上次滚到的标签
   final _keys = <String, GlobalKey>{};
+  final _stripKey = GlobalKey();
+  int _measureRetries = 0;
+  final _tabScroll = ScrollController();
 
   Box get _box => Hive.box('session');
 
   @override
   void dispose() {
     _tc?.dispose();
+    _tabScroll.dispose();
     super.dispose();
+  }
+
+  /// 第 i 个标签里文字那一段在标签栏里的位置（左边、宽度）；还没排好版时返回 null
+  (double, double)? _labelRect(List<LibCategory> tabs, int i) {
+    final strip = _stripKey.currentContext?.findRenderObject() as RenderBox?;
+    final box = _keys[tabs[i].id]?.currentContext?.findRenderObject() as RenderBox?;
+    if (strip == null || box == null || !box.attached || !box.hasSize) return null;
+    final left = box.localToGlobal(Offset.zero, ancestor: strip).dx;
+    return (left + 14, box.size.width - 28); // 去掉左右内边距，下划线和字一样宽
   }
 
   /// 标签：默认（全部书）、连载、完结，再加自己建的分类；顺序按拖动存的 shelfTabOrder，没存过的排后面。
@@ -263,39 +280,68 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
       // 横向的滚动列表要有确定的高度，不然 AppBar 里量不出来、整条顶栏画不出
       child: SizedBox(
         height: 44,
+        // 下划线和字色跟着滑动的进度走（和发现页的系统标签栏一样），不是切换完才跳过去
         child: AnimatedBuilder(
-          animation: tc.animation!,
-          builder: (context, _) => ReorderableListView.builder(
-          scrollDirection: Axis.horizontal,
-          buildDefaultDragHandles: false,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          itemCount: tabs.length,
-          proxyDecorator: (child, _, _) => Material(color: Colors.transparent, child: child),
-          onReorderItem: (from, to) {
-            final ids = [for (final c in tabs) c.id];
-            ids.insert(to, ids.removeAt(from));
-            _box.put('shelfTabOrder', ids);
-            setState(() {});
-          },
-          itemBuilder: (context, i) {
-            final c = tabs[i];
-            final selected = tc.index == i;
-            return ReorderableDelayedDragStartListener(
-              key: ValueKey(c.id),
-              index: i,
-              child: InkWell(
-                onTap: () => tc.animateTo(i),
-                child: Container(
-                  key: _keys.putIfAbsent(c.id, GlobalKey.new),
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(border: Border(bottom: BorderSide(width: 2.5, color: selected ? theme.colorScheme.primary : Colors.transparent))),
-                  child: Text(counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name, style: TextStyle(fontSize: 15, fontWeight: selected ? FontWeight.w700 : null, color: selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant)),
+          animation: Listenable.merge([tc.animation!, _tabScroll]),
+          builder: (context, _) {
+            final at = tc.animation!.value.clamp(0.0, tabs.length - 1.0);
+            final lo = at.floor(), hi = at.ceil();
+            // 标签滑出屏幕时量不到（列表只排眼前的），就先用另一头的位置
+            final ra = _labelRect(tabs, lo), rb = _labelRect(tabs, hi);
+            final a = ra ?? rb, b = rb ?? ra;
+            final t = at - lo;
+            // 第一次进来时标签还没排好版：下一帧再画一次（最多重试几次，免得一直重建）
+            if (a == null && _measureRetries++ < 3) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? setState(() {}) : null);
+            return Stack(
+              key: _stripKey,
+              children: [
+                ReorderableListView.builder(
+                  scrollController: _tabScroll,
+                  scrollDirection: Axis.horizontal,
+                  buildDefaultDragHandles: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  itemCount: tabs.length,
+                  proxyDecorator: (child, _, _) => Material(color: Colors.transparent, child: child),
+                  onReorderItem: (from, to) {
+                    final ids = [for (final c in tabs) c.id];
+                    ids.insert(to, ids.removeAt(from));
+                    _box.put('shelfTabOrder', ids);
+                    setState(() {});
+                  },
+                  itemBuilder: (context, i) {
+                    final c = tabs[i];
+                    final near = (1 - (at - i).abs()).clamp(0.0, 1.0); // 1 = 正在这个标签
+                    return ReorderableDelayedDragStartListener(
+                      key: ValueKey(c.id),
+                      index: i,
+                      child: InkWell(
+                        onTap: () => tc.animateTo(i),
+                        child: Container(
+                          key: _keys.putIfAbsent(c.id, GlobalKey.new),
+                          alignment: Alignment.center,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          child: Text(
+                            counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name,
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color.lerp(theme.colorScheme.onSurfaceVariant, theme.colorScheme.primary, near)),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              ),
+                if (a != null && b != null)
+                  Positioned(
+                    left: a.$1 + (b.$1 - a.$1) * t,
+                    width: a.$2 + (b.$2 - a.$2) * t,
+                    bottom: 0,
+                    height: 3,
+                    child: IgnorePointer(
+                      child: DecoratedBox(decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: const BorderRadius.vertical(top: Radius.circular(3)))),
+                    ),
+                  ),
+              ],
             );
           },
-          ),
         ),
       ),
     );
@@ -411,7 +457,11 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
     final tabs = _tabs(lib.cats);
     final tc = _controller([for (final c in tabs) c.id]);
     final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), _curTab);
+    final scene = appPalettes[ref.watch(paletteProvider)].scene;
+    // 插画主题：顶栏加高，标题和按钮压在插画的天空上，下面的分类标签仍在页面底色上
     final appBar = AppBar(
+      foregroundColor: scene ? RuinsColors.of(context).ink : null,
+      flexibleSpace: scene ? Column(children: [Expanded(child: RuinsScene(animate: AppPrefs.read(P.sceneMotion, true), horizon: 0.86, ceiling: 0.5)), const SizedBox(height: 44)]) : null,
       title: _searching
           ? TextField(
               autofocus: true,
@@ -431,7 +481,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         IconButton(tooltip: '筛选、排序、显示', icon: Icon(Icons.filter_list, color: o.filtering ? Theme.of(context).colorScheme.primary : null), onPressed: _showOptions),
         IconButton(tooltip: '管理分类', icon: const Icon(Icons.label_outline), onPressed: () => context.push(Routes.categories)),
       ],
-      bottom: _tabStrip(tabs, tc, lib),
+      bottom: scene ? PreferredSize(preferredSize: const Size.fromHeight(44 + 64), child: Column(children: [const SizedBox(height: 64), _tabStrip(tabs, tc, lib)])) : _tabStrip(tabs, tc, lib),
     );
     return PopScope(
       canPop: !_searching,
@@ -463,6 +513,15 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
 
   @override
   bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 这个标签里的封面先从磁盘读进内存，往下滑时直接就有，不用等读盘
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(imageStoreProvider).warm([for (final b in _booksIn(ref.read(libraryProvider), widget.catId)) _cover(b)]);
+    });
+  }
 
   void _syncSelecting() {
     _selected.isEmpty ? _selecting.remove(widget.catId) : _selecting.add(widget.catId);
@@ -556,7 +615,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
           final n = _cols(context) ?? (c.maxWidth / 140).floor().clamp(2, 8);
           final w = (c.maxWidth - 32 - 14 * (n - 1)) / n;
           return GridView.builder(
-            scrollCacheExtent: const ScrollCacheExtent.viewport(0.5), // 上下各多备半屏，滑到时封面已经解码好
+            scrollCacheExtent: const ScrollCacheExtent.viewport(1), // 上下各多备一屏，快速滑动时封面也已经解码好
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
             // 一格 = 封面（右边留出后面几卷的边）+ 下面两行字
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: n, mainAxisSpacing: 16, crossAxisSpacing: 14, childAspectRatio: w / ((w - _edges) / kCoverAspect + 46)),
@@ -568,7 +627,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     } else {
       body = LayoutBuilder(
         builder: (context, c) => GridView.builder(
-          scrollCacheExtent: const ScrollCacheExtent.viewport(0.5),
+          scrollCacheExtent: const ScrollCacheExtent.viewport(1),
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           gridDelegate: o.display == 1
               ? SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: _cols(context) ?? (c.maxWidth / 104).floor().clamp(3, 10), mainAxisSpacing: 8, crossAxisSpacing: 8, childAspectRatio: 0.72)
@@ -641,12 +700,15 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final n = AppPrefs.read(P.unreadBadge, true) ? _unread(b.aid) : 0;
     final c = AppPrefs.read(P.cacheBadge, false) ? ChapterCache.count(b.aid) : 0;
     if (n == 0 && c == 0) return null;
+    // 插画主题用燕尾小旗代替圆角标
+    final scene = appPalettes[ref.read(paletteProvider)].scene;
+    final scheme = Theme.of(context).colorScheme;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (c > 0) Badge(label: Text('$c'), backgroundColor: Theme.of(context).colorScheme.secondary),
+        if (c > 0) scene ? PennantBadge('$c', color: scheme.secondary, textColor: RuinsColors.day.ink) : Badge(label: Text('$c'), backgroundColor: scheme.secondary),
         if (c > 0 && n > 0) const SizedBox(width: 3),
-        if (n > 0) Badge(label: Text('$n')),
+        if (n > 0) scene ? PennantBadge('$n', color: scheme.primary, textColor: scheme.onPrimary) : Badge(label: Text('$n')),
       ],
     );
   }

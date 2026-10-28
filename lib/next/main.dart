@@ -13,6 +13,8 @@ import 'settings.dart';
 /// - 网页预览：`flutter run -d web-server -t lib/next/main.dart`，并在同一台机器上运行 `tool/preview_proxy.dart`
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 解码好的封面多留一些（默认 100 MB），滑回去不用重新解码
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 200 << 20;
   final store = await SessionStore.open();
   await ChapterCache.open();
   await FontStore.loadSaved();

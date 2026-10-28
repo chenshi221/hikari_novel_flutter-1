@@ -24,17 +24,19 @@ import '../session.dart';
 import '../settings.dart';
 import '../swipe.dart';
 import '../theme.dart';
+import '../theme_squire.dart';
 import '../widgets.dart';
+import '../x_list.dart';
 
 /// 设置分成几组（Mihon 那样），主页能搜索：搜到的条目点一下跳到它所在的那一组。
 enum SettingsSection {
   appearance('外观', Icons.palette_outlined, '主题、配色、屏幕方向'),
-  reading('阅读', Icons.menu_book_outlined, '翻页方式、字号、朗读、章节滑动'),
-  shelf('书架', Icons.auto_stories_outlined, '角标、列数、分类、新书放哪'),
-  update('更新', Icons.update_outlined, '自动检查间隔、网络限制、检查哪些书'),
-  data('数据与存储', Icons.storage_outlined, '缓存、备份与恢复、同步'),
+  reading('阅读', Icons.book_outlined, '翻页、文字、朗读、章节列表手势'),
+  shelf('书架', Icons.auto_stories_outlined, '封面角标、列数、分类管理'),
+  update('更新', Icons.update_outlined, '检查频率、网络条件、检查范围'),
+  data('数据与存储', Icons.inventory_2_outlined, '缓存、备份与恢复、同步'),
   security('安全与隐私', Icons.lock_outline, '生物识别锁、防截屏、无痕模式'),
-  network('网络', Icons.public, '站点节点、代理、系统网络栈'),
+  network('网络', Icons.language, '站点节点、代理、系统网络栈'),
   about('关于', Icons.info_outline, '版本信息');
 
   const SettingsSection(this.title, this.icon, this.summary);
@@ -43,6 +45,13 @@ enum SettingsSection {
   final IconData icon;
   final String summary;
 }
+
+/// 设置首页的分组：组和组之间一道细线
+const _homeGroups = [
+  [SettingsSection.appearance, SettingsSection.reading, SettingsSection.shelf],
+  [SettingsSection.update, SettingsSection.data],
+  [SettingsSection.security, SettingsSection.network, SettingsSection.about],
+];
 
 /// 能搜到的设置项：(标题, 所在分组, 额外关键词)
 const _items = <(String, SettingsSection, String)>[
@@ -53,23 +62,26 @@ const _items = <(String, SettingsSection, String)>[
   ('正则规则', SettingsSection.reading, '替换 去广告 高亮 备注'),
   ('字号', SettingsSection.reading, '字体 大小'),
   ('朗读语速', SettingsSection.reading, '听书 tts'),
-  ('章节滑动', SettingsSection.reading, '左滑 右滑 已读 书签 手势'),
+  ('章节列表手势', SettingsSection.reading, '左滑 右滑 已读 书签 滑动'),
+  ('卷末庆祝卡片', SettingsSection.reading, '仪式 读完 打分 庆祝'),
+  ('纯黑深色', SettingsSection.appearance, 'AMOLED 纯黑 省电 oled'),
+  ('插画动效', SettingsSection.appearance, '遗迹 晴空 动画 云'),
   ('继续阅读按钮', SettingsSection.shelf, '书架 封面 播放'),
   ('未读角标', SettingsSection.shelf, '数字 角标 徽标'),
   ('缓存角标', SettingsSection.shelf, '数字 角标 已缓存'),
-  ('标签显示书数', SettingsSection.shelf, '分类 计数 数量'),
-  ('每个标签单独设置', SettingsSection.shelf, '筛选 排序 显示 分类'),
+  ('显示分类书籍数量', SettingsSection.shelf, '分类 标签 计数 数量'),
+  ('按分类分别设置', SettingsSection.shelf, '筛选 排序 显示 标签'),
   ('书架列数', SettingsSection.shelf, '网格 竖屏 横屏 每行'),
   ('新书默认分类', SettingsSection.shelf, '加入书架 分类 询问'),
   ('分类管理', SettingsSection.shelf, '新建 删除 排序'),
   ('自动检查更新', SettingsSection.update, '间隔 小时 每天 每周'),
-  ('只在 Wi-Fi 下检查', SettingsSection.update, '网络 流量 限制'),
-  ('只在充电时检查', SettingsSection.update, '电量 限制'),
+  ('仅在 Wi-Fi 下检查', SettingsSection.update, '网络 流量 限制'),
+  ('仅在充电时检查', SettingsSection.update, '电量 限制'),
   ('跳过已完结的书', SettingsSection.update, '更新 连载'),
-  ('跳过没开始读的书', SettingsSection.update, '更新'),
+  ('跳过未开始阅读的书', SettingsSection.update, '更新'),
   ('跳过还有未读章节的书', SettingsSection.update, '更新'),
-  ('只检查这些分类', SettingsSection.update, '更新 包含'),
-  ('不检查这些分类', SettingsSection.update, '更新 排除'),
+  ('仅检查以下分类', SettingsSection.update, '更新 包含'),
+  ('排除以下分类', SettingsSection.update, '更新 不检查'),
   ('图片缓存', SettingsSection.data, '封面 插图 清除 存储'),
   ('章节缓存', SettingsSection.data, '正文 清除 存储 自动清理'),
   ('备份', SettingsSection.data, '导出 导入 恢复'),
@@ -95,38 +107,44 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final q = _q.trim().toLowerCase();
     final hits = q.isEmpty ? const <(String, SettingsSection, String)>[] : _items.where((e) => '${e.$1} ${e.$3} ${e.$2.title}'.toLowerCase().contains(q)).toList();
+    void open(SettingsSection s) => context.push(Routes.settingsSection(s.name));
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: contentWidth(ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        children: [
-          TextField(
-            decoration: const InputDecoration(hintText: '搜索设置', prefixIcon: Icon(Icons.search)),
-            onChanged: (v) => setState(() => _q = v),
-          ),
-          const SizedBox(height: 8),
-          if (q.isNotEmpty) ...[
-            if (hits.isEmpty) const Padding(padding: EdgeInsets.all(32), child: Center(child: Text('没有匹配的设置'))),
-            for (final (title, section, _) in hits)
-              ListTile(
-                leading: Icon(section.icon),
-                title: Text(title),
-                subtitle: Text(section.title),
-                onTap: () => context.push(Routes.settingsSection(section.name)),
+      body: contentWidth(
+        ListView(
+          padding: const EdgeInsets.only(bottom: 32),
+          children: [
+            // 圆角搜索条，和页面底色只差一点
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: TextField(
+                decoration: InputDecoration(
+                  hintText: '搜索设置',
+                  prefixIcon: const Icon(Icons.search),
+                  filled: true,
+                  fillColor: scheme.onSurface.withValues(alpha: 0.06),
+                  isDense: true,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide(color: scheme.primary)),
+                ),
+                onChanged: (v) => setState(() => _q = v),
               ),
-          ] else
-            for (final s in SettingsSection.values)
-              ListTile(
-                leading: Icon(s.icon),
-                title: Text(s.title),
-                subtitle: Text(s.summary),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => context.push(Routes.settingsSection(s.name)),
-              ),
-        ],
-      )),
+            ),
+            if (q.isNotEmpty) ...[
+              if (hits.isEmpty) const XNote('没有匹配的设置'),
+              for (final (title, section, _) in hits) XEntry(icon: section.icon, title: title, subtitle: '在「${section.title}」里', onTap: () => open(section)),
+            ] else
+              for (final (i, group) in _homeGroups.indexed) ...[
+                if (i > 0) const XDivider(),
+                for (final s in group) XEntry(icon: s.icon, title: s.title, subtitle: s.summary, onTap: () => open(s)),
+              ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -156,7 +174,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     };
     return Scaffold(
       appBar: AppBar(title: Text(widget.section.title)),
-      body: contentWidth(ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 32), children: children)),
+      body: contentWidth(ListView(padding: const EdgeInsets.only(bottom: 32), children: children)),
     );
   }
 
@@ -164,22 +182,21 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   AppPrefs get _prefs => ref.read(appPrefsProvider.notifier);
 
-  Widget _label(String t) => Padding(padding: const EdgeInsets.only(top: 16, bottom: 6), child: Text(t, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Theme.of(context).colorScheme.primary)));
+  Widget _switch(String title, String key, bool fallback, {String? subtitle}) => XSwitch(title: title, subtitle: subtitle, value: _prefs.get(key, fallback), onChanged: (v) => _prefs.set(key, v));
 
-  Widget _switch(String title, String key, bool fallback, {String? subtitle}) =>
-      SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(title), subtitle: subtitle == null ? null : Text(subtitle), value: _prefs.get(key, fallback), onChanged: (v) => _prefs.set(key, v));
-
-  Widget _dropdown<T>(String title, T value, Map<T, String> options, ValueChanged<T> onChanged) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    title: Text(title),
-    trailing: DropdownButton<T>(value: value, underline: const SizedBox.shrink(), items: [for (final e in options.entries) DropdownMenuItem(value: e.key, child: Text(e.value))], onChanged: (v) => v == null ? null : onChanged(v)),
+  /// 能点进下一页的：右边一个箭头
+  Widget _link(String title, String? subtitle, VoidCallback onTap) => XTile(
+    title: title,
+    subtitle: subtitle,
+    onTap: onTap,
+    trailing: Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
   );
 
   /// 多选分类（更新页的"只检查 / 不检查这些分类"）
   Future<void> _pickCats(String key, String title) async {
     final cats = ref.read(libraryProvider).cats;
     if (cats.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('还没有分类，先到「分类管理」建一个')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('还没有分类，请先在「分类管理」中新建')));
       return;
     }
     final chosen = {...AppPrefs.readList(key)};
@@ -215,31 +232,49 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   List<Widget> _appearance() {
     final mode = ref.watch(themeModeProvider);
     final palette = ref.watch(paletteProvider);
-    final theme = Theme.of(context);
+    final scheme = Theme.of(context).colorScheme;
     return [
-      _label('主题'),
-      SegmentedButton<ThemeMode>(
-        segments: const [ButtonSegment(value: ThemeMode.system, label: Text('跟随系统')), ButtonSegment(value: ThemeMode.light, label: Text('浅色')), ButtonSegment(value: ThemeMode.dark, label: Text('深色'))],
-        selected: {mode},
-        onSelectionChanged: (s) => ref.read(themeModeProvider.notifier).set(s.first),
-      ),
-      _label('配色'),
-      Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (final (i, p) in appPalettes.indexed)
-            ChoiceChip(avatar: CircleAvatar(backgroundColor: p.accentLight, radius: 8), label: Text(p.name), selected: palette == i, onSelected: (_) => ref.read(paletteProvider.notifier).set(i)),
-        ],
-      ),
-      if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) ...[
-        _label('屏幕方向'),
-        SegmentedButton<int>(
-          segments: const [ButtonSegment(value: 0, label: Text('竖屏')), ButtonSegment(value: 1, label: Text('自动旋转')), ButtonSegment(value: 2, label: Text('横屏'))],
-          selected: {ref.watch(orientationProvider)},
-          onSelectionChanged: (s) => ref.read(orientationProvider.notifier).set(s.first),
+      const XGroupTitle('主题'),
+      XSegments<ThemeMode>(value: mode, options: const {ThemeMode.system: '跟随系统', ThemeMode.light: '浅色', ThemeMode.dark: '深色'}, onChanged: (v) => ref.read(themeModeProvider.notifier).set(v)),
+      _switch('纯黑深色', P.pureBlack, false, subtitle: '深色模式下使用纯黑背景，适合 OLED 屏幕，更省电'),
+      const XDivider(),
+      const XGroupTitle('配色'),
+      // 一排色点：点一下换，选中的外面一圈
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 10,
+          children: [
+            for (final (i, p) in appPalettes.indexed)
+              GestureDetector(
+                onTap: () => ref.read(paletteProvider.notifier).set(i),
+                child: SizedBox(
+                  width: 60,
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: palette == i ? scheme.onSurface : Colors.transparent, width: 2)),
+                        // 插画主题的色点直接是一小块插画
+                        child: p.scene ? const ClipOval(child: RuinsScene(animate: false, horizon: 0.8)) : DecoratedBox(decoration: BoxDecoration(shape: BoxShape.circle, color: p.accentLight)),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(p.name.split('·').first, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center, style: TextStyle(fontSize: 12, fontWeight: palette == i ? FontWeight.w700 : null, color: palette == i ? scheme.onSurface : scheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
-        Padding(padding: const EdgeInsets.only(top: 6), child: Text('只影响整个 App 的方向', style: theme.textTheme.bodySmall)),
+      ),
+      if (appPalettes[palette].scene) _switch('插画动效', P.sceneMotion, true, subtitle: '云朵缓慢飘动、旗帜轻轻摆动；关闭可节省电量'),
+      if (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS) ...[
+        const XDivider(),
+        const XGroupTitle('屏幕方向'),
+        XSegments<int>(subtitle: '控制 App 界面的显示方向', value: ref.watch(orientationProvider), options: const {0: '竖屏', 1: '自动旋转', 2: '横屏'}, onChanged: (v) => ref.read(orientationProvider.notifier).set(v)),
       ],
     ];
   }
@@ -248,26 +283,35 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   List<Widget> _reading() {
     final prefs = ref.watch(readerPrefsProvider);
-    final theme = Theme.of(context);
     final swipe = ref.watch(swipePrefsProvider);
+    void set(ReaderPrefs p) => ref.read(readerPrefsProvider.notifier).update(p);
     return [
-      _label('翻页方式'),
-      SegmentedButton<int>(
-        segments: const [ButtonSegment(value: 0, label: Text('滚动')), ButtonSegment(value: 1, label: Text('滑动')), ButtonSegment(value: 2, label: Text('仿真')), ButtonSegment(value: 3, label: Text('覆盖'))],
-        selected: {prefs.mode},
-        onSelectionChanged: (s) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(mode: s.first)),
+      const XGroupTitle('翻页'),
+      XChoice<int>(title: '翻页方式', value: prefs.mode, options: const {0: '上下滚动', 1: '左右滑动', 2: '仿真翻页', 3: '覆盖翻页'}, onChanged: (v) => set(prefs.copyWith(mode: v))),
+      const XNote('点击区域、亮度、滤镜、音量键等更多选项，请在阅读界面的菜单「设置」中调整。'),
+      const XDivider(),
+      const XGroupTitle('文字'),
+      XSlider(
+        title: '字号',
+        label: '${prefs.fontSize.round()}',
+        slider: Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => set(prefs.copyWith(fontSize: v))),
       ),
-      const SizedBox(height: 8),
-      Text('点击分区、亮度、滤镜、音量键等更多阅读设置，在阅读时点菜单里的「设置」。', style: theme.textTheme.bodySmall),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('正则规则'), subtitle: const Text('替换（去广告、统一用字）和高亮（人物名染色、备注）'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.rules)),
-      _label('字号 ${prefs.fontSize.round()}'),
-      Slider(min: 14, max: 32, divisions: 18, value: prefs.fontSize, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(fontSize: v))),
-      _label('朗读语速 ${prefs.ttsRate.toStringAsFixed(1)}'),
-      Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => ref.read(readerPrefsProvider.notifier).update(prefs.copyWith(ttsRate: v))),
-      _label('章节滑动'),
-      Text('在章节列表里左右滑一下，直接做这件事', style: theme.textTheme.bodySmall),
-      _dropdown<SwipeAct>('向右滑', swipe.right, {for (final a in SwipeAct.values) a: a.label}, (a) => ref.read(swipePrefsProvider.notifier).set(right: a)),
-      _dropdown<SwipeAct>('向左滑', swipe.left, {for (final a in SwipeAct.values) a: a.label}, (a) => ref.read(swipePrefsProvider.notifier).set(left: a)),
+      _link('正则规则', '用正则替换正文（去广告、统一用字），或给人名等关键词着色、添加备注', () => context.push(Routes.rules)),
+      const XDivider(),
+      const XGroupTitle('朗读'),
+      XSlider(
+        title: '语速',
+        label: prefs.ttsRate.toStringAsFixed(1),
+        slider: Slider(min: 0.1, max: 1.0, divisions: 9, value: prefs.ttsRate, onChanged: (v) => set(prefs.copyWith(ttsRate: v))),
+      ),
+      const XDivider(),
+      const XGroupTitle('章节列表手势'),
+      XChoice<SwipeAct>(title: '右滑操作', value: swipe.right, options: {for (final a in SwipeAct.values) a: a.label}, onChanged: (a) => ref.read(swipePrefsProvider.notifier).set(right: a)),
+      XChoice<SwipeAct>(title: '左滑操作', value: swipe.left, options: {for (final a in SwipeAct.values) a: a.label}, onChanged: (a) => ref.read(swipePrefsProvider.notifier).set(left: a)),
+      const XNote('在章节列表中左右滑动某一章，即可执行对应操作。'),
+      const XDivider(),
+      const XGroupTitle('卷末'),
+      _switch('卷末庆祝卡片', P.volumeDone, true, subtitle: '读完一卷进入下一卷时，展示本卷用时与字数，并可评分'),
     ];
   }
 
@@ -276,40 +320,30 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   List<Widget> _shelf() {
     final cats = ref.watch(libraryProvider).cats;
     final def = _prefs.get(P.defaultCat, 'ask');
-    final defName = def == 'ask' ? '每次询问' : (def.isEmpty ? '不放进分类' : (cats.where((c) => c.id == def).firstOrNull?.name ?? '每次询问'));
     return [
-      _label('封面上显示'),
-      _switch('继续阅读按钮', P.resumeButton, true, subtitle: '封面右下角，直接回到上次读的位置'),
+      const XGroupTitle('封面'),
+      _switch('继续阅读按钮', P.resumeButton, true, subtitle: '显示在封面右下角，点按回到上次阅读位置'),
       _switch('未读章数角标', P.unreadBadge, true),
       _switch('已缓存章数角标', P.cacheBadge, false),
-      _label('标签'),
-      _switch('标签后面显示书数', P.tabCounts, false),
-      _switch('每个标签单独设置', P.perCat, false, subtitle: '筛选、排序、显示方式各标签各记各的；关掉就全部通用'),
-      _label('列数'),
-      _dropdown<int>('竖屏', _prefs.get(P.colsPortrait, 0), {0: '自动', for (var i = 2; i <= 8; i++) i: '$i 列'}, (v) => _prefs.set(P.colsPortrait, v)),
-      _dropdown<int>('横屏', _prefs.get(P.colsLandscape, 0), {0: '自动', for (var i = 2; i <= 10; i++) i: '$i 列'}, (v) => _prefs.set(P.colsLandscape, v)),
-      _label('分类'),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('新书默认分类'),
-        subtitle: Text(defName),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () async {
-          final v = await showDialog<String>(
-            context: context,
-            builder: (context) => SimpleDialog(
-              title: const Text('加入书架时'),
-              children: [
-                SimpleDialogOption(onPressed: () => Navigator.pop(context, 'ask'), child: const Text('每次询问')),
-                SimpleDialogOption(onPressed: () => Navigator.pop(context, ''), child: const Text('不放进分类')),
-                for (final c in cats) SimpleDialogOption(onPressed: () => Navigator.pop(context, c.id), child: Text('放进「${c.name}」')),
-              ],
-            ),
-          );
-          if (v != null) _prefs.set(P.defaultCat, v);
-        },
+      const XDivider(),
+      const XGroupTitle('分类标签'),
+      _switch('显示分类书籍数量', P.tabCounts, false),
+      _switch('按分类分别设置', P.perCat, false, subtitle: '筛选、排序和显示方式按分类分别保存；关闭后所有分类共用'),
+      const XDivider(),
+      const XGroupTitle('列数'),
+      XChoice<int>(title: '竖屏', value: _prefs.get(P.colsPortrait, 0), options: {0: '自动', for (var i = 2; i <= 8; i++) i: '$i 列'}, onChanged: (v) => _prefs.set(P.colsPortrait, v)),
+      XChoice<int>(title: '横屏', value: _prefs.get(P.colsLandscape, 0), options: {0: '自动', for (var i = 2; i <= 10; i++) i: '$i 列'}, onChanged: (v) => _prefs.set(P.colsLandscape, v)),
+      const XDivider(),
+      const XGroupTitle('分类'),
+      XChoice<String>(
+        title: '新书默认分类',
+        subtitle: '加入书架时自动归入的分类',
+        // 选过的分类后来被删了，就当"每次询问"
+        value: def == 'ask' || def.isEmpty || cats.any((c) => c.id == def) ? def : 'ask',
+        options: {'ask': '每次询问', '': '不分类', for (final c in cats) c.id: c.name},
+        onChanged: (v) => _prefs.set(P.defaultCat, v),
       ),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('分类管理'), subtitle: const Text('新建、改名、删除、排序'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.categories)),
+      _link('分类管理', '新建、重命名、删除和排序', () => context.push(Routes.categories)),
     ];
   }
 
@@ -317,17 +351,18 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   List<Widget> _update() {
     return [
-      _label('自动检查'),
-      _dropdown<int>('检查间隔', _prefs.get(P.updInterval, 1), const {0: '不自动检查', 1: '每小时', 6: '每 6 小时', 12: '每 12 小时', 24: '每天', 48: '每 2 天', 168: '每周'}, (v) => _prefs.set(P.updInterval, v)),
-      Text('只在 App 开着、或打开 App 时检查，进了后台不会检查。下拉书架、点「更新」页的刷新是手动检查，不受下面的限制。', style: Theme.of(context).textTheme.bodySmall),
-      _switch('只在 Wi-Fi 下自动检查', P.updWifi, false),
-      _switch('只在充电时自动检查', P.updCharging, false),
-      _label('检查哪些书'),
+      const XGroupTitle('自动检查'),
+      XChoice<int>(title: '检查间隔', value: _prefs.get(P.updInterval, 1), options: const {0: '不自动检查', 1: '每小时', 6: '每 6 小时', 12: '每 12 小时', 24: '每天', 48: '每 2 天', 168: '每周'}, onChanged: (v) => _prefs.set(P.updInterval, v)),
+      _switch('仅在 Wi-Fi 下检查', P.updWifi, false),
+      _switch('仅在充电时检查', P.updCharging, false),
+      const XNote('仅在 App 运行时检查，进入后台后不会检查。下拉书架或在「更新」页点刷新属于手动检查，不受以上限制。'),
+      const XDivider(),
+      const XGroupTitle('检查范围'),
       _switch('跳过已完结的书', P.updSkipDone, false),
-      _switch('跳过还没开始读的书', P.updSkipNotStarted, false),
-      _switch('跳过还有未读章节的书', P.updSkipUnread, false, subtitle: '只检查已经读完的书，看有没有新章节'),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('只检查这些分类'), subtitle: Text(_catNames(P.updInclude)), trailing: const Icon(Icons.chevron_right), onTap: () => _pickCats(P.updInclude, '只检查这些分类（都不选是不限）')),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('不检查这些分类'), subtitle: Text(_catNames(P.updExclude)), trailing: const Icon(Icons.chevron_right), onTap: () => _pickCats(P.updExclude, '不检查这些分类')),
+      _switch('跳过未开始阅读的书', P.updSkipNotStarted, false),
+      _switch('跳过还有未读章节的书', P.updSkipUnread, false, subtitle: '只检查已读到最新章节的书'),
+      _link('仅检查以下分类', _catNames(P.updInclude), () => _pickCats(P.updInclude, '仅检查以下分类（不选则不限）')),
+      _link('排除以下分类', _catNames(P.updExclude), () => _pickCats(P.updExclude, '排除以下分类')),
     ];
   }
 
@@ -365,7 +400,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       ref.invalidate(readerPrefsProvider);
       ref.invalidate(swipePrefsProvider);
       ref.invalidate(appPrefsProvider);
-      _snack('已恢复备份${n > 0 ? '，补回 $n 本书' : ''}。部分设置要重启 App 才生效');
+      _snack('已恢复备份${n > 0 ? '，补回 $n 本书' : ''}。部分设置需重启 App 后生效');
     } catch (e) {
       _snack('恢复失败：$e');
     }
@@ -373,34 +408,34 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   List<Widget> _data() {
     return [
-      _label('存储'),
+      const XGroupTitle('存储'),
       if (!isWebPreview)
         FutureBuilder<int>(
           future: ref.read(imageStoreProvider).diskBytes(),
-          builder: (context, snap) => ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('清除图片缓存'),
-            subtitle: Text(snap.hasData ? '封面和插图缓存 ${(snap.data! / (1 << 20)).toStringAsFixed(1)} MB' : '计算中…'),
-            onTap: () => _confirm('清除图片缓存？', '离线缓存里的插图也会被删掉，联网后重新下载。', '清除', () => ref.read(imageStoreProvider).clearDisk()),
+          builder: (context, snap) => XTile(
+            title: '清除图片缓存',
+            subtitle: snap.hasData ? '封面与插图，共 ${(snap.data! / (1 << 20)).toStringAsFixed(1)} MB' : '正在计算…',
+            onTap: () => _confirm('清除图片缓存？', '离线缓存中的插图也会被清除，联网后会重新下载。', '清除', () => ref.read(imageStoreProvider).clearDisk()),
           ),
         ),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('清除章节缓存'),
-        subtitle: Text('全部章节正文约 ${ChapterCache.totalLabel()}（只清读过时自动缓存的，整本「离线缓存」的书不动）'),
-        onTap: () => _confirm('清除章节缓存？', '读过自动缓存的章节会被删掉，再打开时重新下载；阅读报告里按卷统计的字数会变少。', '清除', () async {
+      XTile(
+        title: '清除章节缓存',
+        subtitle: '阅读时自动缓存的正文，共约 ${ChapterCache.totalLabel()}；不影响「离线缓存」中整本下载的书',
+        onTap: () => _confirm('清除章节缓存？', '阅读时自动缓存的章节将被删除，再次打开时重新下载；阅读报告中按卷统计的字数可能减少。', '清除', () async {
           final n = await ChapterCache.clearAuto();
-          if (mounted) _snack('清掉了 $n 章');
+          if (mounted) _snack('已清除 $n 章');
         }),
       ),
-      _switch('每次打开 App 自动清理章节缓存', P.autoClear, false),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('离线缓存'), subtitle: const Text('整本下载的书'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.cache)),
-      _label('备份与恢复'),
-      Text('完整备份包含阅读进度、历史、书签、已读章节、统计、规则备注，以及书架、分类、各种设置和自选封面。不含登录信息、WebDAV 密码和缓存的正文。', style: Theme.of(context).textTheme.bodySmall),
-      ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.upload_file_outlined), title: const Text('导出完整备份'), subtitle: const Text('生成一个文件，用系统分享发给自己或存起来'), onTap: _exportBackup),
-      ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.download_outlined), title: const Text('导入备份'), subtitle: const Text('进度等按同步规则并入；书架里没有的书补上；设置只补本机没有的'), onTap: _importBackup),
-      _label('多设备'),
-      ListTile(contentPadding: EdgeInsets.zero, title: const Text('同步'), subtitle: const Text('通过坚果云 WebDAV 在多台设备间同步进度、书签、统计'), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(Routes.sync)),
+      _switch('启动时自动清理章节缓存', P.autoClear, false),
+      _link('离线缓存', '管理整本下载的书', () => context.push(Routes.cache)),
+      const XDivider(),
+      const XGroupTitle('备份与恢复'),
+      XTile(title: '导出完整备份', subtitle: '生成备份文件，通过系统分享保存或发送', onTap: _exportBackup),
+      XTile(title: '导入备份', subtitle: '阅读数据按同步规则合并，补回书架中缺少的书；设置只补充本机没有的项', onTap: _importBackup),
+      const XNote('完整备份包含阅读进度、历史、书签、已读章节、统计、规则与备注，以及书架、分类、各项设置和自选封面；不含登录信息、WebDAV 密码和已缓存的正文。'),
+      const XDivider(),
+      const XGroupTitle('多设备'),
+      _link('同步', '通过 WebDAV（如坚果云）在多台设备间同步阅读进度、书签和统计', () => context.push(Routes.sync)),
     ];
   }
 
@@ -409,35 +444,31 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   List<Widget> _security() {
     final incognito = ref.watch(incognitoProvider);
     return [
-      _label('锁'),
+      const XGroupTitle('应用锁'),
       if (lockSupported) ...[
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('生物识别锁'),
-          subtitle: const Text('用指纹、面容或手机锁屏密码解锁 App'),
+        XSwitch(
+          title: '生物识别锁',
+          subtitle: '用指纹、面容或手机锁屏密码解锁 App',
           value: _prefs.get(P.lock, false),
           onChanged: (v) async {
             if (v && !await authenticate('确认开启 Hikari Novel 的锁')) {
-              if (mounted) _snack('验证没通过，或者这台设备没设置锁屏 / 生物识别');
+              if (mounted) _snack('验证未通过，或此设备未设置锁屏密码 / 生物识别');
               return;
             }
             _prefs.set(P.lock, v);
           },
         ),
-        if (_prefs.get(P.lock, false)) _dropdown<int>('离开多久后锁定', _prefs.get(P.lockAfter, 0), const {0: '立即', 1: '1 分钟', 5: '5 分钟', 15: '15 分钟', 30: '30 分钟'}, (v) => _prefs.set(P.lockAfter, v)),
+        if (_prefs.get(P.lock, false)) XChoice<int>(title: '离开多久后锁定', value: _prefs.get(P.lockAfter, 0), options: const {0: '立即', 1: '1 分钟', 5: '5 分钟', 15: '15 分钟', 30: '30 分钟'}, onChanged: (v) => _prefs.set(P.lockAfter, v)),
       ] else
-        Text('这个平台不支持生物识别锁', style: Theme.of(context).textTheme.bodySmall),
+        const XNote('当前平台不支持生物识别锁'),
       if (secureScreenSupported) ...[
-        _label('防截屏'),
-        SegmentedButton<int>(
-          segments: const [ButtonSegment(value: 0, label: Text('关')), ButtonSegment(value: 1, label: Text('始终')), ButtonSegment(value: 2, label: Text('仅无痕时'))],
-          selected: {_prefs.get(P.secure, 0)},
-          onSelectionChanged: (s) => _prefs.set(P.secure, s.first),
-        ),
-        Padding(padding: const EdgeInsets.only(top: 6), child: Text('开了以后截不了屏、录不了屏，最近任务里也不显示 App 内容', style: Theme.of(context).textTheme.bodySmall)),
+        const XDivider(),
+        const XGroupTitle('防截屏'),
+        XSegments<int>(subtitle: '开启后禁止截屏和录屏，最近任务中也不显示 App 内容', value: _prefs.get(P.secure, 0), options: const {0: '关', 1: '始终', 2: '仅无痕时'}, onChanged: (v) => _prefs.set(P.secure, v)),
       ],
-      _label('无痕模式'),
-      SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('无痕模式'), subtitle: const Text('开着时不记录阅读进度、历史、已读章节和统计'), value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
+      const XDivider(),
+      const XGroupTitle('无痕'),
+      XSwitch(title: '无痕模式', subtitle: '开启期间不记录阅读进度、历史、已读章节和统计', value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
     ];
   }
 
@@ -445,20 +476,19 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   List<Widget> _network() {
     final store = ref.watch(sessionStoreProvider);
-    if (isWebPreview) return [const Padding(padding: EdgeInsets.all(32), child: Text('网页预览里不用设置'))];
+    if (isWebPreview) return [const XNote('网页预览无需设置')];
     return [
-      _label('站点节点'),
-      SegmentedButton<Wenku8Node>(
-        segments: const [ButtonSegment(value: Wenku8Node.wwwWenku8Net, label: Text('wenku8.net')), ButtonSegment(value: Wenku8Node.wwwWenku8Cc, label: Text('wenku8.cc'))],
-        selected: {ref.watch(nodeProvider)},
-        onSelectionChanged: (s) => ref.read(nodeProvider.notifier).set(s.first),
+      const XGroupTitle('站点节点'),
+      XSegments<Wenku8Node>(value: ref.watch(nodeProvider), options: const {Wenku8Node.wwwWenku8Net: 'wenku8.net', Wenku8Node.wwwWenku8Cc: 'wenku8.cc'}, onChanged: (v) => ref.read(nodeProvider.notifier).set(v)),
+      const XDivider(),
+      const XGroupTitle('连接'),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+        child: TextFormField(initialValue: store.proxy, decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'), onChanged: store.setProxy),
       ),
-      const SizedBox(height: 12),
-      TextFormField(initialValue: store.proxy, decoration: const InputDecoration(labelText: 'HTTP 代理', hintText: '127.0.0.1:7890'), onChanged: store.setProxy),
-      SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: const Text('系统网络栈'),
-        subtitle: const Text('用系统自带的网络层发请求，TLS 指纹和浏览器一致，更不容易被 Cloudflare 拦截。填了代理时不生效；改动后重启 App 生效。'),
+      XSwitch(
+        title: '系统网络栈',
+        subtitle: '使用系统网络层发送请求，TLS 指纹与浏览器一致，不易被 Cloudflare 拦截。设置代理时不生效；修改后需重启 App。',
         value: store.nativeNet,
         onChanged: (v) async {
           await store.setNativeNet(v);
@@ -473,7 +503,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   List<Widget> _about() => [
     FutureBuilder(
       future: PackageInfo.fromPlatform(),
-      builder: (context, snap) => ListTile(contentPadding: EdgeInsets.zero, title: const Text('Hikari Novel'), subtitle: Text('轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}')),
+      builder: (context, snap) => XTile(title: 'Hikari Novel', subtitle: '轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}'),
     ),
   ];
 }
