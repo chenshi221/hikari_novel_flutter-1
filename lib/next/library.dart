@@ -98,6 +98,8 @@ class LibraryStore {
   /// 书架上这本书的显示名称：自己改过名就是改的名字，否则 [fallback]（不在书架上也是 [fallback]）
   static String shown(String aid, String fallback) => (get(aid)?['name'] as String?) ?? fallback;
 
+  static Iterable<String> aids() => _raw.keys.cast<String>();
+
   static Iterable<String> covers() => _raw.values.map((m) => ((m as Map)['img'] as String?) ?? '').where((e) => e.isNotEmpty);
 }
 

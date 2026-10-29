@@ -1,0 +1,71 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hive_ce/hive.dart';
+import 'package:hikari_novel_flutter/models/content.dart';
+import 'package:hikari_novel_flutter/next/cache.dart';
+import 'package:hikari_novel_flutter/next/read_state.dart';
+
+void main() {
+  setUpAll(() async {
+    Hive.init(Directory.systemTemp.createTempSync('hikari_chapter_test').path);
+    await Hive.openBox('session');
+    // 旧格式的原文：打开后照样能读，压一遍之后变成 gzip
+    final old = await Hive.openLazyBox('chapters');
+    await old.put('9:1', {'t': '旧的正文', 'i': <String>[]});
+    final index = await Hive.openBox('chapter_index');
+    await index.putAll({'migrated': true, '9:1': 4, 'pt|https://www.wenku8.net/a': 1});
+    await ChapterCache.open();
+  });
+
+  test('压缩存储：新旧格式都能读，旧数据压一遍后内容不变', () async {
+    final text = '轻小说正文' * 2000;
+    await ChapterCache.put('1', 'a', Content(text: text, images: ['img1']));
+    final raw = await Hive.lazyBox('chapters').get('1:a') as Map;
+    expect(raw['z'], isNotNull);
+    expect((raw['z'] as List).length, lessThan(text.length));
+    expect((await ChapterCache.get('1', 'a'))!.text, text);
+
+    expect((await ChapterCache.get('9', '1'))!.text, '旧的正文');
+    await ChapterCache.compressOld();
+    expect((await Hive.lazyBox('chapters').get('9:1') as Map)['t'], isNull);
+    expect((await ChapterCache.get('9', '1'))!.text, '旧的正文');
+  });
+
+  test('章数：存、覆盖、删除后都对；网页备份的时间戳不算章节', () async {
+    expect(ChapterCache.count('9'), 1);
+    expect(ChapterCache.count('pt|https'), 0);
+    await ChapterCache.put('2', 'a', Content(text: 'x', images: []));
+    await ChapterCache.put('2', 'b', Content(text: 'y', images: []));
+    await ChapterCache.put('2', 'b', Content(text: 'yy', images: []));
+    expect(ChapterCache.count('2'), 2);
+    await ChapterCache.removeChapters('2', ['a', 'zzz']);
+    expect(ChapterCache.count('2'), 1);
+    await ChapterCache.remove('2');
+    expect(ChapterCache.count('2'), 0);
+  });
+
+  test('清除已读章节只删读过的；离线插图删书时一起清掉', () async {
+    for (final c in ['a', 'b', 'c']) {
+      await ChapterCache.put('3', c, Content(text: c, images: []));
+    }
+    await ReadState.setRead('3', ['a', 'c'], true);
+    expect(await ChapterCache.clearRead(), 2);
+    expect(ChapterCache.has('3', 'b'), isTrue);
+    expect(ChapterCache.count('3'), 1);
+
+    await ChapterCache.addOfflineImages('3', ['u1', 'u2']);
+    expect(ChapterCache.offlineImages(), containsAll(['u1', 'u2']));
+    await ChapterCache.remove('3');
+    expect(ChapterCache.offlineImages(), isNot(contains('u1')));
+  });
+
+  test('已读集合：同一份数据复用，写入后跟着变；返回的是副本', () async {
+    await ReadState.setRead('4', ['a'], true);
+    expect(ReadState.readCount('4'), 1);
+    ReadState.read('4').add('zzz');
+    expect(ReadState.isRead('4', 'zzz'), isFalse);
+    await Hive.box('session').put('read:4', ['a', 'b']); // 同步、导入直接写 Box
+    expect(ReadState.readCount('4'), 2);
+  });
+}

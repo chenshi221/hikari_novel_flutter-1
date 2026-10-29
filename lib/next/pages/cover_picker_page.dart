@@ -49,7 +49,7 @@ class _PickerPageState extends ConsumerState<_PickerPage> {
   Future<void> _pick(String url) async {
     final picked = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => _CropPage(url: url)));
     if (picked == null) return;
-    await Volumes.setCover(widget.aid, widget.vol.title, picked);
+    await Volumes.setCover(widget.aid, widget.vol.title, picked, picked: true);
     if (mounted) Navigator.of(context).pop();
   }
 

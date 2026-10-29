@@ -231,6 +231,7 @@ class SessionController extends Notifier<SessionState> {
   }
 
   /// 启动时：有保存的登录信息就向网站确认一次（最多等 6 秒）。失效则清除；网络出错、超时、被拦截都按"离线"处理，保留 cookie。
+  /// 有上次保存的账号信息就先当已登录，直接进主界面，确认在后台做，不在启动页干等。
   Future<void> restore() async {
     await _restoreCookies();
     final cookie = _store.cookie;
@@ -238,7 +239,9 @@ class SessionController extends Notifier<SessionState> {
       state = const SessionLoggedOut();
       return;
     }
-    state = const SessionChecking();
+    final html = _store.userHtml;
+    // 只在刚启动时这样：验证完重新确认（afterVerify）仍走"检查中"，确认后主界面才会重新同步书架
+    state = html != null && state is SessionChecking ? SessionLoggedIn(Wenku8Parser.userInfo(html)) : const SessionChecking();
     try {
       state = SessionLoggedIn(await _fetchUser().timeout(const Duration(seconds: 6)));
     } on Wenku8UnexpectedPageException {

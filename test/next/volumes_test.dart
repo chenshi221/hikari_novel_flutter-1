@@ -78,4 +78,16 @@ void main() {
     await ReadState.setRead('2', ['b', 'c'], true);
     expect(readingVolume('2'), -1);
   });
+
+  test('清理图片时留下的卷封面：书架上显示的第一卷、手动挑过或裁过的；其余卷可以删', () async {
+    await Volumes.saveCatalogue('5', [vol('一', ['i1', 'a']), vol('二', ['i2', 'b']), vol('三', ['i3', 'c']), vol('四', ['i4', 'd'])]);
+    await Volumes.setCover('5', '一', 'u1');
+    await Volumes.setCover('5', '二', 'u2');
+    await Volumes.setCover('5', '三', 'u3', picked: true);
+    await Volumes.setCover('5', '四', withCrop('u4', const Rect.fromLTWH(0, 0, 0.5, 1))); // 以前裁过的，没有标记
+    expect(Volumes.keptCovers(['5']), unorderedEquals(['u1', 'u3', withCrop('u4', const Rect.fromLTWH(0, 0, 0.5, 1))]));
+    expect(Volumes.keptCovers([]), isNot(contains('u1'))); // 不在书架上了，第一卷也不留
+    await Volumes.resetCover('5', '三');
+    expect(Volumes.keptCovers(['5']), isNot(contains('u3')));
+  });
 }

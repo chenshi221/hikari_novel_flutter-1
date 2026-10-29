@@ -56,6 +56,9 @@ class UpdateStore {
   }
 
   static Map<String, int> knownCounts() => _known.map((k, v) => MapEntry(k as String, v as int));
+
+  /// 上次检查时这本书的总章数（书架每本书都要查，不复制整张表）
+  static int known(String aid) => (_known[aid] as int?) ?? 0;
 }
 
 class UpdateProgress {

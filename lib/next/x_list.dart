@@ -113,10 +113,13 @@ class XNote extends StatelessWidget {
 
 /// 一项设置：标题 + 灰色说明，右边放控件或当前值
 class XTile extends StatelessWidget {
-  const XTile({super.key, required this.title, this.subtitle, this.leading, this.trailing, this.onTap, this.danger = false});
+  const XTile({super.key, required this.title, this.subtitle, this.leading, this.trailing, this.onTap, this.danger = false, this.help});
 
   final String title;
   final String? subtitle;
+
+  /// 详细说明：标题后面一个小问号，点了才弹出来，平时界面不占地方
+  final String? help;
   final Widget? leading;
   final Widget? trailing;
   final VoidCallback? onTap;
@@ -136,7 +139,20 @@ class XTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: TextStyle(fontSize: 15.5, color: danger ? scheme.error : scheme.onSurface)),
+                  Row(
+                    children: [
+                      Flexible(child: Text(title, style: TextStyle(fontSize: 15.5, color: danger ? scheme.error : scheme.onSurface))),
+                      if (help != null)
+                        InkResponse(
+                          radius: 16,
+                          onTap: () => showDialog<void>(
+                            context: context,
+                            builder: (context) => AlertDialog(title: Text(title), content: Text(help!), actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('知道了'))]),
+                          ),
+                          child: Padding(padding: const EdgeInsets.all(4), child: Icon(Icons.help_outline, size: 16, color: scheme.onSurfaceVariant)),
+                        ),
+                    ],
+                  ),
                   if (subtitle != null) ...[const SizedBox(height: 3), Text(subtitle!, style: TextStyle(fontSize: 13, height: 1.4, color: scheme.onSurfaceVariant))],
                 ],
               ),
@@ -151,15 +167,16 @@ class XTile extends StatelessWidget {
 
 /// 开关：点整行都能切换
 class XSwitch extends StatelessWidget {
-  const XSwitch({super.key, required this.title, this.subtitle, required this.value, required this.onChanged});
+  const XSwitch({super.key, required this.title, this.subtitle, required this.value, required this.onChanged, this.help});
 
   final String title;
   final String? subtitle;
+  final String? help;
   final bool value;
   final ValueChanged<bool> onChanged;
 
   @override
-  Widget build(BuildContext context) => XTile(title: title, subtitle: subtitle, onTap: () => onChanged(!value), trailing: Switch(value: value, onChanged: onChanged));
+  Widget build(BuildContext context) => XTile(title: title, subtitle: subtitle, help: help, onTap: () => onChanged(!value), trailing: Switch(value: value, onChanged: onChanged));
 }
 
 /// 右边写当前值，点开从底部弹出选项

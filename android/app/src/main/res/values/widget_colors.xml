@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 还没从 App 拿到配色时用的默认色（陶土） -->
+<resources>
+    <color name="widget_text">#1F1B16</color>
+    <color name="widget_subtext">#6B645C</color>
+</resources>

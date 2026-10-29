@@ -1,3 +1,8 @@
+import 'dart:convert' show utf8;
+import 'dart:io' show File, gzip;
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
@@ -6,17 +11,30 @@ import '../models/content.dart';
 import 'data.dart';
 import 'image_cache.dart';
 import 'library.dart';
+import 'read_state.dart';
 
 /// 离线章节缓存。正文放在 LazyBox（只在读的时候才从磁盘取，不常驻内存），
 /// 章数、大小、书的信息放在一个很小的普通 Box 里，列表和计数不用碰正文。
 ///
-/// - `chapters`（LazyBox）：`aid:cid` → `{t: 正文, i: [插图地址]}`
-/// - `chapter_index`（Box）：`aid:cid` → 正文字数；`meta:aid` → 书名、总章数、封面、第一章
+/// - `chapters`（LazyBox）：`aid:cid` → `{z: gzip 压过的正文, i: [插图地址]}`（旧数据是 `{t: 正文, i: ...}`，后台慢慢转）
+/// - `chapter_index`（Box）：`aid:cid` → 正文字数；`meta:aid` → 书名、总章数、封面、第一章；`oimg|aid` → 离线下载的插图地址
 class ChapterCache {
   ChapterCache._();
 
   static late LazyBox _text;
   static late Box _index;
+
+  /// aid → 已缓存章数、字数（书架每本书都要查，不能每次扫一遍索引）
+  static final _counts = <String, int>{};
+  static final _charsOf = <String, int>{};
+
+  static void _tally(String aid, int n, int chars) {
+    _counts[aid] = (_counts[aid] ?? 0) + n;
+    _charsOf[aid] = (_charsOf[aid] ?? 0) + chars;
+  }
+
+  /// 章节的键是 `aid:cid`；网页备份的时间戳 `pt|网址` 里也有冒号，要排除
+  static bool _isChapter(Object? k) => k is String && k.contains(':') && !k.startsWith('meta:') && !k.startsWith('pt|');
 
   static Future<void> open() async {
     _text = await Hive.openLazyBox('chapters');
@@ -24,6 +42,9 @@ class ChapterCache {
     PageStore._box = await Hive.openLazyBox('pages');
     PageStore._stamp = _index;
     await _migrate();
+    for (final k in _index.keys.where(_isChapter)) {
+      _tally((k as String).split(':').first, 1, (_index.get(k) as int?) ?? 0);
+    }
   }
 
   /// 旧版本把 meta 和正文放在同一个 Box 里、没有索引：一次性搬过来。
@@ -44,13 +65,41 @@ class ChapterCache {
 
   static Future<Content?> get(String aid, String cid) async {
     final v = await _text.get('$aid:$cid');
-    return v is Map ? Content(text: v['t'] as String, images: (v['i'] as List).cast<String>()) : null;
+    return v is Map ? Content(text: _textOf(v), images: (v['i'] as List).cast<String>()) : null;
   }
 
+  static String _textOf(Map v) => v['z'] is List ? utf8.decode(gzip.decode(v['z'] as List<int>)) : v['t'] as String;
+
+  // 中文正文 gzip 后一般不到原来的一半；网页预览没有 gzip，照旧存原文
+  static Map<String, Object> _pack(String text, List<String> images) => kIsWeb ? {'t': text, 'i': images} : {'z': Uint8List.fromList(gzip.encode(utf8.encode(text))), 'i': images};
+
   static Future<void> put(String aid, String cid, Content c) async {
-    await _text.put('$aid:$cid', {'t': c.text, 'i': c.images});
+    await _text.put('$aid:$cid', _pack(c.text, c.images));
+    final old = _index.get('$aid:$cid') as int?;
+    _tally(aid, old == null ? 1 : 0, c.text.length - (old ?? 0));
     await _index.put('$aid:$cid', c.text.length);
   }
+
+  /// 旧版本存的原文在后台压一遍（只做一次），一章一章来；做完整理一下文件，空出来的地方才真正还给系统。
+  static Future<void> compressOld() async {
+    if (kIsWeb || _index.get('zipped') == true) return;
+    for (final key in _text.keys.toList()) {
+      final v = await _text.get(key);
+      // 读的这会儿可能刚被删掉：索引里没有了就别写回去，否则留下删不掉的正文
+      if (v is Map && v['t'] is String && _index.containsKey(key)) await _text.put(key, _pack(v['t'] as String, (v['i'] as List).cast<String>()));
+    }
+    await _text.compact();
+    await _index.put('zipped', true);
+  }
+
+  /// 离线下载时记下这本书的插图，图片缓存清理时不删
+  static Future<void> addOfflineImages(String aid, Iterable<String> urls) async {
+    final old = ((_index.get('oimg|$aid') as List?) ?? const []).cast<String>();
+    final all = {...old, ...urls};
+    if (all.length != old.length) await _index.put('oimg|$aid', all.toList());
+  }
+
+  static Iterable<String> offlineImages() => _index.keys.whereType<String>().where((k) => k.startsWith('oimg|')).expand((k) => (_index.get(k) as List).cast<String>());
 
   static bool has(String aid, String cid) => _index.containsKey('$aid:$cid');
 
@@ -59,7 +108,7 @@ class ChapterCache {
 
   static Iterable<String> _keys(String aid) => _index.keys.whereType<String>().where((k) => k.startsWith('$aid:'));
 
-  static int count(String aid) => _keys(aid).length;
+  static int count(String aid) => _counts[aid] ?? 0;
 
   static Future<void> setMeta(String aid, String title, int total, String img, String firstCid) => _index.put('meta:$aid', {'title': title, 'total': total, 'img': img, 'first': firstCid});
 
@@ -77,43 +126,74 @@ class ChapterCache {
       ),
   };
 
-  static Future<void> remove(String aid) async {
-    final keys = [..._keys(aid), 'meta:$aid'];
+  static Future<void> remove(String aid, {bool compact = true}) async {
+    final keys = [..._keys(aid), 'meta:$aid', 'oimg|$aid'];
     await _text.deleteAll(keys);
     await _index.deleteAll(keys);
+    _counts.remove(aid);
+    _charsOf.remove(aid);
+    if (compact) await _text.compact();
   }
 
-  static Future<void> removeChapters(String aid, Iterable<String> cids) async {
-    final keys = [for (final c in cids) '$aid:$c'];
+  static Future<void> removeChapters(String aid, Iterable<String> cids, {bool compact = true}) async {
+    final keys = [for (final c in cids) '$aid:$c'].where(_index.containsKey).toList();
+    _tally(aid, -keys.length, -_chars(keys));
     await _text.deleteAll(keys);
     await _index.deleteAll(keys);
+    if (compact) await _text.compact();
+  }
+
+  /// 有缓存章节的书（含读过自动缓存的）
+  static Iterable<String> cachedBooks() => _counts.keys.where((a) => count(a) > 0);
+
+  /// 清掉所有书里读过的章节（含离线缓存的书），返回清掉的章数
+  static Future<int> clearRead() async {
+    var n = 0;
+    for (final aid in cachedBooks().toList()) {
+      final read = ReadState.read(aid);
+      final cids = [for (final k in _keys(aid)) k.substring(aid.length + 1)].where(read.contains).toList();
+      if (cids.isEmpty) continue;
+      n += cids.length;
+      await removeChapters(aid, cids, compact: false);
+    }
+    await _text.compact();
+    return n;
   }
 
   /// 清掉读过时自动缓存的章节（整本"离线缓存"的书不动），返回清掉的章数。
   static Future<int> clearAuto() async {
-    final aids = _index.keys.whereType<String>().where((k) => !k.startsWith('meta:') && !k.startsWith('pt|') && k != 'migrated' && k.contains(':')).map((k) => k.split(':').first).toSet().where((a) => !offline(a));
+    final aids = _counts.keys.where((a) => !offline(a)).toList();
     var n = 0;
-    for (final aid in aids.toList()) {
+    for (final aid in aids) {
       n += count(aid);
-      await remove(aid);
+      await remove(aid, compact: false);
     }
+    await _text.compact();
     return n;
   }
 
-  /// 所有已缓存章节（含读过自动缓存的）的估算占用，规则同 [sizeLabel]。
-  static String totalLabel() {
-    final chars = _index.keys.whereType<String>().where((k) => !k.startsWith('meta:') && !k.startsWith('pt|') && k != 'migrated').fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));
-    final bytes = chars * 3;
-    return bytes > 1 << 20 ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB' : '${(bytes / 1024).round()} KB';
+  static int _allChars() => _charsOf.values.fold(0, (a, b) => a + b);
+
+  static int _chars(Iterable keys) => keys.fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));
+
+  /// 正文文件实际占用（含还没整理掉的旧数据）；网页预览拿不到，按每字 3 字节估
+  static int totalBytes() {
+    final path = kIsWeb ? null : _text.path;
+    return path == null ? _allChars() * 3 : File(path).lengthSync();
   }
 
-  /// 估算占用：按每个字符 3 字节（UTF-8 中文）算，不含插图。
-  static String sizeLabel(String aid) {
-    final chars = _keys(aid).fold<int>(0, (a, k) => a + ((_index.get(k) as int?) ?? 0));
-    final bytes = chars * 3;
-    return bytes > 1 << 20 ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB' : '${(bytes / 1024).round()} KB';
+  /// 一本书的正文大约占多少：按它的字数占总字数的比例分摊 [totalBytes]
+  static int bytesOf(String aid) {
+    final all = _allChars();
+    return all == 0 ? 0 : (totalBytes() * (_charsOf[aid] ?? 0) / all).round();
   }
+
+  static String totalLabel() => sizeText(totalBytes());
+
+  static String sizeLabel(String aid) => sizeText(bytesOf(aid));
 }
+
+String sizeText(int bytes) => bytes > 1 << 20 ? '${(bytes / (1 << 20)).toStringAsFixed(1)} MB' : '${(bytes / 1024).round()} KB';
 
 /// 网页原文的离线备份（详情、目录、书架、用户页）：联网并解析成功后才更新，断网时拿来顶替。
 /// 最多保留 [_cap] 页，超出删写入最早的（写入时间记在 chapter_index 里，Hive 自己的顺序是按键排的，不能拿来判断新旧）；
@@ -209,6 +289,7 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
             await images.load(url);
           } catch (_) {}
         }
+        await ChapterCache.addOfflineImages(aid, content.images);
         emit();
         await Future<void>.delayed(const Duration(milliseconds: 400));
       }

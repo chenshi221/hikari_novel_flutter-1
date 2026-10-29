@@ -128,6 +128,13 @@ class MainActivity : AudioServiceFragmentActivity() {
             }
     }
 
+    // 点桌面小组件时 App 可能刚被系统重建，Dart 那边还没开始监听，home_widget 会把这次的 intent 丢掉；
+    // 换成当前 intent，App 启动后用 initiallyLaunchedFromHomeWidget 自己来取
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (readerVolumeKeyHandlingEnabled &&
             (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&

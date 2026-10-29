@@ -187,7 +187,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   AppPrefs get _prefs => ref.read(appPrefsProvider.notifier);
 
-  Widget _switch(String title, String key, bool fallback, {String? subtitle}) => XSwitch(title: title, subtitle: subtitle, value: _prefs.get(key, fallback), onChanged: (v) => _prefs.set(key, v));
+  Widget _switch(String title, String key, bool fallback, {String? subtitle, String? help}) => XSwitch(title: title, subtitle: subtitle, help: help, value: _prefs.get(key, fallback), onChanged: (v) => _prefs.set(key, v));
 
   /// 能点进下一页的：右边一个箭头
   Widget _link(String title, String? subtitle, VoidCallback onTap) => XTile(
@@ -352,7 +352,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XDivider(),
       const XGroupTitle('分类标签'),
       _switch('显示分类书籍数量', P.tabCounts, false),
-      _switch('按分类分别设置', P.perCat, false, subtitle: '筛选、排序、显示按分类分开存'),
+      _switch('按分类分别设置', P.perCat, false, help: '筛选、排序和显示方式按分类分别保存；关闭后所有分类共用一套。'),
       const XDivider(),
       const XGroupTitle('列数'),
       XChoice<int>(title: '竖屏', value: _prefs.get(P.colsPortrait, 0), options: {0: '自动', for (var i = 2; i <= 8; i++) i: '$i 列'}, onChanged: (v) => _prefs.set(P.colsPortrait, v)),
@@ -382,7 +382,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XGroupTitle('检查范围'),
       _switch('跳过已完结的书', P.updSkipDone, false),
       _switch('跳过未开始阅读的书', P.updSkipNotStarted, false),
-      _switch('跳过还有未读章节的书', P.updSkipUnread, false),
+      _switch('跳过还有未读章节的书', P.updSkipUnread, false, help: '只检查已经读到最新章节的书。'),
       _link('仅检查以下分类', _catNames(P.updInclude), () => _pickCats(P.updInclude, '仅检查以下分类（不选则不限）')),
       _link('排除以下分类', _catNames(P.updExclude), () => _pickCats(P.updExclude, '排除以下分类')),
     ];
@@ -431,6 +431,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   List<Widget> _data() {
     return [
       const XGroupTitle('存储'),
+      if (!isWebPreview) _link('存储空间', '各部分占用、按书清理', () => context.push(Routes.storage).then((_) => mounted ? setState(() {}) : null)),
       if (!isWebPreview)
         FutureBuilder<int>(
           future: ref.read(imageStoreProvider).diskBytes(),
@@ -489,7 +490,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       ],
       const XDivider(),
       const XGroupTitle('无痕'),
-      XSwitch(title: '无痕模式', subtitle: '不记录进度和历史', value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
+      XSwitch(title: '无痕模式', help: '开启期间不记录阅读进度、历史、已读章节和统计。', value: incognito, onChanged: (v) => ref.read(incognitoProvider.notifier).set(v)),
     ];
   }
 
@@ -509,7 +510,8 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       ),
       XSwitch(
         title: '系统网络栈',
-        subtitle: '不易被 Cloudflare 拦截，重启后生效',
+        subtitle: '重启后生效',
+        help: '用系统的网络层发请求，TLS 指纹和浏览器一致，不容易被 Cloudflare 拦截。设置了代理时不生效。',
         value: store.nativeNet,
         onChanged: (v) async {
           await store.setNativeNet(v);

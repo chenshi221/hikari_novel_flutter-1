@@ -19,6 +19,7 @@ import 'pages/rules_page.dart';
 import 'pages/sync_page.dart';
 import 'pages/search_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/storage_page.dart';
 import 'pages/stats_page.dart';
 import 'pages/updates_page.dart';
 import 'pages/volumes_page.dart';
@@ -49,6 +50,7 @@ class Routes {
   static String settingsSection(String name) => '/settings/$name';
   static const history = '/history';
   static const cache = '/cache';
+  static const storage = '/storage';
 
   static String searchAuthor(String author) => '/search?author=${Uri.encodeQueryComponent(author)}';
   static String cacheBook(String aid) => '/cache/$aid';
@@ -100,6 +102,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/cache/:aid', builder: (_, state) => CacheBookPage(aid: state.pathParameters['aid']!)),
       GoRoute(path: Routes.history, builder: (_, _) => const HistoryPage()),
       GoRoute(path: Routes.cache, builder: (_, _) => const CachePage()),
+      GoRoute(path: Routes.storage, builder: (_, _) => const StoragePage()),
       GoRoute(path: Routes.settings, builder: (_, _) => const SettingsPage()),
       GoRoute(path: '/settings/:section', builder: (_, state) => SettingsSectionPage(section: SettingsSection.values.firstWhere((s) => s.name == state.pathParameters['section'], orElse: () => SettingsSection.appearance))),
       GoRoute(path: '/novel/:aid', builder: (_, state) => NovelPageView(aid: state.pathParameters['aid']!)),

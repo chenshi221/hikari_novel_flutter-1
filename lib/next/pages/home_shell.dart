@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemNavigator;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'package:home_widget/home_widget.dart';
 
 import '../app_prefs.dart';
 import '../cache.dart';
@@ -11,6 +14,7 @@ import '../env.dart';
 import '../image_cache.dart';
 import '../incognito.dart';
 import '../library.dart';
+import '../reading_widget.dart';
 import '../pages/bookshelf_page.dart' show shelfSearching, shelfSelecting;
 import '../router.dart';
 import '../session.dart';
@@ -35,6 +39,12 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
   Timer? _timer;
   DateTime _lastBack = DateTime(0);
 
+  // 桌面小组件：阅读历史、更新变了过一会儿写一次；冷启动时的点击只处理一次（换账号重建主界面时别再跳）
+  Timer? _widgetTimer;
+  ValueListenable<Box>? _widgetWatch;
+  StreamSubscription<Uri?>? _widgetClicks;
+  static bool _widgetLaunchHandled = false;
+
   StatefulNavigationShell get shell => widget.shell;
 
   @override
@@ -44,19 +54,58 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     WidgetsBinding.instance.addObserver(this);
     Future.microtask(_syncAndCheck);
     Sync.auto();
-    if (AppPrefs.read(P.autoClear, false)) ChapterCache.clearAuto().ignore();
+    // 先清再压，省得压了又删
+    final cleared = AppPrefs.read(P.autoClear, false) ? ChapterCache.clearAuto() : Future.value(0);
     if (!isWebPreview) {
       final store = ref.read(imageStoreProvider);
       // 先删挑封面剩下的图，再压剩下的，省得压了又删
-      store.trim().then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).ignore();
+      store.dropLowQualityOnce().then((_) => store.trim()).then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).ignore();
+      cleared.then((_) => ChapterCache.compressOld()).ignore();
     }
+    if (isWebPreview) cleared.ignore();
     _timer = Timer.periodic(const Duration(hours: 1), (_) => _checkUpdates());
+    if (ReadingWidget.supported) {
+      _widgetWatch = Hive.box('session').listenable(keys: ['history2', 'updates', 'updates:seen'])..addListener(_scheduleWidget);
+      Volumes.changes.addListener(_scheduleWidget); // 封面取到了、换了
+      _scheduleWidget();
+      if (!_widgetLaunchHandled) {
+        HomeWidget.initiallyLaunchedFromHomeWidget().then((uri) {
+          // 主界面可能刚建好又被换掉（登录状态变化），等真正处理了才记下
+          if (!mounted || _widgetLaunchHandled) return;
+          _widgetLaunchHandled = true;
+          _openFromWidget(uri);
+        }, onError: (_) {});
+      }
+      _widgetClicks = HomeWidget.widgetClicked.listen(_openFromWidget, onError: (_) {});
+    }
+  }
+
+  void _scheduleWidget() {
+    _widgetTimer?.cancel();
+    _widgetTimer = Timer(const Duration(seconds: 2), _pushWidget);
+  }
+
+  void _pushWidget() {
+    _widgetTimer?.cancel();
+    ReadingWidget.push(ref.read(volumeCoverQueueProvider), ref.read(imageStoreProvider), appPalettes[ref.read(paletteProvider)], ref.read(themeModeProvider));
+  }
+
+  void _openFromWidget(Uri? uri) {
+    final r = ReadingWidget.route(uri);
+    if (r == null || !mounted) return;
+    if (r == Routes.bookshelf) return _go(0);
+    if (r == Routes.updates) return _go(2);
+    context.push(r);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _widgetTimer?.cancel();
+    _widgetWatch?.removeListener(_scheduleWidget);
+    Volumes.changes.removeListener(_scheduleWidget);
+    _widgetClicks?.cancel();
     super.dispose();
   }
 
@@ -66,6 +115,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     if (state == AppLifecycleState.paused) {
       ref.read(sessionProvider.notifier).persistCookies();
       Sync.auto();
+      if (ReadingWidget.supported) _pushWidget();
     } else if (state == AppLifecycleState.resumed) {
       Sync.auto();
       ref.read(libraryProvider.notifier).sync(); // 距上次不到 30 分钟会跳过
@@ -93,6 +143,11 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
+    if (ReadingWidget.supported) {
+      // 换了配色、深浅色，小组件跟着换
+      ref.listen(paletteProvider, (_, _) => _scheduleWidget());
+      ref.listen(themeModeProvider, (_, _) => _scheduleWidget());
+    }
     ref.listen(sessionProvider, (prev, next) {
       if (prev is! SessionLoggedIn && next is SessionLoggedIn && !next.offline) _syncAndCheck();
     });

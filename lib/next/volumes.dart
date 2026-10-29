@@ -68,26 +68,40 @@ class Volumes {
   /// 这卷的封面：null 还没取过，'' 这卷没有插图。
   static String? cover(String aid, String title) => _covers(aid)[title];
 
-  /// [url] 可以带裁剪框（见 [withCrop]），自选封面就是这样存的
-  static Future<void> setCover(String aid, String title, String url) async {
+  /// 手动挑过封面的卷（标题）
+  static Set<String> _picked(String aid) => ((_box.get('vpick:$aid') as List?) ?? const []).cast<String>().toSet();
+
+  /// [url] 可以带裁剪框（见 [withCrop]），自选封面就是这样存的；[picked] 是手动挑的，图片缓存清理时一直留着
+  static Future<void> setCover(String aid, String title, String url, {bool picked = false}) async {
     await _box.put('vcover2:$aid', {..._covers(aid), title: url});
+    if (picked) await _box.put('vpick:$aid', (_picked(aid)..add(title)).toList());
     changes.value++;
   }
 
   /// 忘掉这本书所有卷的封面记录（没加入书架的书退出详情页时）
   static Future<void> forgetCovers(String aid) async {
     await _box.delete('vcover2:$aid');
+    await _box.delete('vpick:$aid');
     changes.value++;
   }
 
   /// 去掉自选的封面，下次显示时重新自动挑
   static Future<void> resetCover(String aid, String title) async {
     await _box.put('vcover2:$aid', {..._covers(aid)}..remove(title));
+    await _box.put('vpick:$aid', (_picked(aid)..remove(title)).toList());
     changes.value++;
   }
 
-  /// 图片缓存清理时要留着的封面
-  static Iterable<String> allCovers() => _box.keys.whereType<String>().where((k) => k.startsWith('vcover2:')).expand((k) => (_box.get(k) as Map).values.cast<String>()).where((e) => e.isNotEmpty);
+  /// 图片缓存清理时要留着的卷封面：书架上这些书显示的那张（第一卷），加上所有手动挑过的
+  static Iterable<String> keptCovers(Iterable<String> shelf) => {
+    for (final aid in shelf)
+      if (of(aid).firstOrNull case final v?) ?cover(aid, v.title),
+    for (final k in _box.keys.whereType<String>().where((k) => k.startsWith('vpick:')))
+      for (final title in _picked(k.substring(6))) ?cover(k.substring(6), title),
+    // 有这个标记之前手动裁过的：带裁剪框的一定是手动挑的
+    for (final k in _box.keys.whereType<String>().where((k) => k.startsWith('vcover2:')))
+      ...(_box.get(k) as Map).values.cast<String>().where((e) => e.contains('#crop=')),
+  }.where((e) => e.isNotEmpty);
 
   // ---- 读完 ----
 
@@ -166,12 +180,11 @@ class VolumeCoverQueue {
   final _bg = <(String, String)>[]; // 后台慢慢取的，排在眼前要看的后面
   bool _running = false;
 
-  /// 后台把这些书所有卷的封面都取下来（打开 App、同步完书架后调用），不用等翻到才取。
+  /// 后台把这些书在书架上显示的封面（第一卷的）取下来（打开 App、同步完书架后调用）。其他卷不常看，打开卷册页时再取。
   void prefetchAll(Iterable<String> aids) {
     for (final aid in aids) {
-      for (final v in Volumes.of(aid)) {
-        if (Volumes.cover(aid, v.title) == null && !_bg.contains((aid, v.title))) _bg.add((aid, v.title));
-      }
+      final v = Volumes.of(aid).firstOrNull;
+      if (v != null && Volumes.cover(aid, v.title) == null && !_bg.contains((aid, v.title))) _bg.add((aid, v.title));
     }
     Future.microtask(_pump);
   }

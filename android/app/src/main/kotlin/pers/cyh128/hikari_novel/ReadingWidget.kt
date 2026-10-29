@@ -1,0 +1,120 @@
+package pers.cyh128.hikari_novel
+
+import android.appwidget.AppWidgetManager
+import android.content.Context
+import android.content.SharedPreferences
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+import android.net.Uri
+import android.os.Build
+import android.view.View
+import android.widget.RemoteViews
+import es.antonborri.home_widget.HomeWidgetLaunchIntent
+import es.antonborri.home_widget.HomeWidgetProvider
+import org.json.JSONArray
+
+// 桌面小组件「继续阅读」：最近读的 4 本封面，颜色跟着 App 的配色。数据由 App 写进 SharedPreferences（见 lib/next/reading_widget.dart）
+class ReadingWidget : HomeWidgetProvider() {
+    private val covers = intArrayOf(R.id.widget_cover0, R.id.widget_cover1, R.id.widget_cover2, R.id.widget_cover3)
+
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, widgetData: SharedPreferences) {
+        val books = try {
+            JSONArray(widgetData.getString("books", "[]"))
+        } catch (e: Exception) {
+            JSONArray()
+        }
+        val bitmaps = (0 until minOf(books.length(), covers.size)).map { i ->
+            val b = books.getJSONObject(i)
+            b.optString("cover").takeIf { it.isNotEmpty() }?.let { roundedCover(it, b.optJSONArray("crop")) }
+        }
+        val icon = widgetData.getString("icon", null)?.let { BitmapFactory.decodeFile(it) }
+        for (id in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.reading_widget)
+            applyColors(context, views, widgetData)
+            if (icon != null) {
+                views.setImageViewBitmap(R.id.widget_icon, icon)
+                views.setViewVisibility(R.id.widget_icon, View.VISIBLE)
+            } else {
+                views.setViewVisibility(R.id.widget_icon, View.GONE)
+            }
+            views.setViewVisibility(R.id.widget_empty, if (bitmaps.isEmpty()) View.VISIBLE else View.GONE)
+            views.setOnClickPendingIntent(android.R.id.background, launch(context, "hikari://shelf"))
+            covers.forEachIndexed { i, coverId ->
+                if (i >= bitmaps.size) {
+                    // 不够 4 本：占着位置但不显示，封面大小不变
+                    views.setViewVisibility(coverId, View.INVISIBLE)
+                    return@forEachIndexed
+                }
+                val b = books.getJSONObject(i)
+                views.setViewVisibility(coverId, View.VISIBLE)
+                val bmp = bitmaps[i]
+                if (bmp != null) views.setImageViewBitmap(coverId, bmp) else views.setImageViewResource(coverId, R.mipmap.launcher_icon)
+                views.setOnClickPendingIntent(coverId, launch(context, "hikari://reader/${b.getString("aid")}/${b.getString("cid")}"))
+            }
+            appWidgetManager.updateAppWidget(id, views)
+        }
+    }
+
+    // App 跟随系统时把浅色、深色两套都给出来：安卓 12 起小组件自己随深浅色切换，不用等 App 刷新
+    private fun applyColors(context: Context, views: RemoteViews, data: SharedPreferences) {
+        val bgLight = parse(data.getString("bgLight", null)) ?: return
+        val bgDark = parse(data.getString("bgDark", null)) ?: bgLight
+        val accentLight = parse(data.getString("accentLight", null)) ?: bgLight
+        val accentDark = parse(data.getString("accentDark", null)) ?: accentLight
+        val subLight = parse(data.getString("subLight", null)) ?: accentLight
+        val subDark = parse(data.getString("subDark", null)) ?: accentDark
+        val mode = data.getString("mode", "system")
+        val night = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        fun set(viewId: Int, method: String, light: Int, dark: Int) = when {
+            mode == "light" -> views.setInt(viewId, method, light)
+            mode == "dark" -> views.setInt(viewId, method, dark)
+            Build.VERSION.SDK_INT >= 31 -> views.setColorInt(viewId, method, light, dark)
+            else -> views.setInt(viewId, method, if (night) dark else light)
+        }
+        set(R.id.widget_bg, "setColorFilter", bgLight, bgDark)
+        set(R.id.widget_title, "setTextColor", accentLight, accentDark)
+        set(R.id.widget_empty, "setTextColor", subLight, subDark)
+    }
+
+    private fun parse(s: String?) = try {
+        s?.let { Color.parseColor(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun launch(context: Context, uri: String) = HomeWidgetLaunchIntent.getActivity(context, MainActivity::class.java, Uri.parse(uri))
+
+    // 小组件的图片走进程间传输，有大小上限：按高约 300 像素缩，再切圆角。[crop] 是书架上自选封面的裁剪框（左、上、宽、高，0~1 的比例）
+    private fun roundedCover(path: String, crop: JSONArray?): Bitmap? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        while (bounds.outHeight / (sample * 2) >= 300) sample *= 2
+        BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })?.let { full ->
+            val raw = if (crop != null && crop.length() == 4) {
+                val x = (crop.getDouble(0) * full.width).toInt().coerceIn(0, full.width - 1)
+                val y = (crop.getDouble(1) * full.height).toInt().coerceIn(0, full.height - 1)
+                val cw = (crop.getDouble(2) * full.width).toInt().coerceIn(1, full.width - x)
+                val ch = (crop.getDouble(3) * full.height).toInt().coerceIn(1, full.height - y)
+                Bitmap.createBitmap(full, x, y, cw, ch)
+            } else full
+            // 有的卷封面是横着的跨页图：从中间裁成竖版书封的比例，4 本才对得齐
+            val w = minOf(raw.width, (raw.height * 0.7f).toInt())
+            val src = if (w < raw.width) Bitmap.createBitmap(raw, (raw.width - w) / 2, 0, w, raw.height) else raw
+            val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP) }
+            val r = src.width * 0.08f
+            Canvas(out).drawRoundRect(RectF(0f, 0f, src.width.toFloat(), src.height.toFloat()), r, r, paint)
+            out
+        }
+    } catch (e: Exception) {
+        null
+    }
+}

@@ -11,6 +11,8 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../app_prefs.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
+import '../data.dart';
+import '../history.dart';
 import '../image_cache.dart';
 import '../library.dart';
 import '../progress.dart';
@@ -158,12 +160,12 @@ Iterable<LibBook> _booksIn(LibraryState lib, String tabId) {
 /// 某个标签页里有几本书（分类管理页用）
 int booksInTab(LibraryState lib, String tabId) => _booksIn(lib, tabId).length;
 
-bool _started(String aid) => ReadingProgress.of(aid) != null || ReadState.read(aid).isNotEmpty;
+bool _started(String aid) => ReadingProgress.of(aid) != null || ReadState.readCount(aid) > 0;
 
 /// 未读章数：上次检查更新时记下的总章数减去读过的章数。
 int _unread(String aid) {
-  final total = UpdateStore.knownCounts()[aid] ?? 0;
-  return total == 0 ? 0 : (total - ReadState.read(aid).length).clamp(0, total);
+  final total = UpdateStore.known(aid);
+  return total == 0 ? 0 : (total - ReadState.readCount(aid)).clamp(0, total);
 }
 
 List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, String catId) {
@@ -184,7 +186,7 @@ List<LibBook> _arrange(Iterable<LibBook> list, ShelfOptions o, String query, Str
     case ShelfSort.unread:
       out.sort((a, b) => _unread(b.aid).compareTo(_unread(a.aid)));
     case ShelfSort.total:
-      out.sort((a, b) => (UpdateStore.knownCounts()[b.aid] ?? 0).compareTo(UpdateStore.knownCounts()[a.aid] ?? 0));
+      out.sort((a, b) => UpdateStore.known(b.aid).compareTo(UpdateStore.known(a.aid)));
     case ShelfSort.random:
       final seed = AppPrefs.read('shelf.seed', 1);
       out.sort((a, b) => Object.hash(a.aid, seed).compareTo(Object.hash(b.aid, seed)));
@@ -544,10 +546,55 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
       child: Scaffold(
         resizeToAvoidBottomInset: false, // 外层主界面已经让开了键盘，这里再让一次，书架只剩上面一小截
         appBar: appBar,
-        body: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
+        body: Column(
+          children: [
+            if (!_searching) const _ResumeBar(),
+            Expanded(child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)])),
+          ],
+        ),
       ),
     );
   }
+}
+
+/// 书架顶上的「继续阅读」：最近读的一本，点了直接进阅读器；关掉后，读到别的书时再出现。
+class _ResumeBar extends StatelessWidget {
+  const _ResumeBar();
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: Hive.box('session').listenable(keys: ['history2', 'resumeClosed']),
+    builder: (context, box, _) {
+      final h = ReadingHistory.all().firstOrNull;
+      if (h == null || box.get('resumeClosed') == h.aid) return const SizedBox.shrink();
+      final theme = Theme.of(context);
+      return Material(
+        color: theme.colorScheme.surfaceContainerLow,
+        child: InkWell(
+          onTap: () => context.push(Routes.reader(h.aid, h.cid)),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
+            child: Row(
+              children: [
+                SizedBox(width: 28, height: 38, child: CoverImage(h.img)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(LibraryStore.shown(h.aid, h.title), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                      Text('继续读 ${h.chapter}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                IconButton(tooltip: '关闭', visualDensity: VisualDensity.compact, icon: const Icon(Icons.close, size: 18), onPressed: () => box.put('resumeClosed', h.aid)),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _Shelf extends ConsumerStatefulWidget {
@@ -644,6 +691,42 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     if (mounted) setState(_selected.clear);
   }
 
+  /// 选中的书整本下载离线缓存：一本下完再下一本（同时下会被网站限流），在后台跑，进度在离线缓存页看
+  void _download() {
+    final aids = [..._selected];
+    final container = ProviderScope.containerOf(context); // 书架页关了也接着下
+    () async {
+      for (final aid in aids) {
+        try {
+          final n = await container.read(apiProvider).novel(aid);
+          final all = [for (final v in n.catalogue) ...v.chapters];
+          if (all.isEmpty) continue;
+          await container.read(downloadProvider.notifier).start(aid, n.detail.title, all, img: n.detail.imgUrl);
+        } catch (_) {} // 这本取不到目录就跳过，下一本照常
+      }
+    }();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('开始下载 ${aids.length} 本，进度在「离线缓存」里看')));
+    setState(_selected.clear);
+  }
+
+  /// 选中的书全部章节标为已读（要取一次目录）
+  Future<void> _markRead() async {
+    final aids = [..._selected];
+    final api = ref.read(apiProvider);
+    var failed = 0;
+    for (final aid in aids) {
+      try {
+        final n = await api.novel(aid);
+        await ReadState.setRead(aid, [for (final v in n.catalogue) ...v.chapters.map((c) => c.cid)], true);
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failed == 0 ? '已标为已读' : '$failed 本没取到目录，其余已标为已读')));
+    setState(_selected.clear);
+  }
+
   Future<void> _remove() async {
     final n = _selected.length;
     final ok = await showDialog<bool>(
@@ -736,6 +819,14 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                     if (_selected.length == 1) TextButton(onPressed: _pickCover, child: const Text('封面')),
                     TextButton(onPressed: _setCats, child: const Text('分类')),
                     TextButton(onPressed: _remove, child: const Text('移出')),
+                    PopupMenuButton<VoidCallback>(
+                      tooltip: '更多',
+                      onSelected: (f) => f(),
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: _download, child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.download_outlined), title: Text('下载'))),
+                        PopupMenuItem(value: _markRead, child: const ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.done_all), title: Text('标为已读'))),
+                      ],
+                    ),
                   ],
                 ),
               ),
