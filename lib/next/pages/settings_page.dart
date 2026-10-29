@@ -361,7 +361,7 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       const XGroupTitle('分类'),
       XChoice<String>(
         title: '新书默认分类',
-                // 选过的分类后来被删了，就当"每次询问"
+        // 选过的分类后来被删了，就当"每次询问"
         value: def == 'ask' || def.isEmpty || cats.any((c) => c.id == def) ? def : 'ask',
         options: {'ask': '每次询问', '': '不分类', for (final c in cats) c.id: c.name},
         onChanged: (v) => _prefs.set(P.defaultCat, v),

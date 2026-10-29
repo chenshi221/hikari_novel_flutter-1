@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../data/wenku8/wenku8_parser.dart';
 import '../bookmarks.dart';
 import '../cache.dart';
+import '../library.dart' show LibraryStore;
 import '../reader/reader_page.dart' show bookmarkPage;
 import '../router.dart';
 import '../stats.dart';
@@ -124,7 +125,7 @@ class _BookmarksPageState extends ConsumerState<BookmarksPage> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(e.value.first.book, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium),
+                                      Text(LibraryStore.shown(e.key, e.value.first.book), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium),
                                       Text('${e.value.length} 个书签', style: muted),
                                     ],
                                   ),

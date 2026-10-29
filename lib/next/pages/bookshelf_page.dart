@@ -243,7 +243,8 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 
   void _setSearching(bool v) {
     _searching = v;
-    shelfSearching.value = v;
+    // 晚一拍改通知器：同一次返回键里，外层 PopScope 不管先后都读到旧值
+    Future.microtask(() => shelfSearching.value = _searching);
   }
 
   TabController? _tc;
@@ -258,6 +259,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 
   @override
   void dispose() {
+    shelfSearching.value = false;
     _tc?.dispose();
     _tabScroll.dispose();
     super.dispose();
@@ -332,7 +334,10 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                   onReorderItem: (from, to) {
                     final ids = [for (final c in tabs) c.id];
                     ids.insert(to, ids.removeAt(from));
-                    _box.put('shelfTabOrder', [...ids, for (final c in allShelfTabs(lib.cats)) if (!ids.contains(c.id)) c.id]);
+                    // 隐藏的标签留在原位，可见的按新顺序填回它们占的位置
+                    final all = [for (final c in allShelfTabs(lib.cats)) c.id];
+                    var k = 0;
+                    _box.put('shelfTabOrder', [for (final id in all) ids.contains(id) ? ids[k++] : id]);
                     setState(() {});
                   },
                   itemBuilder: (context, i) {
@@ -537,10 +542,11 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         ref.read(shelfQueryProvider.notifier).set('');
       },
       child: Scaffold(
-      resizeToAvoidBottomInset: false, // 外层主界面已经让开了键盘，这里再让一次，书架只剩上面一小截
-      appBar: appBar,
-      body: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
-    ));
+        resizeToAvoidBottomInset: false, // 外层主界面已经让开了键盘，这里再让一次，书架只剩上面一小截
+        appBar: appBar,
+        body: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
+      ),
+    );
   }
 }
 
@@ -632,6 +638,7 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('确定'))],
       ),
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose()); // 退出动画还在用它，晚一帧再释放
     if (name == null) return;
     await ref.read(libraryProvider.notifier).rename(b.aid, name);
     if (mounted) setState(_selected.clear);

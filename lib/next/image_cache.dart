@@ -198,13 +198,13 @@ class ImageStore {
   }
 }
 
-/// 图片存盘前压一下：长边超过 [_maxSide] 的缩到 [_maxSide]，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 75（手机屏上看不出来）。
-/// 小图（80 KB 以下，比如书的小封面）、动图、已经按这个标准压过的 WebP 不动；压完没小两成以上（源图本来就压得狠）就留原图。
-/// 不支持的平台（Windows、Linux）原样返回。
 const _maxSide = 1600;
 
+/// 图片存盘前压一下：长边超过 [_maxSide] 的缩到 [_maxSide]，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 75（手机屏上看不出来）。
+/// 小图（80 KB 以下，比如书的小封面）、动图（GIF、动态 WebP）、已经按这个标准压过的 WebP 不动；压完没小两成以上（源图本来就压得狠）就留原图。
+/// 不支持的平台（Windows、Linux）原样返回。
 Future<Uint8List> shrinkImage(Uint8List b) async {
-  if (b.length < 80 << 10 || _isGif(b)) return b;
+  if (b.length < 80 << 10 || _isGif(b) || _isAnimatedWebp(b)) return b;
   try {
     final size = await imageSize(b);
     final long = size.longestSide;
@@ -227,6 +227,9 @@ Future<Uint8List> shrinkImage(Uint8List b) async {
 bool _isGif(Uint8List b) => b.length > 3 && b[0] == 0x47 && b[1] == 0x49 && b[2] == 0x46;
 
 bool _isWebp(Uint8List b) => b.length > 12 && b[0] == 0x52 && b[1] == 0x49 && b[2] == 0x46 && b[3] == 0x46 && b[8] == 0x57 && b[9] == 0x45 && b[10] == 0x42 && b[11] == 0x50;
+
+/// WebP 的 VP8X 扩展头里，标志字节（第 20 字节）的 0x02 位表示有动画
+bool _isAnimatedWebp(Uint8List b) => _isWebp(b) && b.length > 20 && b[12] == 0x56 && b[13] == 0x50 && b[14] == 0x38 && b[15] == 0x58 && b[20] & 0x02 != 0;
 
 /// 目录总大小超过 [maxBytes] 时，按修改时间从旧到新删文件，直到不超过 [maxBytes] 的 80%。
 /// 文件名在 [keep] 里的不删（但计入总大小）。

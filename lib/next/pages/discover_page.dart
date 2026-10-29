@@ -216,8 +216,9 @@ class _RankingTab extends ConsumerStatefulWidget {
 
 class _RankingTabState extends ConsumerState<_RankingTab> with AutomaticKeepAliveClientMixin {
   // 从上次的参数（比如 weekvisit）拆出榜单和时间
-  late var _kind = rankKinds.firstWhere((k) => AppPrefs.read(P.discoverRank, '').endsWith(k.$2), orElse: () => rankKinds.first).$2;
-  late var _period = rankPeriods.firstWhere((p) => AppPrefs.read(P.discoverRank, '').startsWith(p.$2), orElse: () => rankPeriods.last).$2;
+  late final _saved = parseRank(AppPrefs.read(P.discoverRank, ''));
+  late var _kind = _saved.$1;
+  late var _period = _saved.$2;
 
   void _set({String? kind, String? period}) {
     setState(() {

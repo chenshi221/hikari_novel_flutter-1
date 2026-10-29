@@ -293,6 +293,7 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
   int _maxPage = 1;
   bool _loading = false;
   Object? _error;
+  int _autoFill = 0; // 连续自动补页的次数
 
   @override
   void initState() {
@@ -302,6 +303,7 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
 
   Future<void> _load({bool reset = false}) async {
     if (_loading || (!reset && _page >= _maxPage)) return;
+    if (reset) _autoFill = 0;
     setState(() {
       _loading = true;
       _error = null;
@@ -335,7 +337,14 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
     }
     final items = widget.hide == null ? _items : _items.where((e) => !widget.hide!(e.aid)).toList();
     // 滤掉太多、一屏都不满时滑不动，自己接着加载下一页
-    if (items.length < 12 && !_loading && _error == null && _page < _maxPage) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _load() : null);
+    // 最多连续补 3 页，再多就等用户滑动或点「加载更多」，避免 429
+    if (items.length < 12 && !_loading && _error == null && _page < _maxPage && _autoFill < 3) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _loading) return;
+        _autoFill++;
+        _load();
+      });
+    }
     final theme = Theme.of(context);
     final hint = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     // 下一页失败后不再自动加载，只能点重试或下拉刷新，避免狂发请求触发 429
@@ -343,6 +352,15 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
       if (_error != null) return TextButton(onPressed: _load, child: const Text('加载失败，点击重试'));
       if (_loading) return const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)));
       if (_page >= _maxPage) return Center(child: Text('没有更多了', style: hint));
+      if (_autoFill >= 3) {
+        return TextButton(
+          onPressed: () {
+            _autoFill = 0;
+            _load();
+          },
+          child: const Text('加载更多'),
+        );
+      }
       return const SizedBox.shrink();
     }
 
@@ -350,7 +368,10 @@ class _PagedNovelGridState extends ConsumerState<PagedNovelGrid> {
       onRefresh: () => _load(reset: true),
       child: NotificationListener<ScrollNotification>(
         onNotification: (n) {
-          if (_error == null && n.metrics.extentAfter < 600) _load();
+          if (_error == null && n.metrics.extentAfter < 600) {
+            _autoFill = 0;
+            _load();
+          }
           return false;
         },
         child: LayoutBuilder(
