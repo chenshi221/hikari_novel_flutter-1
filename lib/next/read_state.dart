@@ -9,9 +9,27 @@ class ReadState {
 
   static Box get _box => Hive.box('session');
 
-  static Set<String> read(String aid) => ((_box.get('read:$aid') as List?) ?? const []).cast<String>().toSet();
+  // 存的 List 没换（Hive 每次 put 都是新对象，同步、导入直接写 Box 也一样）就复用转好的 Set
+  static final _sets = <String, (List, Set<String>)>{};
 
-  static bool isRead(String aid, String cid) => read(aid).contains(cid);
+  /// 读过的章节。返回的是副本，改了不影响缓存。
+  static Set<String> read(String aid) => {..._readView(aid)};
+
+  static Set<String> _readView(String aid) {
+    final list = _box.get('read:$aid') as List?;
+    if (list == null) return const {};
+    final hit = _sets[aid];
+    if (hit != null && identical(hit.$1, list)) return hit.$2;
+    final set = list.cast<String>().toSet();
+    _sets[aid] = (list, set);
+    return set;
+  }
+
+  /// 读过几章（书架算未读数用，不复制）
+  static int readCount(String aid) => _readView(aid).length;
+
+  static bool isRead(String aid, String cid) => _readView(aid).contains(cid);
+
 
   /// 标记已读；第一次标记时把字数计入这本书的"已读字数"。
   static Future<void> mark(String aid, String cid, int chars) async {

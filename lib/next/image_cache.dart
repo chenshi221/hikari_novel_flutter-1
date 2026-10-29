@@ -10,6 +10,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'cache.dart';
 import 'library.dart';
 import 'session.dart';
 import 'volumes.dart';
@@ -111,6 +112,7 @@ class ImageStore {
     Uint8List bytes;
     if (await file.exists()) {
       bytes = await file.readAsBytes();
+      _touch(file).ignore();
     } else {
       await _slot(url);
       try {
@@ -184,9 +186,35 @@ class ImageStore {
     _memUsed = 0;
   }
 
-  /// 磁盘缓存超过 [maxBytes] 时按修改时间从旧到新删，删到上限的 80%；本地书架里的书的封面、卷封面不删。
-  /// shortcut: 离线缓存的插图也可能被清掉，联网时会重新下载；以后要区分就给离线插图单独目录
-  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(await _cacheDir(), maxBytes, keep: {for (final url in [...LibraryStore.covers(), ...Volumes.allCovers()]) _name(_norm(url))});
+  /// 磁盘缓存超过 [maxBytes] 时按修改时间（最近一次用到的时间，见 [_touch]）从旧到新删，删到上限的 80%。
+  /// 不删：书架上显示的封面（网站小封面和第一卷的卷封面）、手动挑过的卷封面、离线缓存的插图。其余卷封面删了也不怕，用到时重新下载，挑封面的记录和裁剪框另外存着。
+  Future<void> trim({int maxBytes = 500 << 20}) async => trimDir(
+    await _cacheDir(),
+    maxBytes,
+    keep: {for (final url in [...LibraryStore.covers(), ...Volumes.keptCovers(LibraryStore.aids()), ...ChapterCache.offlineImages()]) _name(_norm(url))},
+  );
+
+  /// 从磁盘读到时把修改时间改成现在，清理时常看的排在后面；一天内用过的不重复改
+  Future<void> _touch(File f) async {
+    final now = DateTime.now();
+    if (now.difference(await f.lastModified()) > const Duration(days: 1)) await f.setLastModified(now);
+  }
+
+  /// 以前按长边 1600、质量 75 压过的图清掉一次（压过的回不去了），用到时按现在的标准重新下载；离线缓存的插图留着，没网时还要看
+  Future<void> dropLowQualityOnce() async {
+    final box = Hive.box('session');
+    if (box.get('imgHq') == true) return;
+    if (box.get('imgShrunk2') == true) {
+      final keep = {for (final url in ChapterCache.offlineImages()) _name(_norm(url))};
+      final dir = await _cacheDir();
+      await for (final f in dir.list()) {
+        if (f is File && !keep.contains(p.basename(f.path))) await f.delete();
+      }
+      _mem.clear();
+      _memUsed = 0;
+    }
+    await box.put('imgHq', true);
+  }
 
   Future<int> diskBytes() async {
     final dir = await _cacheDir();
@@ -198,24 +226,24 @@ class ImageStore {
   }
 }
 
-const _maxSide = 1600;
+const _maxSide = 2400;
 
-/// 图片存盘前压一下：长边超过 [_maxSide] 的缩到 [_maxSide]，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 75（手机屏上看不出来）。
-/// 小图（80 KB 以下，比如书的小封面）、动图（GIF、动态 WebP）、已经按这个标准压过的 WebP 不动；压完没小两成以上（源图本来就压得狠）就留原图。
+/// 图片存盘前压一下：长边超过 [_maxSide] 的缩到 [_maxSide]，再转 WebP（只有安卓、iOS 支持，macOS 转 JPEG），质量 90，看起来和原图没区别。
+/// 不用无损 WebP：网站的图大多是 JPEG，转成无损反而比原图大。
+/// 小图（150 KB 以下，比如书的小封面）、动图（GIF、动态 WebP）、不超过 [_maxSide] 的 WebP 不动；压完没小两成以上（源图本来就压得狠）就留原图。
 /// 不支持的平台（Windows、Linux）原样返回。
 Future<Uint8List> shrinkImage(Uint8List b) async {
-  if (b.length < 80 << 10 || _isGif(b) || _isAnimatedWebp(b)) return b;
+  if (b.length < 150 << 10 || _isGif(b) || _isAnimatedWebp(b)) return b;
   try {
     final size = await imageSize(b);
     final long = size.longestSide;
-    // 以前按 2400 / 质量 85 压过的 WebP 再压一次；已经不大的不重复压
-    if (_isWebp(b) && long <= _maxSide && b.length < 250 << 10) return b;
+    if (_isWebp(b) && long <= _maxSide) return b;
     final s = long > _maxSide ? _maxSide / long : 1.0;
     final out = await FlutterImageCompress.compressWithList(
       b,
       minWidth: (size.width * s).round(),
       minHeight: (size.height * s).round(),
-      quality: 75,
+      quality: 90,
       format: Platform.isAndroid || Platform.isIOS ? CompressFormat.webp : CompressFormat.jpeg,
     );
     return out.length < b.length * 0.8 ? out : b;

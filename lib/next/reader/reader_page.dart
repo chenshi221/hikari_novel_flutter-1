@@ -1275,7 +1275,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   // 越往左越暗：滑块值是亮度，存的是遮罩不透明度
                   XSlider(title: '页面亮度', label: '${((1 - prefs.dim) * 100).round()}%', slider: Slider(min: 0.3, max: 1.0, divisions: 14, value: (1 - prefs.dim).clamp(0.3, 1.0), onChanged: (v) => set(prefs.copyWith(dim: 1 - v)))),
                   if (android) ...[
-                    XSwitch(title: '独立屏幕亮度', subtitle: '不跟随系统，可调得更亮', value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
+                    XSwitch(title: '独立屏幕亮度', help: '不跟随系统亮度，最高能调得比系统更亮；退出阅读后恢复。', value: prefs.customBrightness, onChanged: (v) => set(prefs.copyWith(customBrightness: v))),
                     if (prefs.customBrightness) XSlider(title: '屏幕亮度', label: '${(prefs.brightness * 100).round()}%', slider: Slider(min: 0.02, max: 1.0, value: prefs.brightness.clamp(0.02, 1.0), onChanged: (v) => set(prefs.copyWith(brightness: v)))),
                   ],
                   XSlider(title: '暖色滤镜', label: prefs.warm == 0 ? '关闭' : '${(prefs.warm * 200).round()}%', slider: Slider(min: 0, max: 0.5, divisions: 10, value: prefs.warm, onChanged: (v) => set(prefs.copyWith(warm: v)))),
@@ -1308,6 +1308,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                   const XDivider(),
                   const XGroupTitle('翻页'),
                   XSegments<int>(value: prefs.mode, options: const {0: '滚动', 1: '滑动', 2: '仿真', 3: '覆盖'}, onChanged: (v) => set(prefs.copyWith(mode: v))),
+                  // 点击区域、音量键、预加载这些在设置页
+                  XTile(
+                    title: '更多阅读设置',
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.pop(context);
+                      this.context.push(Routes.settingsSection('reading'));
+                    },
+                  ),
                 ],
               ),
             ),

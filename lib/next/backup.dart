@@ -13,7 +13,7 @@ class Backup {
 
   /// 这些键（或前缀）会进备份
   static const _exact = {'lib:books', 'lib:cats', 'shelfTabOrder', 'shelfOpts', 'catReverse', 'incognito'};
-  static const _prefixes = ['shelfOrder:', 'vcover2:', 'vrate:', 'r.', 'p.', 'swipe', 'chl:'];
+  static const _prefixes = ['shelfOrder:', 'vcover2:', 'vpick:', 'vrate:', 'r.', 'p.', 'swipe', 'chl:'];
 
   static bool _wanted(String k) => _exact.contains(k) || _prefixes.any(k.startsWith);
 
