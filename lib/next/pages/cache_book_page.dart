@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../cache.dart';
+import '../library.dart' show LibraryStore;
 import '../router.dart';
 import '../widgets.dart';
 import 'novel_page.dart';
@@ -44,7 +45,7 @@ class _CacheBookPageState extends ConsumerState<CacheBookPage> {
                       children: [
                         SizedBox(width: 54, height: 72, child: CoverImage(data.detail.imgUrl)),
                         const SizedBox(width: 12),
-                        Expanded(child: Text(data.detail.title, style: Theme.of(context).textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis)),
+                        Expanded(child: Text(LibraryStore.shown(widget.aid, data.detail.title), style: Theme.of(context).textTheme.titleMedium, maxLines: 2, overflow: TextOverflow.ellipsis)),
                       ],
                     ),
                     const SizedBox(height: 12),

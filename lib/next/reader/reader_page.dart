@@ -332,7 +332,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
       if (img.isNotEmpty) cover = await ref.read(imageStoreProvider).path(img);
     } catch (_) {}
     if (!_speaking || !mounted) return;
-    n.show(book: novel?.detail.title ?? '', chapter: chapter, cover: cover, playing: !_paused);
+    n.show(book: LibraryStore.shown(widget.aid, novel?.detail.title ?? ''), chapter: chapter, cover: cover, playing: !_paused);
   }
 
   void _pauseSpeech() {

@@ -8,6 +8,12 @@ const rankPeriods = [('日', 'day'), ('周', 'week'), ('月', 'month'), ('总', 
 /// 网站排行页的参数
 String rankParam(String kind, String period) => rankPeriodic.contains(kind) ? '$period$kind' : kind;
 
+/// [rankParam] 的反向：从存下来的参数拆出（榜单, 时间）；认不出的用第一个榜单和「总」
+(String kind, String period) parseRank(String param) => (
+  rankKinds.firstWhere((k) => param.endsWith(k.$2), orElse: () => rankKinds.first).$2,
+  rankPeriods.firstWhere((p) => param.startsWith(p.$2), orElse: () => rankPeriods.last).$2,
+);
+
 /// 分类页的标签（直接作为 wenku8 的参数）
 const categoryTags = [
   '校园', '青春', '恋爱', '治愈', '群像', '竞技', '音乐', '美食', '旅行', '欢乐向', '经营', '职场', '斗智', '脑洞', '宅文化', '穿越', '奇幻', '魔法', '异能', '战斗', '科幻', '机战', '战争', '冒险', '龙傲天',

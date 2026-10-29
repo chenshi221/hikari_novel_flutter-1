@@ -48,6 +48,8 @@ class LibBook {
 
   LibBook copyWith({String? title, String? img, List<String>? cats, String? bid, bool? done}) =>
       LibBook(aid: aid, title: title ?? this.title, img: img ?? this.img, added: added, cats: cats ?? this.cats, bid: bid ?? this.bid, done: done ?? this.done, name: name);
+
+  LibBook withName(String? name) => LibBook(aid: aid, title: title, img: img, added: added, cats: cats, bid: bid, done: done, name: name);
 }
 
 class LibCategory {
@@ -154,8 +156,7 @@ class LibraryController extends Notifier<LibraryState> {
     final b = state.books[aid];
     if (b == null) return;
     final n = name?.trim();
-    final m = b.toMap()..['name'] = n == null || n.isEmpty || n == b.title ? null : n;
-    await _save({...state.books, aid: LibBook.fromMap(m)});
+    await _save({...state.books, aid: b.withName(n == null || n.isEmpty || n == b.title ? null : n)});
   }
 
   Future<void> setCats(Iterable<String> aids, List<String> cats) =>

@@ -91,7 +91,7 @@ class CachePage extends ConsumerWidget {
                       final total = b.value.$2;
                       return ListTile(
                         leading: SizedBox(width: 44, height: 59, child: CoverImage(b.value.$3)),
-                        title: Text(b.value.$1),
+                        title: Text(LibraryStore.shown(b.key, b.value.$1)),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
