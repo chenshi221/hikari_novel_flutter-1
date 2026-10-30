@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/rendering.dart' show ScrollCacheExtent, ScrollDirection;
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -26,6 +26,7 @@ import '../theme_squire.dart';
 import '../updates.dart';
 import '../volumes.dart';
 import '../widgets.dart';
+import '../x_list.dart';
 import 'categories_page.dart';
 import 'cover_picker_page.dart';
 import 'volumes_page.dart';
@@ -383,118 +384,48 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
 
   String get _curTab => _ids.isEmpty || _tc == null ? '' : _ids[_tc!.index.clamp(0, _ids.length - 1)];
 
+  /// 筛选 / 排序 / 显示：底部弹出，不顶到状态栏，分三个标签页，内容多了在里面滑
   void _showOptions() {
     final tabId = _curTab;
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
+      useSafeArea: true,
       isScrollControlled: true,
-      builder: (context) => Consumer(
-        builder: (context, ref, _) {
-          ref.watch(appPrefsProvider);
-          final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), tabId);
-          final perCat = AppPrefs.read(P.perCat, false);
-          final colsKey = MediaQuery.orientationOf(context) == Orientation.landscape ? P.colsLandscape : P.colsPortrait;
-          void set(ShelfOptions v) => perCat ? ref.read(appPrefsProvider.notifier).set('shelf.tab.$tabId', v.toMap()) : ref.read(shelfOptionsProvider.notifier).set(v);
-          final theme = Theme.of(context);
-          Widget title(String t) => Padding(padding: const EdgeInsets.fromLTRB(4, 12, 4, 8), child: Text(t, style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary)));
-          Widget tri(String label, int v, ShelfOptions Function(int) apply) => FilterChip(
-            avatar: v == 0 ? null : Icon(v == 1 ? Icons.check : Icons.block, size: 16),
-            label: Text(label, style: v == 2 ? const TextStyle(decoration: TextDecoration.lineThrough) : null),
-            selected: v != 0,
-            showCheckmark: false,
-            onSelected: (_) => set(apply((v + 1) % 3)), // 不限 → 必须满足 → 必须不满足
-          );
-          final tabName = allShelfTabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == tabId, orElse: () => const LibCategory('', '默认')).name;
-          return SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (perCat) Text('以下设置只对「$tabName」生效', style: theme.textTheme.bodySmall),
-                  title('筛选'),
-                  Text('点按切换：满足 / 不满足 / 不限', style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      tri('有未读', o.unread, (v) => o.copyWith(unread: v)),
-                      tri('已开始读', o.started, (v) => o.copyWith(started: v)),
-                      tri('有缓存', o.cached, (v) => o.copyWith(cached: v)),
-                      tri('有书签', o.bookmarked, (v) => o.copyWith(bookmarked: v)),
-                      tri('已完结', o.completed, (v) => o.copyWith(completed: v)),
-                    ],
-                  ),
-                  title('排序'),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final s in ShelfSort.values)
-                        ChoiceChip(
-                          avatar: o.sort == s && s != ShelfSort.custom && s != ShelfSort.random ? Icon(o.reverse ? Icons.arrow_upward : Icons.arrow_downward, size: 16) : null,
-                          label: Text(s.label),
-                          selected: o.sort == s,
-                          showCheckmark: false,
-                          // 再点一次当前的排序：方向反过来；随机再点一次换一批
-                          onSelected: (_) {
-                            if (s == ShelfSort.random) ref.read(appPrefsProvider.notifier).set('shelf.seed', DateTime.now().millisecondsSinceEpoch & 0xFFFF);
-                            set(o.sort == s ? o.copyWith(reverse: !o.reverse) : o.copyWith(sort: s, reverse: false));
-                          },
-                        ),
-                    ],
-                  ),
-                  title('显示'),
-                  SegmentedButton<int>(
-                    segments: const [ButtonSegment(value: 0, label: Text('网格')), ButtonSegment(value: 1, label: Text('紧凑')), ButtonSegment(value: 2, label: Text('列表')), ButtonSegment(value: 3, label: Text('卷册'))],
-                    selected: {o.display},
-                    onSelectionChanged: (v) => set(o.copyWith(display: v.first)),
-                  ),
-                  if (o.display != 2) ...[
-                    const SizedBox(height: 8),
-                    // 就是设置里的书架列数（竖屏、横屏分开记），这里只放常用的几种
-                    SegmentedButton<int>(
-                      emptySelectionAllowed: true,
-                      segments: const [ButtonSegment(value: 0, label: Text('自动')), ButtonSegment(value: 3, label: Text('3 列')), ButtonSegment(value: 4, label: Text('4 列'))],
-                      selected: {AppPrefs.read(colsKey, 0)}.intersection(const {0, 3, 4}),
-                      onSelectionChanged: (v) => v.isEmpty ? null : ref.read(appPrefsProvider.notifier).set(colsKey, v.first),
-                    ),
-                  ],
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('未读章数角标'), value: AppPrefs.read(P.unreadBadge, true), onChanged: (v) => ref.read(appPrefsProvider.notifier).set(P.unreadBadge, v)),
-                  SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('已缓存章数角标'), value: AppPrefs.read(P.cacheBadge, false), onChanged: (v) => ref.read(appPrefsProvider.notifier).set(P.cacheBadge, v)),
-                  title('更多'),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.casino_outlined),
-                    title: const Text('随机打开一本'),
-                    onTap: () {
-                      final books = _booksIn(ref.read(libraryProvider), tabId).toList();
-                      if (books.isEmpty) return;
-                      final b = books[math.Random().nextInt(books.length)];
-                      Navigator.pop(context);
-                      this.context.push(o.display == 3 ? Routes.volumes(b.aid) : Routes.novel(b.aid));
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.refresh),
-                    title: Text('检查「$tabName」的更新'),
-                    onTap: () {
-                      final aids = _booksIn(ref.read(libraryProvider), tabId).map((b) => b.aid).toSet();
-                      Navigator.pop(context);
-                      ref.read(updateProvider.notifier).refresh(only: aids);
-                      ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(content: Text('正在检查 ${aids.length} 本的更新')));
-                    },
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+      builder: (context) => _OptionsSheet(tabId: tabId),
     );
+  }
+
+  /// 在当前标签里随机打开一本
+  void _openRandom() {
+    final books = _booksIn(ref.read(libraryProvider), _curTab).toList();
+    if (books.isEmpty) return;
+    final b = books[math.Random().nextInt(books.length)];
+    final o = shelfOptionsFor(ref.read(shelfOptionsProvider), _curTab);
+    context.push(o.display == 3 ? Routes.volumes(b.aid) : Routes.novel(b.aid));
+  }
+
+  /// 只检查当前标签里的书的更新
+  void _checkTab() {
+    final aids = _booksIn(ref.read(libraryProvider), _curTab).map((b) => b.aid).toSet();
+    ref.read(updateProvider.notifier).refresh(only: aids);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('正在检查 ${aids.length} 本的更新')));
+  }
+
+  String get _curTabName => allShelfTabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == _curTab, orElse: () => const LibCategory('', '默认')).name;
+
+  /// 往下滑书架时收起「继续阅读」条，往上滑或回到顶上再出来
+  bool _resumeHidden = false;
+
+  bool _onShelfScroll(UserScrollNotification n) {
+    if (n.metrics.axis != Axis.vertical) return false;
+    final hide = switch (n.direction) {
+      ScrollDirection.reverse => true,
+      ScrollDirection.forward => false,
+      ScrollDirection.idle => n.metrics.pixels > 0 && _resumeHidden,
+    };
+    if (hide != _resumeHidden) setState(() => _resumeHidden = hide);
+    return false;
   }
 
   @override
@@ -527,10 +458,21 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         IconButton(tooltip: '筛选、排序、显示', icon: Icon(Icons.filter_list, color: o.filtering ? Theme.of(context).colorScheme.primary : null), onPressed: _showOptions),
         PopupMenuButton<String>(
           tooltip: '更多',
-          onSelected: context.push,
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: Routes.wall, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.collections_bookmark_outlined), title: Text('书籍墙'))),
-            PopupMenuItem(value: Routes.categories, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.label_outline), title: Text('管理分类'))),
+          onSelected: (v) {
+            if (v == 'random') {
+              _openRandom();
+            } else if (v == 'check') {
+              _checkTab();
+            } else {
+              context.push(v);
+            }
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'random', child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.casino_outlined), title: Text('随机打开一本'))),
+            PopupMenuItem(value: 'check', child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.refresh), title: Text('检查「$_curTabName」的更新'))),
+            const PopupMenuDivider(),
+            const PopupMenuItem(value: Routes.wall, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.collections_bookmark_outlined), title: Text('书籍墙'))),
+            const PopupMenuItem(value: Routes.categories, child: ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: Icon(Icons.label_outline), title: Text('管理分类'))),
           ],
         ),
       ],
@@ -548,8 +490,13 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
         appBar: appBar,
         body: Column(
           children: [
-            if (!_searching) const _ResumeBar(),
-            Expanded(child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)])),
+            if (!_searching && AppPrefs.read(P.resumeBar, true)) _ResumeBar(hidden: _resumeHidden),
+            Expanded(
+              child: NotificationListener<UserScrollNotification>(
+                onNotification: _onShelfScroll,
+                child: TabBarView(key: ObjectKey(tc), controller: tc, children: [for (final c in tabs) _Shelf(key: ValueKey(c.id), catId: c.id)]),
+              ),
+            ),
           ],
         ),
       ),
@@ -557,44 +504,230 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   }
 }
 
-/// 书架顶上的「继续阅读」：最近读的一本，点了直接进阅读器；关掉后，读到别的书时再出现。
+/// 书架顶上的「继续阅读」：最近读的一本，点了直接进阅读器（返回回到书架）；关掉后，读到别的书时再出现。
+/// 往下滑书架时收起（[hidden]），不一直挡着；设置里可以整个关掉。
 class _ResumeBar extends StatelessWidget {
-  const _ResumeBar();
+  const _ResumeBar({required this.hidden});
+
+  final bool hidden;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder(
     valueListenable: Hive.box('session').listenable(keys: ['history2', 'resumeClosed']),
     builder: (context, box, _) {
       final h = ReadingHistory.all().firstOrNull;
-      if (h == null || box.get('resumeClosed') == h.aid) return const SizedBox.shrink();
-      final theme = Theme.of(context);
-      return Material(
-        color: theme.colorScheme.surfaceContainerLow,
-        child: InkWell(
-          onTap: () => context.push(Routes.reader(h.aid, h.cid)),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
-            child: Row(
-              children: [
-                SizedBox(width: 28, height: 38, child: CoverImage(h.img)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(LibraryStore.shown(h.aid, h.title), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
-                      Text('继续读 ${h.chapter}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                    ],
-                  ),
-                ),
-                IconButton(tooltip: '关闭', visualDensity: VisualDensity.compact, icon: const Icon(Icons.close, size: 18), onPressed: () => box.put('resumeClosed', h.aid)),
-              ],
-            ),
-          ),
-        ),
+      final show = !hidden && h != null && box.get('resumeClosed') != h.aid;
+      return AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        alignment: Alignment.topCenter,
+        child: show ? _bar(context, box, h) : const SizedBox(width: double.infinity),
       );
     },
   );
+
+  Widget _bar(BuildContext context, Box box, HistoryEntry h) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: () => context.push(Routes.reader(h.aid, h.cid)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 4, 6),
+          child: Row(
+            children: [
+              SizedBox(width: 28, height: 38, child: CoverImage(h.img)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(LibraryStore.shown(h.aid, h.title), maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+                    Text('继续读 ${h.chapter}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+              IconButton(tooltip: '关闭', visualDensity: VisualDensity.compact, icon: const Icon(Icons.close, size: 18), onPressed: () => box.put('resumeClosed', h.aid)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 书架的筛选 / 排序 / 显示面板（Mihon 那样分三页）：筛选一行一项、点整行在 不限 → 满足 → 不满足 之间切，
+/// 排序一行一项、再点当前的反过来，显示用设置页同款的分段按钮和开关。
+class _OptionsSheet extends ConsumerStatefulWidget {
+  const _OptionsSheet({required this.tabId});
+
+  final String tabId;
+
+  @override
+  ConsumerState<_OptionsSheet> createState() => _OptionsSheetState();
+}
+
+class _OptionsSheetState extends ConsumerState<_OptionsSheet> with SingleTickerProviderStateMixin {
+  static int _lastPage = 0; // 下次打开还停在上次那页
+  late final _tabs = TabController(length: 3, vsync: this, initialIndex: _lastPage)..addListener(() => _lastPage = _tabs.index);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  void _set(ShelfOptions v) => AppPrefs.read(P.perCat, false)
+      ? ref.read(appPrefsProvider.notifier).set('shelf.tab.${widget.tabId}', v.toMap())
+      : ref.read(shelfOptionsProvider.notifier).set(v);
+
+  /// 三态筛选的一行：空框不限，勾满足，叉不满足
+  Widget _tri(String label, int v, ShelfOptions Function(int) apply) {
+    final scheme = Theme.of(context).colorScheme;
+    final (icon, color) = switch (v) {
+      1 => (Icons.check_box, scheme.primary),
+      2 => (Icons.disabled_by_default, scheme.error),
+      _ => (Icons.check_box_outline_blank, scheme.onSurfaceVariant),
+    };
+    return InkWell(
+      onTap: () => _set(apply((v + 1) % 3)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 16),
+            Expanded(child: Text(label, style: TextStyle(fontSize: 15.5, color: scheme.onSurface))),
+            if (v == 2) Text('不满足', style: TextStyle(fontSize: 13, color: scheme.error)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _filters(ShelfOptions o) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        _tri('有未读', o.unread, (v) => o.copyWith(unread: v)),
+        _tri('已开始读', o.started, (v) => o.copyWith(started: v)),
+        _tri('有缓存', o.cached, (v) => o.copyWith(cached: v)),
+        _tri('有书签', o.bookmarked, (v) => o.copyWith(bookmarked: v)),
+        _tri('已完结', o.completed, (v) => o.copyWith(completed: v)),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 8, 0),
+          child: Row(
+            children: [
+              Expanded(child: Text('点一下切换：满足 → 不满足 → 不限', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant))),
+              if (o.filtering) TextButton(onPressed: () => _set(o.copyWith(unread: 0, started: 0, cached: 0, bookmarked: 0, completed: 0)), child: const Text('清除筛选')),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sorts(ShelfOptions o) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        for (final s in ShelfSort.values)
+          InkWell(
+            // 再点一次当前的排序：方向反过来；随机再点一次换一批
+            onTap: () {
+              if (s == ShelfSort.random) ref.read(appPrefsProvider.notifier).set('shelf.seed', DateTime.now().millisecondsSinceEpoch & 0xFFFF);
+              _set(o.sort == s ? o.copyWith(reverse: !o.reverse) : o.copyWith(sort: s, reverse: false));
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      s.label,
+                      style: TextStyle(fontSize: 15.5, color: o.sort == s ? scheme.primary : scheme.onSurface, fontWeight: o.sort == s ? FontWeight.w600 : null),
+                    ),
+                  ),
+                  if (o.sort == s)
+                    Icon(
+                      switch (s) {
+                        ShelfSort.random => Icons.shuffle,
+                        ShelfSort.custom => Icons.check,
+                        _ => o.reverse ? Icons.arrow_upward : Icons.arrow_downward,
+                      },
+                      size: 20,
+                      color: scheme.primary,
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _display(ShelfOptions o) {
+    final prefs = ref.read(appPrefsProvider.notifier);
+    final colsKey = MediaQuery.orientationOf(context) == Orientation.landscape ? P.colsLandscape : P.colsPortrait;
+    final cols = AppPrefs.read(colsKey, 0);
+    Widget toggle(String title, String key, bool fallback) => XSwitch(title: title, value: AppPrefs.read(key, fallback), onChanged: (v) => prefs.set(key, v));
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
+      children: [
+        XSegments<int>(title: '显示方式', value: o.display, options: const {0: '网格', 1: '紧凑', 2: '列表', 3: '卷册'}, onChanged: (v) => _set(o.copyWith(display: v))),
+        // 就是设置里的书架列数（竖屏、横屏分开记），这里放常用的几种；设置里选了别的也列出来
+        if (o.display != 2)
+          XSegments<int>(
+            title: '每行几本',
+            value: cols,
+            options: {0: '自动', 3: '3 本', 4: '4 本', if (cols != 0 && cols != 3 && cols != 4) cols: '$cols 本'},
+            onChanged: (v) => prefs.set(colsKey, v),
+          ),
+        const SizedBox(height: 4),
+        toggle('未读章数角标', P.unreadBadge, true),
+        toggle('已缓存章数角标', P.cacheBadge, false),
+        toggle('继续阅读条', P.resumeBar, true),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.watch(appPrefsProvider);
+    final o = shelfOptionsFor(ref.watch(shelfOptionsProvider), widget.tabId);
+    final scheme = Theme.of(context).colorScheme;
+    final perCat = AppPrefs.read(P.perCat, false);
+    final tabName = allShelfTabs(ref.read(libraryProvider).cats).firstWhere((c) => c.id == widget.tabId, orElse: () => const LibCategory('', '默认')).name;
+    // 固定高度：切换三页时面板不跳；最多占屏幕六成
+    final height = math.min(MediaQuery.sizeOf(context).height * 0.6, 520.0);
+    return SafeArea(
+      top: false,
+      child: SizedBox(
+        height: height,
+        child: Column(
+          children: [
+            if (perCat)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('只对「$tabName」生效', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+              ),
+            TabBar(
+              controller: _tabs,
+              tabs: [
+                // 有筛选时标签旁边一个小圆点，换到别的页也知道筛着
+                Tab(child: Badge(smallSize: 6, isLabelVisible: o.filtering, backgroundColor: scheme.primary, offset: const Offset(8, -2), child: const Text('筛选'))),
+                const Tab(text: '排序'),
+                const Tab(text: '显示'),
+              ],
+            ),
+            Expanded(child: TabBarView(controller: _tabs, children: [_filters(o), _sorts(o), _display(o)])),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _Shelf extends ConsumerStatefulWidget {
