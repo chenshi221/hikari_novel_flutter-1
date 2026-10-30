@@ -31,13 +31,23 @@ class DiscoverPage extends ConsumerWidget {
   }
 }
 
-final _recommendProvider = FutureProvider.autoDispose<List<RecommendBlock>>((ref) => ref.watch(apiProvider).recommend());
+// 不自动释放：离开发现页再回来、左右切标签都不用重新联网，下拉才刷新
+final _recommendProvider = FutureProvider<List<RecommendBlock>>((ref) => ref.watch(apiProvider).recommend());
 
-class _RecommendTab extends ConsumerWidget {
+class _RecommendTab extends ConsumerStatefulWidget {
   const _RecommendTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_RecommendTab> createState() => _RecommendTabState();
+}
+
+class _RecommendTabState extends ConsumerState<_RecommendTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
     final theme = Theme.of(context);
     return RefreshIndicator(
       onRefresh: () => ref.refresh(_recommendProvider.future),
@@ -363,9 +373,21 @@ class _CategoryTabState extends ConsumerState<_CategoryTab> with AutomaticKeepAl
   }
 }
 
-class _CompletedTab extends ConsumerWidget {
+class _CompletedTab extends ConsumerStatefulWidget {
   const _CompletedTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => PagedNovelGrid(fetch: ref.watch(apiProvider).completed);
+  ConsumerState<_CompletedTab> createState() => _CompletedTabState();
+}
+
+/// 和其他标签一样留着：左右切回来不用重新加载
+class _CompletedTabState extends ConsumerState<_CompletedTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return PagedNovelGrid(fetch: ref.watch(apiProvider).completed);
+  }
 }

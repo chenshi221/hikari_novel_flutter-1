@@ -280,15 +280,17 @@ Future<void> trimDir(Directory dir, int maxBytes, {Set<String> keep = const {}})
 }
 
 /// 自选封面的裁剪框记在地址后面：`图片地址#crop=左,上,宽,高`（都是 0~1 的比例）。下载、缓存都按去掉它的地址算。
+/// 自动挑的封面去掉白边时记成 `#trim=`，显示上一样，只是不算手动挑的（图片缓存清理时可以删）。
 ({String url, Rect? crop}) splitCrop(String s) {
-  final i = s.indexOf('#crop=');
+  var i = s.indexOf('#crop=');
+  if (i < 0) i = s.indexOf('#trim=');
   if (i < 0) return (url: s, crop: null);
   final n = s.substring(i + 6).split(',').map(double.tryParse).toList();
   if (n.length != 4 || n.contains(null)) return (url: s.substring(0, i), crop: null);
   return (url: s.substring(0, i), crop: Rect.fromLTWH(n[0]!, n[1]!, n[2]!, n[3]!));
 }
 
-String withCrop(String url, Rect r) => '$url#crop=${[r.left, r.top, r.width, r.height].map((e) => e.toStringAsFixed(4)).join(',')}';
+String withCrop(String url, Rect r, {bool auto = false}) => '$url#${auto ? 'trim' : 'crop'}=${[r.left, r.top, r.width, r.height].map((e) => e.toStringAsFixed(4)).join(',')}';
 
 class ImageCancelled implements Exception {
   const ImageCancelled();

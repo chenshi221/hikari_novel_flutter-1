@@ -48,6 +48,8 @@ class P {
   static const defaultCat = 'shelf.defaultCat'; // String，'ask' 每次问，'' 不放进分类，其余是分类 id
   static const hiddenTabs = 'shelf.hiddenTabs'; // List<String> 书架上不显示的标签 id
   static const lastTab = 'shelf.lastTab'; // String 上次停在的标签 id
+  static const resumeBar = 'shelf.resumeBar'; // bool 书架顶上的「继续阅读」条
+  static const coverTrim = 'shelf.coverTrim'; // bool 框封面时自动去掉四周的白边
 
   // 发现
   static const discoverRank = 'discover.rank'; // String 上次的排行榜

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -5,7 +6,9 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../app_prefs.dart';
 import '../cache.dart';
+import '../cover_trim.dart';
 import '../data.dart';
 import '../image_cache.dart';
 import '../volumes.dart';
@@ -134,14 +137,54 @@ class _CropPage extends ConsumerStatefulWidget {
 
 class _CropPageState extends ConsumerState<_CropPage> {
   final _tc = TransformationController();
-  late final Future<(Uint8List, ui.Size)> _image = () async {
+  late final Future<(Uint8List, ui.Size, CoverPixels)> _image = () async {
     final bytes = await ref.read(imageStoreProvider).load(widget.url);
-    return (bytes, await imageSize(bytes));
+    return (bytes, await imageSize(bytes), await CoverPixels.decode(bytes));
   }();
   Size? _laidOut; // 按哪个框的大小摆过初始位置
+  bool _trimOn = AppPrefs.read(P.coverTrim, true);
+  Rect? _inner; // 去掉白边后留下的那块（框里的坐标），没有白边或正在拖时为 null
+  (CoverPixels, ui.Size, Size)? _geom; // 现在的图和框
+  Timer? _settle;
+
+  @override
+  void initState() {
+    super.initState();
+    // 停下来一会儿（松手后的惯性也滑完了）再找白边
+    _tc.addListener(() {
+      _settle?.cancel();
+      _settle = Timer(const Duration(milliseconds: 180), () {
+        if (_geom case (final px, final img, final frame)) _retrim(px, img, frame);
+      });
+    });
+  }
+
+  /// 框里的这块要收掉白边的话，收完是图片的哪一块（0~1 比例）
+  Rect _kept(CoverPixels px, ui.Size img, Size frame) {
+    final v = _visible(img, frame);
+    return _trimOn ? px.trim(v) : v;
+  }
+
+  /// 拖完、缩放完重新找一次白边，在框里标出来
+  void _retrim(CoverPixels px, ui.Size img, Size frame) {
+    if (!mounted) return;
+    final v = _visible(img, frame);
+    final k = _kept(px, img, frame);
+    setState(
+      () => _inner = k == v
+          ? null
+          : Rect.fromLTRB(
+              (k.left - v.left) / v.width * frame.width,
+              (k.top - v.top) / v.height * frame.height,
+              (k.right - v.left) / v.width * frame.width,
+              (k.bottom - v.top) / v.height * frame.height,
+            ),
+    );
+  }
 
   @override
   void dispose() {
+    _settle?.cancel();
     _tc.dispose();
     super.dispose();
   }
@@ -169,19 +212,31 @@ class _CropPageState extends ConsumerState<_CropPage> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         title: const Text('框出封面', style: TextStyle(color: Colors.white)),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, widget.url), child: const Text('用整张'))],
+        actions: [
+          TextButton(
+            // 整张也去掉四周的白边（开着自动去白边时）
+            onPressed: () async {
+              const full = Rect.fromLTWH(0, 0, 1, 1);
+              final px = _trimOn ? (await _image).$3 : null;
+              final r = px?.trim(full) ?? full;
+              if (context.mounted) Navigator.pop(context, r == full ? widget.url : withCrop(widget.url, r));
+            },
+            child: const Text('用整张'),
+          ),
+        ],
       ),
-      body: FutureBuilder<(Uint8List, ui.Size)>(
+      body: FutureBuilder<(Uint8List, ui.Size, CoverPixels)>(
         future: _image,
         builder: (context, snap) {
           if (snap.hasError) return const StatePanel(title: '图片加载失败', detail: '检查网络后再试一次。');
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final (bytes, img) = snap.data!;
+          final (bytes, img, px) = snap.data!;
           return LayoutBuilder(
             builder: (context, c) {
-              final w = math.min(c.maxWidth - 48, (c.maxHeight - 140) * kCoverAspect);
+              final w = math.min(c.maxWidth - 48, (c.maxHeight - 196) * kCoverAspect); // 下面留出去白边开关和按钮两行
               final frame = Size(w, w / kCoverAspect);
               final child = _fill(img, frame);
+              _geom = (px, img, frame);
               if (_laidOut != frame) {
                 _laidOut = frame;
                 // 横版展开图（封底 + 书脊 + 封面）的封面在右边，一开始就对准右边；竖图居中
@@ -203,6 +258,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
                               minScale: 1,
                               maxScale: 6,
                               clipBehavior: Clip.none,
+                              onInteractionStart: (_) => setState(() => _inner = null),
                               child: SizedBox.fromSize(
                                 size: child,
                                 child: Image.memory(bytes, fit: BoxFit.fill),
@@ -210,11 +266,34 @@ class _CropPageState extends ConsumerState<_CropPage> {
                             ),
                             // 框外压暗，框线
                             IgnorePointer(
-                              child: CustomPaint(size: frame, painter: _FramePainter()),
+                              child: CustomPaint(size: frame, painter: _FramePainter(_inner)),
                             ),
                           ],
                         ),
                       ),
+                    ),
+                  ),
+                  // 自动去白边：框里比封面宽、框得不准时带上的白底，完成时收掉；收掉的那圈在框里压暗标出来
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 24, 4),
+                    child: Row(
+                      children: [
+                        Switch(
+                          value: _trimOn,
+                          onChanged: (v) {
+                            AppPrefs.write(P.coverTrim, v);
+                            _trimOn = v;
+                            _retrim(px, img, frame);
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            !_trimOn ? '自动去白边：关' : (_inner == null ? '自动去白边：没找到白边' : '自动去白边：压暗的那圈会去掉'),
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   Padding(
@@ -227,7 +306,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
                         FilledButton(
                           style: FilledButton.styleFrom(minimumSize: const Size(88, 44)), // 主题默认按钮占满整行，这里要和文字并排
                           onPressed: () {
-                            final r = _visible(img, frame);
+                            final r = _kept(px, img, frame);
                             Navigator.pop(context, r.width > 0.995 && r.height > 0.995 ? widget.url : withCrop(widget.url, r));
                           },
                           child: const Text('完成'),
@@ -246,9 +325,30 @@ class _CropPageState extends ConsumerState<_CropPage> {
 }
 
 class _FramePainter extends CustomPainter {
+  _FramePainter(this.inner);
+
+  /// 去掉白边后留下的那块，外面一圈再压暗一点
+  final Rect? inner;
+
   @override
   void paint(Canvas canvas, Size size) {
     final frame = Offset.zero & size;
+    if (inner case final r?) {
+      canvas.drawPath(
+        Path()
+          ..fillType = PathFillType.evenOdd
+          ..addRect(frame)
+          ..addRect(r),
+        Paint()..color = Colors.black.withValues(alpha: 0.5),
+      );
+      canvas.drawRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = Colors.white70,
+      );
+    }
     // 画一圈很大的暗色，中间挖掉框
     canvas.drawPath(
       Path()
@@ -267,5 +367,5 @@ class _FramePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_FramePainter oldDelegate) => false;
+  bool shouldRepaint(_FramePainter oldDelegate) => oldDelegate.inner != inner;
 }

@@ -171,7 +171,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
   late String _cid = widget.cid;
   bool _bar = false;
   int _epoch = 0; // 同一章内跳转（书签）时递增，让正文重新定位
-  late final _doneAtOpen = Volumes.done(widget.aid).keys.toSet(); // 打开时已经读完的卷：重读它们不再庆祝
+  // 打开时已经读完的卷：重读它们不再庆祝。要在 initState 里就记下：懒加载的话，第一次用到时（换卷那一刻）
+  // 章末已经把刚读完的这卷记成读完，就被当成以前读过的、不庆祝了
+  late final Set<String> _doneAtOpen;
   final _celebrated = <String>{};
   int _dir = 1; // 上次换章的方向：1 往后，-1 往前（换章动画往哪边滑）
   int _offset = 0; // 当前读到的字符偏移
@@ -269,6 +271,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
     _tick();
     _clock = Timer.periodic(const Duration(minutes: 1), (_) => _tick());
     _initial = widget.offset;
+    _doneAtOpen = Volumes.done(widget.aid).keys.toSet();
     WidgetsBinding.instance.addObserver(this);
     _applyChrome(ref.read(readerPrefsProvider));
     _tts.setCompletionHandler(() {
@@ -819,7 +822,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> with WidgetsBindingObse
                       startOffset: _offset,
                       onOffset: _saveOffset,
                       onEnd: _markRead,
-                      onNext: next == null ? null : () => _go(next.cid),
+                      // 全书最后一章滑到底再往后：这卷刚读完就庆祝一下
+                      onNext: next == null ? (_justFinished() == null ? null : () => _celebrate(_justFinished()!, hasNext: false)) : () => _go(next.cid),
+                      nextLabel: next == null ? '读完了' : '下一章',
                       wrap: _selectable,
                       onTapZone: _toggleBar,
                       menuOpen: () => _bar,

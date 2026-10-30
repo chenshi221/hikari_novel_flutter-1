@@ -235,6 +235,7 @@ class ScrollBody extends StatefulWidget {
     required this.onOffset,
     required this.onEnd,
     required this.onNext,
+    this.nextLabel = '下一章',
     required this.wrap,
     required this.onTapZone,
     this.menuOpen,
@@ -268,6 +269,9 @@ class ScrollBody extends StatefulWidget {
   /// 滚到章末
   final VoidCallback onEnd;
   final VoidCallback? onNext;
+
+  /// 章末按钮的字：全书最后一章是「读完了」
+  final String nextLabel;
   final Widget Function(Widget) wrap;
 
   /// 点在空白处（切换菜单栏）
@@ -402,7 +406,7 @@ class _ScrollBodyState extends State<ScrollBody> {
                 if (head > 0) chapterHeading(widget.title, widget.style, width, accent: widget.headingAccent),
                 Text.rich(widget.spanOf(0, c.text.length), key: _textKey, textScaler: TextScaler.noScaling, strutStyle: readerStrut(widget.style)),
                 for (final url in c.images) Padding(padding: const EdgeInsets.only(top: 16), child: NetImage(url, fit: BoxFit.contain)),
-                if (widget.onNext != null) Padding(padding: const EdgeInsets.only(top: 32), child: OutlinedButton(onPressed: widget.onNext, child: const Text('下一章'))),
+                if (widget.onNext != null) Padding(padding: const EdgeInsets.only(top: 32), child: OutlinedButton(onPressed: widget.onNext, child: Text(widget.nextLabel))),
               ],
             ),
           ),
