@@ -47,9 +47,13 @@ class SwipePrefsController extends Notifier<SwipePrefs> {
 
 final swipePrefsProvider = NotifierProvider<SwipePrefsController, SwipePrefs>(SwipePrefsController.new);
 
-/// 给一行章节加上左右滑。滑完动作执行后行自己弹回原位（[Dismissible] 的 confirmDismiss 返回 false），
+/// 越过这么远松手才执行（逻辑像素），没越过松手就只弹回去
+const _kTrigger = 72.0;
+
+/// 给一行章节加上左右滑：跟着手指拖开，露出后面的动作；越过 [_kTrigger] 时背景变实色、震一下，
+/// 这时松手执行动作。不管执行没执行，松手都从当前位置直接弹回原位（不像 [Dismissible] 先甩到屏幕边上再回来）。
 /// 状态变了调 [onChanged] 让外面刷新。[onCache] 为空时"缓存"这个动作不可用（滑了没反应）。
-class ChapterSwipe extends ConsumerWidget {
+class ChapterSwipe extends ConsumerStatefulWidget {
   const ChapterSwipe({super.key, required this.aid, required this.book, required this.cid, required this.title, required this.child, this.onChanged, this.onCache, this.enabled = true, this.backdrop});
 
   final String aid;
@@ -64,81 +68,132 @@ class ChapterSwipe extends ConsumerWidget {
   /// 行本身的底色：滑开时盖住后面的彩色背景（行是透明的会透出来）。默认取页面底色。
   final Color? backdrop;
 
+  @override
+  ConsumerState<ChapterSwipe> createState() => _ChapterSwipeState();
+}
+
+class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerProviderStateMixin {
+  late final _dx = AnimationController.unbounded(vsync: this); // 行现在往右挪了多少（负数往左）
+  double _drag = 0; // 手指实际拖了多远：越过触发点后行跟得慢一点，有阻力感
+  bool _armed = false; // 已经越过触发点，松手就执行
+  // 拖动开始时两边的样子：松手执行后弹回的那一下，背景不要变成反过来的动作
+  (IconData, String, Color)? _rightLook, _leftLook;
+
+  @override
+  void dispose() {
+    _dx.dispose();
+    super.dispose();
+  }
+
+  String get _aid => widget.aid;
+  String get _cid => widget.cid;
+
   (IconData, String, Color) _look(SwipeAct a, ColorScheme s) => switch (a) {
-    SwipeAct.read => ReadState.isRead(aid, cid) ? (Icons.remove_done, '标为未读', s.outline) : (Icons.done_all, '标为已读', const Color(0xFF2E9E5B)),
-    SwipeAct.bookmark => Bookmarks.has(aid, cid, 0) ? (Icons.bookmark_remove_outlined, '取消书签', s.outline) : (Icons.bookmark_add_outlined, '加书签', const Color(0xFFE59A1F)),
-    SwipeAct.cache => ChapterCache.has(aid, cid) ? (Icons.download_done, '已缓存', s.outline) : (Icons.download_outlined, '缓存本章', s.primary),
+    SwipeAct.read => ReadState.isRead(_aid, _cid) ? (Icons.remove_done, '标为未读', s.outline) : (Icons.done_all, '标为已读', const Color(0xFF2E9E5B)),
+    SwipeAct.bookmark => Bookmarks.has(_aid, _cid, 0) ? (Icons.bookmark_remove_outlined, '取消书签', s.outline) : (Icons.bookmark_add_outlined, '加书签', const Color(0xFFE59A1F)),
+    SwipeAct.cache => ChapterCache.has(_aid, _cid) ? (Icons.download_done, '已缓存', s.outline) : (Icons.download_outlined, '缓存本章', s.primary),
     SwipeAct.off => (Icons.block, '', Colors.transparent),
   };
 
   Future<void> _run(SwipeAct a) async {
     switch (a) {
       case SwipeAct.read:
-        await ReadState.setRead(aid, [cid], !ReadState.isRead(aid, cid));
+        await ReadState.setRead(_aid, [_cid], !ReadState.isRead(_aid, _cid));
       case SwipeAct.bookmark:
-        await Bookmarks.toggle(aid, book, cid, title, 0, '（章首书签）');
+        await Bookmarks.toggle(_aid, widget.book, _cid, widget.title, 0, '（章首书签）');
       case SwipeAct.cache:
-        if (!ChapterCache.has(aid, cid)) onCache?.call();
+        if (!ChapterCache.has(_aid, _cid)) widget.onCache?.call();
       case SwipeAct.off:
         return;
     }
-    HapticFeedback.lightImpact();
-    onChanged?.call();
+    widget.onChanged?.call();
   }
 
-  Widget _bg(SwipeAct a, ColorScheme s, Alignment align) {
-    final (icon, label, color) = _look(a, s);
+  /// 越过触发点后只跟手指的 40%
+  static double _resist(double d) => d.abs() <= _kTrigger ? d : d.sign * (_kTrigger + (d.abs() - _kTrigger) * 0.4);
+
+  void _start(SwipeAct right, SwipeAct left, ColorScheme scheme) {
+    _dx.stop();
+    _drag = _dx.value;
+    _rightLook = _look(right, scheme);
+    _leftLook = _look(left, scheme);
+  }
+
+  void _update(double delta, SwipeAct right, SwipeAct left) {
+    _drag += delta;
+    // 关掉的那一边拖不动
+    if (right == SwipeAct.off && _drag > 0) _drag = 0;
+    if (left == SwipeAct.off && _drag < 0) _drag = 0;
+    _dx.value = _resist(_drag);
+    final armed = _drag.abs() >= _kTrigger;
+    if (armed != _armed) {
+      if (armed) HapticFeedback.lightImpact();
+      setState(() => _armed = armed);
+    }
+  }
+
+  void _end(SwipeAct right, SwipeAct left) {
+    final act = _armed ? (_drag > 0 ? right : left) : null;
+    _armed = false;
+    _drag = 0;
+    _dx.animateTo(0, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
+    if (act != null) _run(act);
+  }
+
+  Widget _bg((IconData, String, Color) look, Alignment align) {
+    final (icon, label, color) = look;
     return Container(
-      color: color,
+      color: _armed ? color : color.withValues(alpha: 0.45),
       alignment: align,
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, color: Colors.white), const SizedBox(width: 8), Text(label, style: const TextStyle(color: Colors.white))]),
+      child: AnimatedScale(
+        scale: _armed ? 1 : 0.85,
+        duration: const Duration(milliseconds: 120),
+        child: Opacity(
+          opacity: _armed ? 1 : 0.7,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, color: Colors.white), const SizedBox(width: 8), Text(label, style: const TextStyle(color: Colors.white))]),
+        ),
+      ),
     );
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final p = ref.watch(swipePrefsProvider);
     final scheme = Theme.of(context).colorScheme;
-    final canCache = onCache != null;
+    final canCache = widget.onCache != null;
     final right = p.right == SwipeAct.cache && !canCache ? SwipeAct.off : p.right;
     final left = p.left == SwipeAct.cache && !canCache ? SwipeAct.off : p.left;
-    if (!enabled || (right == SwipeAct.off && left == SwipeAct.off)) return child;
-    return _Moving(
-      builder: (moving, onUpdate) => Dismissible(
-      key: ValueKey('swipe:$aid:$cid'),
-      onUpdate: onUpdate,
-      direction: right == SwipeAct.off ? DismissDirection.endToStart : (left == SwipeAct.off ? DismissDirection.startToEnd : DismissDirection.horizontal),
-      dismissThresholds: const {DismissDirection.startToEnd: 0.3, DismissDirection.endToStart: 0.3},
-      background: _bg(right, scheme, Alignment.centerLeft),
-      secondaryBackground: _bg(left, scheme, Alignment.centerRight),
-      confirmDismiss: (dir) async {
-        await _run(dir == DismissDirection.startToEnd ? right : left);
-        return false;
-      },
-      // 只在滑的时候垫底色：平时透明，页面背景渐变时不会和它错开
-      child: ColoredBox(color: moving ? backdrop ?? Scaffold.maybeOf(context)?.widget.backgroundColor ?? Theme.of(context).colorScheme.surface : Colors.transparent, child: child),
-    ),
+    if (!widget.enabled || (right == SwipeAct.off && left == SwipeAct.off)) return widget.child;
+    final backdrop = widget.backdrop ?? Scaffold.maybeOf(context)?.widget.backgroundColor ?? scheme.surface;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (_) => _start(right, left, scheme),
+      onHorizontalDragUpdate: (d) => _update(d.primaryDelta ?? 0, right, left),
+      onHorizontalDragEnd: (_) => _end(right, left),
+      onHorizontalDragCancel: () => _end(SwipeAct.off, SwipeAct.off),
+      child: AnimatedBuilder(
+        animation: _dx,
+        child: widget.child,
+        builder: (context, child) {
+          final dx = _dx.value;
+          // 结构一直不变（行里的状态不丢），只在滑开时才叠背景、垫底色：平时透明，页面背景渐变时不会和它错开
+          return ClipRect(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: dx == 0
+                      ? const SizedBox.shrink()
+                      : dx > 0
+                      ? _bg(_rightLook ?? _look(right, scheme), Alignment.centerLeft)
+                      : _bg(_leftLook ?? _look(left, scheme), Alignment.centerRight),
+                ),
+                Transform.translate(offset: Offset(dx, 0), child: ColoredBox(color: dx == 0 ? Colors.transparent : backdrop, child: child)),
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
-}
-
-/// 记住这一行是不是正在被滑开
-class _Moving extends StatefulWidget {
-  const _Moving({required this.builder});
-
-  final Widget Function(bool moving, DismissUpdateCallback onUpdate) builder;
-
-  @override
-  State<_Moving> createState() => _MovingState();
-}
-
-class _MovingState extends State<_Moving> {
-  bool _moving = false;
-
-  @override
-  Widget build(BuildContext context) => widget.builder(_moving, (d) {
-    final m = d.progress > 0;
-    if (m != _moving) setState(() => _moving = m);
-  });
 }
