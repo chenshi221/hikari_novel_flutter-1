@@ -119,6 +119,13 @@ void main() {
     expect(content.images, isEmpty);
   });
 
+  test('正文：只有标点的台词保留，页脚只去末尾', () async {
+    final adapter = _FakeAdapter((_) => _text('「……」\r\n！？\r\n……\r\n她在轻小说文库读到这本书。\r\n◆◇◆◇\r\n轻小说文库 www.wenku8.com\r\n'));
+    final content = await _api(adapter).chapter('1', '2');
+
+    expect(content.text, '「……」\n！？\n……\n她在轻小说文库读到这本书。');
+  });
+
   test('正文：只有分隔行和页脚时抛错', () async {
     final adapter = _FakeAdapter((_) => _text('★☆★☆\r\n◆◇◆◇\r\n轻小说文库 www.wenku8.com\r\n'));
 

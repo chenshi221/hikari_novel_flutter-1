@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 封面图床的 https 在国内不开代理时常连不上，只给它放行 http -->
+<!-- 封面图床的 https 在国内不开代理时常连不上，只给它放行 http；文库 App 接口只有 http -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">img.wenku8.com</domain>
+        <domain includeSubdomains="false">app.wenku8.com</domain>
     </domain-config>
 </network-security-config>

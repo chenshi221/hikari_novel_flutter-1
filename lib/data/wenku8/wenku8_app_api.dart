@@ -44,9 +44,11 @@ class Wenku8AppApi {
   /// 接口只认官方 App 的 UA，换成浏览器的 UA 会直接被拒绝。
   static const String _userAgent = 'Dalvik/2.1.0 (Linux; U; Android 7.1.2; unknown Build/NZH54D)';
 
-  /// 分隔行（★☆◆◇ 之类只由符号组成、没有文字的行）的判定，见 [chapter]。
   static final RegExp _imagePattern = RegExp(r'<!--image-->(.*?)<!--image-->', dotAll: true);
-  static final RegExp _separatorPattern = RegExp(r'^[\s★☆◆◇■□▲△▼▽○●◎※＊*\-—–_=~～·・+＋<>《》「」『』\[\]【】()（）{}｛｝/\\|｜:：;；,，.。!！?？…]+$');
+
+  /// 分隔行（★☆◆◇ 之类只由装饰符号组成的行）的判定，见 [chapter]。
+  /// 省略号、问叹号、引号都不算，「……」「！？」这类台词要留着。
+  static final RegExp _separatorPattern = RegExp(r'^[\s★☆◆◇■□▲△▼▽○●◎※＊*\-—–_=＝~～·・]+$');
   static final RegExp _volumePattern = RegExp(r'<volume\b([^>]*)>(.*?)</volume>', caseSensitive: false, dotAll: true);
   static final RegExp _chapterPattern = RegExp(r'<chapter\b([^>]*)>(.*?)</chapter>', caseSensitive: false, dotAll: true);
   static final RegExp _dataPattern = RegExp(r'<data\b([^>]*?)(?:/>|>(.*?)</data>)', caseSensitive: false, dotAll: true);
@@ -66,7 +68,7 @@ class Wenku8AppApi {
   /// 取一章正文。
   ///
   /// App 接口返回纯文本（UTF-8，`\r\n` 分行），插图用 `<!--image-->URL<!--image-->` 标记。
-  /// 这里按行 trim、去空行，过滤分隔行与页脚行，图片单独返回、不混进正文；
+  /// 这里按行 trim、去空行，过滤分隔行、去掉末尾的页脚行，图片单独返回、不混进正文；
   /// 正文和图片都没有时抛 [Wenku8AppApiException]（多半是接口失效返回了空内容）。
   Future<Content> chapter(String aid, String cid) async {
     final text = await _request('action=book&do=text&aid=$aid&cid=$cid&t=0', accept: (value) => value.trim().isNotEmpty);
@@ -81,8 +83,12 @@ class Wenku8AppApi {
     final paragraphs = <String>[];
     for (final line in withoutImages.split(RegExp(r'\r\n|\r|\n'))) {
       final value = line.trim();
-      if (value.isEmpty || _isSeparatorLine(value) || _isFooterLine(value)) continue;
+      if (value.isEmpty || _isSeparatorLine(value)) continue;
       paragraphs.add(value);
+    }
+    // 宣传语只在末尾，正文中间提到文库的段落不动
+    while (paragraphs.isNotEmpty && _isFooterLine(paragraphs.last)) {
+      paragraphs.removeLast();
     }
 
     final body = paragraphs.join('\n');
@@ -216,7 +222,7 @@ class Wenku8AppApi {
   /// 页脚行：App 接口的正文末尾会带上文库的宣传语。
   static bool _isFooterLine(String line) {
     final lower = line.toLowerCase();
-    return lower.contains('轻小说文库') || lower.contains('wenku8.com') || lower.contains('wenku8.net') || lower.contains('本文来自');
+    return lower.contains('wenku8.com') || lower.contains('wenku8.net') || lower.contains('本文来自');
   }
 
   /// 解析目录 XML。卷名、章节名可能是 CDATA，也可能是普通文本（带 XML 实体），两种都要解。

@@ -1,15 +1,21 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:enough_convert/enough_convert.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hikari_novel_flutter/data/wenku8/wenku8_app_api.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_client.dart';
 import 'package:hikari_novel_flutter/data/wenku8/wenku8_parser.dart';
+import 'package:hikari_novel_flutter/data/wenku8/wenku8_urls.dart';
+import 'package:hikari_novel_flutter/models/common/charset_type.dart';
 import 'package:hikari_novel_flutter/models/cat_chapter.dart';
 import 'package:hikari_novel_flutter/models/cat_volume.dart';
 import 'package:hikari_novel_flutter/models/content.dart';
 import 'package:hikari_novel_flutter/next/cache.dart';
+import 'package:hikari_novel_flutter/next/data.dart';
+import 'package:hikari_novel_flutter/next/read_state.dart';
 import 'package:hikari_novel_flutter/next/txt_download.dart';
 import 'package:hikari_novel_flutter/next/unlock.dart';
 import 'package:hive_ce/hive.dart';
@@ -20,9 +26,11 @@ class _FakeApi implements Wenku8AppApi {
 
   final List<CatVolume>? volumes;
   final bool fail;
+  int calls = 0;
 
   @override
   Future<List<CatVolume>> catalogue(String aid) async {
+    calls++;
     if (fail || volumes == null) throw const Wenku8AppApiException('接口不可用');
     return volumes!;
   }
@@ -51,6 +59,23 @@ class _FakeTxt implements TxtDownloader {
 
   @override
   Future<File> download({required String aid, required String title, required String type, int node = 1}) async => saveToTemp(bytes, title);
+}
+
+/// 网站：要么回一个页面（GBK），要么断网。
+class _Site implements HttpClientAdapter {
+  _Site({this.html, this.offline = false});
+
+  final String? html;
+  final bool offline;
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options, Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async {
+    if (offline) throw DioException(requestOptions: options, type: DioExceptionType.connectionError);
+    return ResponseBody.fromBytes(const GbkCodec(allowInvalid: true).encode(html!), 200);
+  }
+
+  @override
+  void close({bool force = false}) {}
 }
 
 /// 用真实 OVERLORD TXT 片段（fixture）造一份 GBK 字节，模拟 dl.wenku8.com 的 response。
@@ -133,6 +158,53 @@ void main() {
     addTearDown(c.dispose);
     await expectLater(c.read(unlockServiceProvider).unlock('77', '坏书'), throwsA(isA<UnlockException>()));
     expect(UnlockStore.has('77'), isFalse);
+  });
+
+  group('Api 什么时候走解锁', () {
+    const base = 'https://www.wenku8.net';
+    final volumes = [
+      CatVolume(title: '接口卷', chapters: [CatChapter(title: '第一章', cid: '123')]),
+    ];
+
+    Api api(ProviderContainer c, _Site site, {String scope = 'u1'}) {
+      final client = Wenku8Client(baseUrl: () => base, charset: () => CharsetType.gbk, headers: const {}, dio: Dio()..httpClientAdapter = site);
+      return Api(client, Wenku8Urls(base, CharsetType.gbk), base, scope, unlock: c.read(unlockServiceProvider));
+    }
+
+    test('TXT 解锁过的书只用存下的目录，App 接口能用也不换', () async {
+      final c = container();
+      addTearDown(c.dispose);
+      await c.read(unlockServiceProvider).unlock('1592', 'OVERLORD');
+      final fake = _FakeApi(volumes: volumes);
+      final c2 = ProviderContainer(overrides: [appApiProvider.overrideWithValue(fake)]);
+      addTearDown(c2.dispose);
+
+      final cat = await api(c2, _Site(html: '<html><body>无目录</body></html>')).catalogue('1592');
+      expect(cat.first.chapters.first.cid, 'u1');
+      expect(fake.calls, 0);
+    });
+
+    test('断网、游客都不走解锁，照原样报错', () async {
+      final fake = _FakeApi(volumes: volumes);
+      final c = ProviderContainer(overrides: [appApiProvider.overrideWithValue(fake)]);
+      addTearDown(c.dispose);
+
+      await expectLater(api(c, _Site(offline: true)).catalogue('5'), throwsA(isA<DioException>()));
+      await expectLater(api(c, _Site(html: '<html>请登录</html>'), scope: 'guest').novel('5'), throwsA(anything));
+      expect(fake.calls, 0);
+      // 登录了、网站不给目录：才去问 App 接口
+      expect((await api(c, _Site(html: '<html>无目录</html>')).catalogue('5')).first.chapters.first.cid, '123');
+      expect(fake.calls, 1);
+    });
+  });
+
+  test('清除已读章节跳过 TXT 解锁的书（正文删了补不回来）', () async {
+    final c = container();
+    addTearDown(c.dispose);
+    await c.read(unlockServiceProvider).unlock('66', '书');
+    await ReadState.setRead('66', ['u1'], true);
+    await ChapterCache.clearRead();
+    expect(ChapterCache.has('66', 'u1'), isTrue);
   });
 
   test('forget 只清目录，不删已经缓存的正文', () async {

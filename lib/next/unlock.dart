@@ -114,7 +114,7 @@ class UnlockService {
 
   final Ref _ref;
 
-  /// 书籍解锁总开关（默认开）
+  /// 书籍解锁总开关（默认关）
   bool get enabled => AppPrefs.read(P.unlock, false);
 
   bool get _apiEnabled => AppPrefs.read(P.unlockApi, true);

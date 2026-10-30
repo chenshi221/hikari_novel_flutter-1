@@ -12,6 +12,7 @@ import 'data.dart';
 import 'image_cache.dart';
 import 'library.dart';
 import 'read_state.dart';
+import 'unlock.dart';
 
 /// 离线章节缓存。正文放在 LazyBox（只在读的时候才从磁盘取，不常驻内存），
 /// 章数、大小、书的信息放在一个很小的普通 Box 里，列表和计数不用碰正文。
@@ -150,6 +151,7 @@ class ChapterCache {
   static Future<int> clearRead() async {
     var n = 0;
     for (final aid in cachedBooks().toList()) {
+      if (UnlockStore.source(aid) == 'txt') continue; // TXT 解锁的正文删了补不回来
       final read = ReadState.read(aid);
       final cids = [for (final k in _keys(aid)) k.substring(aid.length + 1)].where(read.contains).toList();
       if (cids.isEmpty) continue;

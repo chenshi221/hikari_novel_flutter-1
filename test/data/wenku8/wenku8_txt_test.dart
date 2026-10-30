@@ -77,6 +77,19 @@ void main() {
     expect(book.texts['u3'], '特典正文');
   });
 
+  test('没缩进的正文行、缩进的「第X卷」开头的行不当成标题', () {
+    final book = Wenku8Txt.parse(
+      '第一卷 prologue\n'
+      '    正文一\n'
+      '她拿出短篇集翻了翻，又放回书架。\n'
+      '    第二卷的剧情还没写完\n',
+      aid: '1',
+    );
+    expect(book.volumes.map((v) => v.title), ['第一卷']);
+    expect(book.volumes.single.chapters.single.title, 'prologue');
+    expect(book.texts['u1'], '正文一\n她拿出短篇集翻了翻，又放回书架。\n第二卷的剧情还没写完');
+  });
+
   test('没有 <书名> 时用 fallbackTitle，再没有就用 aid', () {
     const text = '第一卷 prologue\n    正文\n';
     expect(Wenku8Txt.parse(text, aid: '1', fallbackTitle: '备用书名').title, '备用书名');

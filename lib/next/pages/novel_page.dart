@@ -36,7 +36,8 @@ final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref,
     final fresh = await api.novel(aid);
     final d = fresh.detail;
     ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
-    await Volumes.saveCatalogue(aid, fresh.catalogue);
+    if (fresh.locked && saved != null) return; // 本地有目录就别用「受限 + 空目录」盖掉
+    if (fresh.catalogue.isNotEmpty) await Volumes.saveCatalogue(aid, fresh.catalogue);
     // 读过的书补记书名（离线时读的统计里没有书名，会显示成"书号"）
     if (ReadingStats.perBook().containsKey(aid)) await ReadingStats.setMeta(aid, d.title, d.author, d.imgUrl);
     yield fresh;
@@ -155,8 +156,17 @@ class _BodyState extends ConsumerState<_Body> {
   }
 
   /// 章节在整本书里按网站顺序数是第几章（从 1 开始），"标题前加序号"用。
-  /// 解锁后目录会从空变成有，不能缓存成 late final。
-  Map<String, int> get _indexOf => {for (final (i, c) in data.catalogue.expand((v) => v.chapters).indexed) c.cid: i + 1};
+  /// 解锁后目录会从空变成有：目录换了才重算。
+  List<CatVolume>? _indexFor;
+  Map<String, int> _indexMap = const {};
+
+  Map<String, int> get _indexOf {
+    if (!identical(_indexFor, data.catalogue)) {
+      _indexFor = data.catalogue;
+      _indexMap = {for (final (i, c) in data.catalogue.expand((v) => v.chapters).indexed) c.cid: i + 1};
+    }
+    return _indexMap;
+  }
 
   String? _firstCid() => data.catalogue.expand((v) => v.chapters).firstOrNull?.cid;
 

@@ -64,6 +64,9 @@ class Wenku8Txt {
     caseSensitive: false,
   );
 
+  /// 句中标点：章标题里基本不会有，正文行几乎都有
+  static final _prose = RegExp(r'[。，、]');
+
   /// 纯分隔行（★☆、◆◇、====、———— 之类）
   static final _separator = RegExp(r'^[★☆◆◇=＝*＊~～\-—_·─━\s]{2,}$');
 
@@ -77,7 +80,7 @@ class Wenku8Txt {
   /// - `第一卷 prologue`、`第二卷 黑暗战士 第一章 两个冒险者` 这类行是章标题；
   /// - 卷名 = 「第X卷」+ 卷名（章节关键词之前的部分），章名 = 关键词开始的部分；
   ///   关键词紧跟「第X卷」时（`第一卷 prologue`）卷名就只有「第X卷」；
-  /// - 没有卷前缀但顶格书写、含章关键词的行（`短篇 …`、`BD特典 … Prologue`）算当前卷的章节，
+  /// - 没有卷前缀但顶格书写、不超过 40 字、没有句中标点、含章关键词的行（`短篇 …`、`BD特典 … Prologue`）算当前卷的章节，
   ///   还没有卷时新建「正文」卷；
   /// - 其余非空行去掉行首空白后作为段落。
   ///
@@ -117,7 +120,9 @@ class Wenku8Txt {
 
       if (_ignored(t)) continue;
 
-      final volume = _volumeMark.firstMatch(t);
+      // 卷 / 章标题行必须顶格，否则正文里的「第二卷」「插图」「尾声」等词会被当成标题
+      final top = line == line.trimLeft();
+      final volume = top ? _volumeMark.firstMatch(t) : null;
       if (volume != null) {
         final prefix = volume.group(0)!;
         final rest = t.substring(prefix.length).trim();
@@ -133,8 +138,8 @@ class Wenku8Txt {
         continue;
       }
 
-      // 章标题行必须顶格，否则正文里的「插图」「尾声」等词会被当成章节
-      if (line == line.trimLeft() && _chapterMark.hasMatch(t)) {
+      // 没卷前缀的章标题还要短、不带句中标点，没缩进的正文行才不会被误判
+      if (top && t.length <= 40 && !_prose.hasMatch(t) && _chapterMark.hasMatch(t)) {
         open(volumeTitle ?? '正文', t);
         continue;
       }
