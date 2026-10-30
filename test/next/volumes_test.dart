@@ -60,6 +60,10 @@ void main() {
     final r = splitCrop(withCrop(url, const Rect.fromLTWH(0.5, 0, 0.5, 1)));
     expect(r.url, url);
     expect(r.crop, const Rect.fromLTWH(0.5, 0, 0.5, 1));
+    // 自动去白边的记成 #trim=，读出来一样
+    final t = splitCrop(withCrop(url, const Rect.fromLTWH(0.1, 0, 0.8, 1), auto: true));
+    expect(t.url, url);
+    expect(t.crop, const Rect.fromLTWH(0.1, 0, 0.8, 1));
   });
 
   test('cropRgba 只取裁剪框里的像素', () {
@@ -86,6 +90,8 @@ void main() {
     await Volumes.setCover('5', '三', 'u3', picked: true);
     await Volumes.setCover('5', '四', withCrop('u4', const Rect.fromLTWH(0, 0, 0.5, 1))); // 以前裁过的，没有标记
     expect(Volumes.keptCovers(['5']), unorderedEquals(['u1', 'u3', withCrop('u4', const Rect.fromLTWH(0, 0, 0.5, 1))]));
+    await Volumes.setCover('5', '二', withCrop('u2', const Rect.fromLTWH(0.1, 0, 0.8, 1), auto: true)); // 自动去白边的不算手动挑的
+    expect(Volumes.keptCovers(['5']), isNot(contains(withCrop('u2', const Rect.fromLTWH(0.1, 0, 0.8, 1), auto: true))));
     expect(Volumes.keptCovers([]), isNot(contains('u1'))); // 不在书架上了，第一卷也不留
     await Volumes.resetCover('5', '三');
     expect(Volumes.keptCovers(['5']), isNot(contains('u3')));

@@ -6,6 +6,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../models/cat_volume.dart';
 import 'cache.dart';
+import 'cover_trim.dart';
 import 'data.dart';
 import 'unlock.dart';
 import 'image_cache.dart';
@@ -251,7 +252,7 @@ class VolumeCoverQueue {
         }
         final String url;
         try {
-          url = await chooseCover(content.images, _size);
+          url = await _trimmed(await chooseCover(content.images, _size));
         } catch (_) {
           _queue.clear(); // 图片下不下来，多半是网络问题，下次再说
           _bg.clear();
@@ -285,6 +286,20 @@ class VolumeCoverQueue {
       }
     }
     await box.put('coverSkipDropped', true);
+  }
+
+  /// 自动挑的封面四周有白边（扫描图常有）就记一个裁剪框去掉（`#trim=`，见 [splitCrop]）。只收很窄的一圈，
+  /// 白底的封面不会被削掉多少；解码不了就用整张。
+  Future<String> _trimmed(String url) async {
+    if (url.isEmpty) return url;
+    final bytes = await _ref.read(imageStoreProvider).load(url);
+    try {
+      const full = ui.Rect.fromLTWH(0, 0, 1, 1);
+      final r = (await CoverPixels.decode(bytes)).trim(full, maxTrim: 0.1);
+      return r == full ? url : withCrop(url, r, auto: true);
+    } catch (_) {
+      return url;
+    }
   }
 
   /// 图片本来就要显示，下载后存在本机。
