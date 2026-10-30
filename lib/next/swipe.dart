@@ -50,6 +50,9 @@ final swipePrefsProvider = NotifierProvider<SwipePrefsController, SwipePrefs>(Sw
 /// 越过这么远松手才执行（逻辑像素），没越过松手就只弹回去
 const _kTrigger = 72.0;
 
+/// 拖出这么远才定下这次往哪边滑：按下时手指抖一下不会露出另一边
+const _kDecide = 8.0;
+
 /// 给一行章节加上左右滑：跟着手指拖开，露出后面的动作；越过 [_kTrigger] 时背景变实色、震一下，
 /// 这时松手执行动作。不管执行没执行，松手都从当前位置直接弹回原位（不像 [Dismissible] 先甩到屏幕边上再回来）。
 /// 状态变了调 [onChanged] 让外面刷新。[onCache] 为空时"缓存"这个动作不可用（滑了没反应）。
@@ -76,7 +79,8 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
   late final _dx = AnimationController.unbounded(vsync: this); // 行现在往右挪了多少（负数往左）
   double _drag = 0; // 手指实际拖了多远：越过触发点后行跟得慢一点，有阻力感
   bool _armed = false; // 已经越过触发点，松手就执行
-  // 拖动开始时两边的样子：松手执行后弹回的那一下，背景不要变成反过来的动作
+  int _side = 0; // 这次拖动往哪边：1 右、-1 左、0 还没定；定了就不会滑到另一边
+  // 拖动开始时两边的样子：松手执行后弹回的那一下，图标不要变成反过来的动作
   (IconData, String, Color)? _rightLook, _leftLook;
 
   @override
@@ -88,10 +92,12 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
   String get _aid => widget.aid;
   String get _cid => widget.cid;
 
+  // 和 Mihon 一样：同一个动作一种颜色，做 / 撤销只换图标（文字只给读屏用）
   (IconData, String, Color) _look(SwipeAct a, ColorScheme s) => switch (a) {
-    SwipeAct.read => ReadState.isRead(_aid, _cid) ? (Icons.remove_done, '标为未读', s.outline) : (Icons.done_all, '标为已读', const Color(0xFF2E9E5B)),
-    SwipeAct.bookmark => Bookmarks.has(_aid, _cid, 0) ? (Icons.bookmark_remove_outlined, '取消书签', s.outline) : (Icons.bookmark_add_outlined, '加书签', const Color(0xFFE59A1F)),
-    SwipeAct.cache => ChapterCache.has(_aid, _cid) ? (Icons.download_done, '已缓存', s.outline) : (Icons.download_outlined, '缓存本章', s.primary),
+    SwipeAct.read => ReadState.isRead(_aid, _cid) ? (Icons.remove_done, '标为未读', const Color(0xFF2E9E5B)) : (Icons.done_all, '标为已读', const Color(0xFF2E9E5B)),
+    SwipeAct.bookmark =>
+      Bookmarks.has(_aid, _cid, 0) ? (Icons.bookmark_remove_outlined, '取消书签', const Color(0xFFE59A1F)) : (Icons.bookmark_add_outlined, '加书签', const Color(0xFFE59A1F)),
+    SwipeAct.cache => ChapterCache.has(_aid, _cid) ? (Icons.download_done, '已缓存', s.primary) : (Icons.download_outlined, '缓存本章', s.primary),
     SwipeAct.off => (Icons.block, '', Colors.transparent),
   };
 
@@ -114,7 +120,10 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
 
   void _start(SwipeAct right, SwipeAct left, ColorScheme scheme) {
     _dx.stop();
-    _drag = _dx.value;
+    // 上一下还没弹回去就又拖：离原位还远就接着原来那边，快回到原位了就重新定方向
+    _drag = _dx.value.abs() < _kDecide ? 0 : _dx.value;
+    _dx.value = _drag;
+    _side = _drag.sign.toInt();
     _rightLook = _look(right, scheme);
     _leftLook = _look(left, scheme);
   }
@@ -124,6 +133,12 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
     // 关掉的那一边拖不动
     if (right == SwipeAct.off && _drag > 0) _drag = 0;
     if (left == SwipeAct.off && _drag < 0) _drag = 0;
+    if (_side == 0) {
+      if (_drag.abs() < _kDecide) return;
+      _side = _drag.sign.toInt();
+      _drag -= _side * _kDecide; // 从 0 开始跟手，不跳一下
+    }
+    if (_drag * _side < 0) _drag = 0; // 往回拖最多回到原位
     _dx.value = _resist(_drag);
     final armed = _drag.abs() >= _kTrigger;
     if (armed != _armed) {
@@ -136,6 +151,7 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
     final act = _armed ? (_drag > 0 ? right : left) : null;
     _armed = false;
     _drag = 0;
+    _side = 0;
     _dx.animateTo(0, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
     if (act != null) _run(act);
   }
@@ -151,7 +167,7 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
         duration: const Duration(milliseconds: 120),
         child: Opacity(
           opacity: _armed ? 1 : 0.7,
-          child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, color: Colors.white), const SizedBox(width: 8), Text(label, style: const TextStyle(color: Colors.white))]),
+          child: Icon(icon, color: Colors.white, semanticLabel: label),
         ),
       ),
     );
@@ -174,7 +190,8 @@ class _ChapterSwipeState extends ConsumerState<ChapterSwipe> with SingleTickerPr
       onHorizontalDragCancel: () => _end(SwipeAct.off, SwipeAct.off),
       child: AnimatedBuilder(
         animation: _dx,
-        child: widget.child,
+        // 点按高亮默认画在外面的 Material 上，不跟着行挪、也不被裁剪，滑开时会从左边露出一块灰；让它画在行自己身上
+        child: Material(type: MaterialType.transparency, child: widget.child),
         builder: (context, child) {
           final dx = _dx.value;
           // 结构一直不变（行里的状态不丢），只在滑开时才叠背景、垫底色：平时透明，页面背景渐变时不会和它错开
