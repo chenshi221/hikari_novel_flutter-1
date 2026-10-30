@@ -157,7 +157,7 @@ class ImageStore {
   }
 
   // ---- 提升清晰度（Real-ESRGAN 放大 4 倍，只有安卓，见 Upscaler.kt）----
-  // 自动模式放大长边不到 600 像素的图（文库的小封面、Bangumi 的老封面），手动模式只放大地址带 `#sr` 的（框封面时选的）。
+  // 自动模式放大书架上的书的封面里长边不到 600 像素的（文库的小封面、Bangumi 的老封面），手动模式只放大地址带 `#sr` 的（框封面时选的）。
   // 放大好的存在 imgsr 目录，文件名和原图一样；不归图片缓存的清理管，清空图片缓存时一起删。
 
   static bool get srSupported => !kIsWeb && Platform.isAndroid;
@@ -173,6 +173,12 @@ class ImageStore {
   final _srQueue = <String>[];
   final _srSkip = <String>{}; // 不用放大（太大）或放大失败的，这次运行不再试
   bool _srRunning = false;
+  final _srAllowed = <String>{}; // 自动模式能放大的：书架上的书的封面（取封面时记下）
+
+  /// 书架上的书的封面，自动模式可以放大（发现、排行、搜索里别的书的封面不放大）。
+  void allowAutoSr(String rawUrl) => _srAllowed.add(_norm(rawUrl));
+
+  bool _autoSr(String url) => _srAuto && _srAllowed.contains(url);
 
   Future<Directory> _srDir() async => _srDirCache ??= await Directory(p.join((await getApplicationSupportDirectory()).path, 'imgsr')).create(recursive: true);
 
@@ -185,12 +191,12 @@ class ImageStore {
     return names;
   }
 
-  bool _srShown(String raw, String url) => srSupported && (_srAuto || wantsSr(raw)) && (_srDone?.contains(_name(url)) ?? false);
+  bool _srShown(String raw, String url) => srSupported && (_autoSr(url) || wantsSr(raw)) && (_srDone?.contains(_name(url)) ?? false);
 
   Future<Uint8List> _srOr(String raw, Uint8List orig) async {
     final manual = wantsSr(raw);
-    if (!_srAuto && !manual) return orig;
     final url = _norm(raw);
+    if (!_autoSr(url) && !manual) return orig;
     final name = _name(url);
     final done = await _srIndex();
     if (done.contains(name)) {

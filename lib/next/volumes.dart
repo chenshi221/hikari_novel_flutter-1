@@ -12,6 +12,7 @@ import 'bangumi.dart';
 import 'data.dart';
 import 'unlock.dart';
 import 'image_cache.dart';
+import 'library.dart';
 import 'progress.dart';
 import 'read_state.dart';
 import 'stats.dart';
@@ -219,21 +220,27 @@ class VolumeCoverQueue {
   /// 一卷的封面；这卷没有插图（比如短篇集）或者还没取到时用书的高清封面（第一卷的）。
   String volCover(String aid, Vol v, String fallback) => get(aid, v) ?? bookCover(aid, fallback);
 
-  /// 这卷的封面，还没取过就排队去取（返回 null）；没有插图也返回 null。
+  /// 这卷的封面，还没取过就排队去取（返回 null）；没有插图、不在书架上的书也返回 null（只用网站的封面）。
   String? get(String aid, Vol v) {
+    if (!LibraryStore.contains(aid)) return null;
     final url = Volumes.cover(aid, v.title);
     if (url == null && !_queue.contains((aid, v.title))) {
       _queue.add((aid, v.title));
       Future.microtask(_pump);
     }
     if (url == '' && !_bgmTried.contains((aid, v.title))) Future.microtask(() => _fillFromBangumi(aid));
-    return url == null || url.isEmpty ? null : url;
+    if (url == null || url.isEmpty) return null;
+    _ref.read(imageStoreProvider).allowAutoSr(url);
+    return url;
   }
 
   /// 书的封面：第一卷的卷封面（高清）；没有卷信息、还没取到、没插图时用 [fallback]（网站的小封面）。
   String bookCover(String aid, String fallback) {
     final vols = Volumes.of(aid);
-    return vols.isEmpty ? fallback : get(aid, vols.first) ?? fallback;
+    final url = vols.isEmpty ? null : get(aid, vols.first);
+    if (url != null) return url;
+    if (LibraryStore.contains(aid)) _ref.read(imageStoreProvider).allowAutoSr(fallback);
+    return fallback;
   }
 
   Future<void> _pump() async {
