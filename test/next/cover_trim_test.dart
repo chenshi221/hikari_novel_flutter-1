@@ -38,9 +38,15 @@ void main() {
     expect(r, const Rect.fromLTRB(0.09, 7 / 140, 0.91, 133 / 140));
   });
 
-  test('没有白边、或者白边只有两三个像素：原样返回', () {
+  test('没有白边：原样返回', () {
     expect(_image(100, 140, const Rect.fromLTWH(0, 0, 100, 140)).trim(full), full);
-    expect(_image(100, 140, const Rect.fromLTRB(2, 0, 100, 140)).trim(full), full);
+  });
+
+  test('只有一两个像素的白边也收掉（放大显示就是一条白线）', () {
+    // 86 第一卷：底下两行白
+    final r = _image(100, 140, const Rect.fromLTRB(0, 0, 100, 138)).trim(full);
+    expect(r, const Rect.fromLTRB(0, 0, 1, 137 / 140));
+    expect(_image(100, 140, const Rect.fromLTRB(1, 0, 100, 140)).trim(full).left, closeTo(0.02, 0.001));
   });
 
   test('整张白底的图：每边最多收 maxTrim，不会削没', () {

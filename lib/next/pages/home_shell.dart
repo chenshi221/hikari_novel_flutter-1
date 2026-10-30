@@ -59,7 +59,7 @@ class _HomeShellState extends ConsumerState<HomeShell> with WidgetsBindingObserv
     if (!isWebPreview) {
       final store = ref.read(imageStoreProvider);
       // 先删挑封面剩下的图，再压剩下的，省得压了又删
-      store.dropLowQualityOnce().then((_) => store.trim()).then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).ignore();
+      store.dropLowQualityOnce().then((_) => store.trim()).then((_) => ref.read(volumeCoverQueueProvider).dropSkippedOnce(ref.read(libraryProvider).books.keys)).then((_) => store.shrinkOld()).then((_) => ref.read(volumeCoverQueueProvider).retrimOnce(ref.read(libraryProvider).books.keys)).ignore();
       cleared.then((_) => ChapterCache.compressOld()).ignore();
     }
     if (isWebPreview) cleared.ignore();

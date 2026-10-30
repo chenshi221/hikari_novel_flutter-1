@@ -75,6 +75,13 @@ class ImageStore {
     return _inflight[url] = f;
   }
 
+  /// 已经存在本机的图（内存或磁盘），没有返回 null，不联网
+  Future<Uint8List?> cached(String rawUrl) async {
+    final url = _norm(rawUrl);
+    final f = File(p.join((await _cacheDir()).path, _name(url)));
+    return peek(url) ?? (await f.exists() ? await f.readAsBytes() : null);
+  }
+
   /// 本地缓存文件的路径（没缓存就先下载）：给通知栏封面这种只认文件的地方用
   Future<String> path(String rawUrl) async {
     final url = _norm(rawUrl);
