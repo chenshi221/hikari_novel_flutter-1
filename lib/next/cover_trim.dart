@@ -27,7 +27,7 @@ class CoverPixels {
 
   /// 把 [crop]（0~1 比例）四边的空白往里收掉，每边最多收 [maxTrim]（免得把本来就是白底的封面削掉一大块）。
   /// 没有白边原样返回 [crop]。
-  Rect trim(Rect crop, {double maxTrim = 0.15}) {
+  ui.Rect trim(ui.Rect crop, {double maxTrim = 0.15}) {
     final x0 = (crop.left * w).round().clamp(0, w - 1), x1 = (crop.right * w).round().clamp(x0 + 1, w);
     final y0 = (crop.top * h).round().clamp(0, h - 1), y1 = (crop.bottom * h).round().clamp(y0 + 1, h);
     final maxX = ((x1 - x0) * maxTrim).floor(), maxY = ((y1 - y0) * maxTrim).floor();
@@ -52,7 +52,7 @@ class CoverPixels {
     t = real(t);
     b = real(b);
     if (l + r + t + b == 0) return crop;
-    return Rect.fromLTRB((x0 + l) / w, (y0 + t) / h, (x1 - r) / w, (y1 - b) / h);
+    return ui.Rect.fromLTRB((x0 + l) / w, (y0 + t) / h, (x1 - r) / w, (y1 - b) / h);
   }
 
   /// [xa, xb) × [ya, yb) 这一条是不是空白：整体很亮（白、浅灰），而且几乎所有像素都和平均色差不多

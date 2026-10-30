@@ -569,7 +569,7 @@ class _OptionsSheet extends ConsumerStatefulWidget {
 
 class _OptionsSheetState extends ConsumerState<_OptionsSheet> with SingleTickerProviderStateMixin {
   static int _lastPage = 0; // 下次打开还停在上次那页
-  late final _tabs = TabController(length: 3, vsync: this, initialIndex: _lastPage)..addListener(() => _lastPage = _tabs.index);
+  late final TabController _tabs = TabController(length: 3, vsync: this, initialIndex: _lastPage)..addListener(() => _lastPage = _tabs.index);
 
   @override
   void dispose() {
