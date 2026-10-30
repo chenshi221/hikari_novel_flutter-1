@@ -118,7 +118,17 @@ class StatePanel extends ConsumerWidget {
 }
 
 /// 原生 App 里 Image.network 不走代理，所以用 [ImageStore] 取图（内存 LRU + 磁盘缓存）；网页预览走转发程序，直接用 Image.network。
+/// 有图放大好了清晰度、换了模式（见 [ImageStore.srVersion]）
+final srVersionProvider = Provider<int>((ref) {
+  final n = ref.watch(imageStoreProvider).srVersion;
+  void listener() => ref.invalidateSelf();
+  n.addListener(listener);
+  ref.onDispose(() => n.removeListener(listener));
+  return n.value;
+});
+
 final imageBytesProvider = FutureProvider.autoDispose.family<Uint8List, String>((ref, url) {
+  ref.watch(srVersionProvider); // 放大好了重新取
   final store = ref.read(imageStoreProvider);
   ref.onDispose(() => store.cancel(url)); // 没人看了（滑出屏幕），还在排队的就别下了
   return store.load(url);
@@ -141,6 +151,7 @@ class NetImage extends ConsumerWidget {
     final crop = splitCrop(url).crop;
     if (isWebPreview) return _cropped(Image.network(displayImageUrl(splitCrop(url).url), fit: fit, errorBuilder: (_, _, _) => fallback), crop);
     final store = ref.read(imageStoreProvider);
+    ref.watch(srVersionProvider);
     Widget image(Uint8List b, {bool fade = false}) {
       Widget build(ImageProvider p) => _cropped(Image(image: p, fit: fit, gaplessPlayback: true, frameBuilder: fade ? _fadeIn : null, errorBuilder: (_, _, _) => fallback), crop);
       if (full) return build(MemoryImage(b));
@@ -159,6 +170,24 @@ class NetImage extends ConsumerWidget {
     if (hit != null) return image(hit);
     // 不在内存里的（刚下载的、从磁盘读的）都短短淡入一下，比突然蹦出来顺眼；内存里有的上面已经同步画了
     return ref.watch(imageBytesProvider(url)).when(data: (b) => image(b, fade: true), loading: () => const SizedBox.shrink(), error: (_, _) => fallback);
+  }
+
+  /// 提前下载，并按 [size]（逻辑像素，图片要放进的格子）解码进图片缓存：之后同样大小的 NetImage 直接出图。
+  /// 翻页时下一页才建出来，大插图解码要一两百毫秒，不提前做就会先空一下。
+  /// [decode] 为 false 时只下载（存进本机），不解码。
+  static Future<void> precache(BuildContext context, String url, Size size, {BoxFit fit = BoxFit.cover, bool decode = true}) async {
+    if (url.isEmpty || isWebPreview) return;
+    final Uint8List bytes;
+    try {
+      bytes = await ProviderScope.containerOf(context, listen: false).read(imageStoreProvider).load(url);
+    } catch (_) {
+      return; // 下不下来就等真正显示时再说
+    }
+    if (!decode || !context.mounted) return;
+    final crop = splitCrop(url).crop;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final box = Size(_bucket(size.width * dpr / (crop?.width ?? 1)), _bucket(size.height * dpr / (crop?.height ?? 1)));
+    await precacheImage(_Fitted(url, bytes, box, fit == BoxFit.cover), context, onError: (_, _) {});
   }
 
   /// 往上取到几个固定档位（每档大 25%）：格子大小一直在变时（比如封面飞过去的动画）不用每帧都重新解码
@@ -202,11 +231,12 @@ class _Fitted extends ImageProvider<_Fitted> {
     },
   );
 
+  // 带上字节数：同一个地址换成放大清晰度后的图时不会拿到原图解码好的那张
   @override
-  bool operator ==(Object other) => other is _Fitted && other.url == url && other.box == box && other.cover == cover;
+  bool operator ==(Object other) => other is _Fitted && other.url == url && other.bytes.length == bytes.length && other.box == box && other.cover == cover;
 
   @override
-  int get hashCode => Object.hash(url, box, cover);
+  int get hashCode => Object.hash(url, bytes.length, box, cover);
 }
 
 Widget _fadeIn(BuildContext context, Widget child, int? frame, bool sync) =>

@@ -66,6 +66,16 @@ void main() {
     expect(t.crop, const Rect.fromLTWH(0.1, 0, 0.8, 1));
   });
 
+  test('提升清晰度的标记 #sr：和裁剪框一起写、一起读，读出来的地址是干净的', () {
+    const url = 'https://pic.777743.xyz/1/1/1.jpg';
+    final cropped = withSr(withCrop(url, const Rect.fromLTWH(0.5, 0, 0.5, 1)), true);
+    expect(wantsSr(cropped), isTrue);
+    expect(splitCrop(cropped), (url: url, crop: const Rect.fromLTWH(0.5, 0, 0.5, 1)));
+    expect(withSr(url, true), '$url#sr');
+    expect(splitCrop(withSr(url, true)), (url: url, crop: null));
+    expect(withSr(cropped, false), withCrop(url, const Rect.fromLTWH(0.5, 0, 0.5, 1)));
+  });
+
   test('cropRgba 只取裁剪框里的像素', () {
     // 2x2：左边红、右边蓝，取右半边只剩蓝
     final rgba = Uint8List.fromList([255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255]);

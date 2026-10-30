@@ -51,3 +51,8 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // 封面超分辨率的推理库（原 TensorFlow Lite），见 Upscaler.kt
+    implementation("com.google.ai.edge.litert:litert:1.4.2")
+}

@@ -4,6 +4,14 @@ import 'package:hikari_novel_flutter/next/library.dart';
 RemoteBook r(String bid, {int shelf = 0}) => (bid: bid, title: 't$bid', img: '', shelf: shelf);
 
 void main() {
+  test('改名候选：拆最后一组括号，全角半角都认，前面的括号留在名字里', () {
+    expect(titleAlternatives('败北女角太多了！(败犬女主太多了！)'), ['败北女角太多了！', '败犬女主太多了！']);
+    expect(titleAlternatives('86-不存在的战区-(86- Eighty Six -)'), ['86-不存在的战区', '86- Eighty Six']);
+    expect(titleAlternatives('我们不可能成为恋人！绝对不行。(※似乎可行？)（我怎么可能成为你的恋人，不行不行！）'), ['我们不可能成为恋人！绝对不行。(※似乎可行？)', '我怎么可能成为你的恋人，不行不行！']);
+    expect(titleAlternatives('OVERLORD不死者之王'), isEmpty);
+    expect(titleAlternatives('(只有括号)'), isEmpty);
+  });
+
   test('首次导入：网站书架 2~6 的书进同名分类，默认书架的不分类', () {
     final out = reconcile({}, {'1': r('b1'), '2': r('b2', shelf: 3)}, {}, now: 5, firstImport: true);
     expect(out['1']!.cats, isEmpty);

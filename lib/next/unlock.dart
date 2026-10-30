@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 
 import '../data/wenku8/wenku8_app_api.dart';
+import '../data/wenku8/wenku8_parser.dart';
 import '../data/wenku8/wenku8_txt.dart';
 import '../models/cat_volume.dart';
 import '../models/content.dart';
@@ -90,7 +91,8 @@ class UnlockService {
       final book = LibraryStore.get(aid);
       final seen = ReadingHistory.all().where((e) => e.aid == aid).firstOrNull; // 不在书架上就用阅读历史里的书名、封面
       final title = (book?['title'] as String?) ?? seen?.title ?? RegExp(r'^<([^<>\n]+)>$', multiLine: true).firstMatch(txt)?[1] ?? aid;
-      await ChapterCache.setMeta(aid, title, all.length, (book?['img'] as String?) ?? seen?.img ?? '', all.first.cid);
+      final img = [book?['img'] as String?, seen?.img].whereType<String>().where((e) => e.isNotEmpty).firstOrNull ?? Wenku8Parser.coverUrl(aid);
+      await ChapterCache.setMeta(aid, title, all.length, img, all.first.cid);
     }
     await _box.put('unlock:txt:$aid', {'m': texts.keys.toList(), 'a': [for (final c in all) c.cid]});
   }

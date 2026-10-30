@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/wenku8/wenku8_parser.dart';
 import '../cache.dart';
 import '../history.dart';
 import '../progress.dart';
 import '../library.dart';
 import '../router.dart';
+import '../volumes.dart';
 import '../widgets.dart';
 import 'updates_page.dart';
 
@@ -76,6 +78,7 @@ class CachePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasks = ref.watch(downloadProvider);
+    ref.watch(volumeChangesProvider); // 卷封面取到了就换上
     final books = ChapterCache.books().entries.toList();
     return Scaffold(
       appBar: AppBar(title: Text('离线缓存 · 共 ${ChapterCache.totalLabel()}')),
@@ -90,7 +93,8 @@ class CachePage extends ConsumerWidget {
                       final done = t?.done ?? ChapterCache.count(b.key);
                       final total = b.value.$2;
                       return ListTile(
-                        leading: SizedBox(width: 44, height: 59, child: CoverImage(b.value.$3)),
+                        // 和书架一样的封面（第一卷的高清封面）；以前导入时没记下封面地址的按书号拼
+                        leading: SizedBox(width: 44, height: 59, child: CoverImage(ref.read(volumeCoverQueueProvider).bookCover(b.key, b.value.$3.isNotEmpty ? b.value.$3 : Wenku8Parser.coverUrl(b.key)))),
                         title: Text(LibraryStore.shown(b.key, b.value.$1)),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,

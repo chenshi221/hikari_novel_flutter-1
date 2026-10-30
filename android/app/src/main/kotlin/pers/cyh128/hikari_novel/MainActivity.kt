@@ -52,6 +52,19 @@ class MainActivity : AudioServiceFragmentActivity() {
             }
         }
 
+        // 封面超分辨率（见 Upscaler）：传进来原图字节，传回放大 4 倍的 JPEG
+        val upscaler = Upscaler(applicationContext)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/upscale").setMethodCallHandler { call, result ->
+            val bytes = call.argument<ByteArray>("bytes")
+            if (call.method != "upscale" || bytes == null) {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            upscaler.upscale(bytes) { out, err ->
+                runOnUiThread { if (out != null) result.success(out) else result.error("UPSCALE_FAILED", err, null) }
+            }
+        }
+
         // 防截屏、隐藏最近任务里的预览
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hikari/secure").setMethodCallHandler { call, result ->
             if (call.method == "setSecure") {

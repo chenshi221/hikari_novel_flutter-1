@@ -70,6 +70,15 @@ class ReadingStats {
     (k, v) => MapEntry(k as String, (v as Map).map((d, s) => MapEntry(d as String, s as int))),
   );
 
+  /// 读过的书 aid（按章记过时长的）
+  static Iterable<String> chapterBooks() => _box.keys.whereType<String>().where((k) => k.startsWith('stats:ch:')).map((k) => k.substring(9));
+
+  /// 日期满足 [inDay] 的那些天里，每本书读了多少秒：aid → 秒。按章记的时长合计，只有本机的、这个功能加上之后的。
+  static Map<String, int> booksOn(bool Function(String day) inDay) => {
+    for (final aid in chapterBooks())
+      if (chapterSeconds(aid).values.expand((d) => d.entries).where((e) => inDay(e.key)).fold(0, (a, e) => a + e.value) case final s when s > 0) aid: s,
+  };
+
   static Future<void> addSeconds(String aid, int seconds, {String? cid}) async {
     if (seconds <= 0 || Incognito.on) return;
     if (cid != null) {

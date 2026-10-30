@@ -1,8 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/wenku8/wenku8_parser.dart';
+import '../cache.dart';
+import '../history.dart';
+import '../progress.dart';
 import '../read_state.dart';
 import '../router.dart';
 import '../stats.dart';
@@ -23,7 +28,25 @@ int readingStreak(Map<String, int> perDay, DateTime now) {
   return n;
 }
 
-/// 阅读统计：今天 / 连续天数，周 / 月 / 年柱状图（带平均线），最近几个月的阅读日历，总数，读得最久的书。
+/// 读一章平均多少秒：只算读了一分钟以上的章（翻一下就过去的不算），不到两章算不准返回 null。
+/// [chapters] 是每章各天的秒数（见 [ReadingStats.chapterSeconds]）。
+int? secondsPerChapter(Iterable<Map<String, int>> chapters) {
+  final totals = chapters.map((d) => d.values.fold(0, (a, b) => a + b)).where((s) => s >= 60).toList();
+  return totals.length < 2 ? null : totals.fold(0, (a, b) => a + b) ~/ totals.length;
+}
+
+/// 每分钟读多少字：[samples] 是 (章节字数, 读这章用的秒数)，同样只算一分钟以上的，不到三章返回 null。
+int? charsPerMinute(Iterable<(int, int)> samples) {
+  final ok = samples.where((e) => e.$2 >= 60).toList();
+  if (ok.length < 3) return null;
+  return ok.fold(0, (a, e) => a + e.$1) * 60 ~/ ok.fold(0, (a, e) => a + e.$2);
+}
+
+/// 在读的一本：读到的那卷第几卷、读了几章 / 共几章，按读这本书的速度估计读完这卷还要多少秒（数据不够为 null）
+typedef _Reading = ({String aid, String title, String img, String cid, int vol, int read, int total, int? eta});
+
+/// 阅读统计：今天 / 连续天数；周 / 月 / 年时长（点柱子看那天读了哪几本）；在读的书还要多久读完这卷；
+/// 今年每月读完几卷；阅读日历；总计和阅读速度；读得最久的书。
 class StatsPage extends ConsumerStatefulWidget {
   const StatsPage({super.key});
 
@@ -35,8 +58,8 @@ class _StatsPageState extends ConsumerState<StatsPage> {
   int _range = 0; // 0 周、1 月、2 年
   int? _picked; // 点中的那根柱子
 
-  /// 柱状图的数据：(标签, 秒, 点中时显示的日期)。年按自然月合计。
-  List<(String, int, String)> _bars(Map<String, int> perDay, DateTime now) {
+  /// 柱状图的数据：(标签, 秒, 点中时显示的日期, 日期前缀)。年按自然月合计，前缀是 `yyyy-MM-`，日子的前缀就是整个日期。
+  List<(String, int, String, String)> _bars(Map<String, int> perDay, DateTime now) {
     const week = ['一', '二', '三', '四', '五', '六', '日'];
     if (_range == 2) {
       return [
@@ -44,7 +67,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
           () {
             final m = DateTime(now.year, now.month - i);
             final prefix = '${m.year}-${m.month.toString().padLeft(2, '0')}-';
-            return ('${m.month}月', perDay.entries.where((e) => e.key.startsWith(prefix)).fold(0, (a, e) => a + e.value), '${m.year} 年 ${m.month} 月');
+            return ('${m.month}月', perDay.entries.where((e) => e.key.startsWith(prefix)).fold(0, (a, e) => a + e.value), '${m.year} 年 ${m.month} 月', prefix);
           }(),
       ];
     }
@@ -54,9 +77,44 @@ class _StatsPageState extends ConsumerState<StatsPage> {
         () {
           final d = DateTime(now.year, now.month, now.day - i);
           final label = _range == 0 ? week[d.weekday - 1] : (i % 5 == 0 ? '${d.month}/${d.day}' : '');
-          return (label, perDay[ReadingStats.dayKey(d)] ?? 0, '${d.month}月${d.day}日 周${week[d.weekday - 1]}');
+          return (label, perDay[ReadingStats.dayKey(d)] ?? 0, '${d.month}月${d.day}日 周${week[d.weekday - 1]}', ReadingStats.dayKey(d));
         }(),
     ];
+  }
+
+  /// 最近读的几本还没读完的书：读到的那卷（读完了就看下一卷）还剩几章、大概还要多久
+  List<_Reading> _reading() {
+    final out = <_Reading>[];
+    final seen = <String>{};
+    final pace = secondsPerChapter(ReadingStats.chapterBooks().expand((a) => ReadingStats.chapterSeconds(a).values)); // 这本书数据不够时用整体的
+    for (final h in ReadingHistory.all()) {
+      if (out.length >= 4) break;
+      if (!seen.add(h.aid)) continue;
+      final vols = Volumes.of(h.aid);
+      final cid = ReadingProgress.of(h.aid)?.cid ?? h.cid;
+      var vi = vols.indexWhere((v) => v.cids.contains(cid));
+      if (vi < 0) continue;
+      final read = ReadState.read(h.aid);
+      int left(Vol v) => v.textCids.where((c) => !read.contains(c)).length;
+      while (vi < vols.length && left(vols[vi]) == 0) {
+        vi++;
+      }
+      if (vi >= vols.length) continue; // 全读完了
+      final v = vols[vi];
+      final per = secondsPerChapter(ReadingStats.chapterSeconds(h.aid).values) ?? pace;
+      final info = ReadingStats.info(h.aid);
+      out.add((
+        aid: h.aid,
+        title: info.title,
+        img: info.img.isNotEmpty ? info.img : h.img,
+        cid: v.cids.contains(cid) ? cid : v.cids.first,
+        vol: vi,
+        read: v.textCids.length - left(v),
+        total: v.textCids.length,
+        eta: per == null ? null : per * left(v),
+      ));
+    }
+    return out;
   }
 
   @override
@@ -74,34 +132,15 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final streak = readingStreak(perDay, now);
     final top = perBook.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final muted = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    String cover(String aid, String img) => queue.bookCover(aid, img.isNotEmpty ? img : Wenku8Parser.coverUrl(aid));
 
-    Widget card(Widget child, {EdgeInsets padding = const EdgeInsets.all(16)}) => Material(
+    Widget card(Widget child, {VoidCallback? onTap}) => Material(
       color: scheme.surfaceContainerLowest,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
-      child: Padding(padding: padding, child: child),
-    );
-
-    Widget tile(IconData icon, String label, String value, {VoidCallback? onTap}) => Expanded(
-      child: Material(
-        color: scheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, size: 20, color: scheme.primary),
-                const SizedBox(height: 8),
-                Text(value, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
-                Text(label, style: muted),
-              ],
-            ),
-          ),
-        ),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(padding: const EdgeInsets.all(16), child: child),
       ),
     );
 
@@ -110,6 +149,24 @@ class _StatsPageState extends ConsumerState<StatsPage> {
     final nonZero = bars.where((b) => b.$2 > 0);
     final avg = nonZero.isEmpty ? 0 : nonZero.fold(0, (a, b) => a + b.$2) ~/ nonZero.length;
     const chartH = 120.0;
+    final picked = _picked != null && _picked! < bars.length ? bars[_picked!] : null;
+    // 柱状图下面列出读了哪几本：点了柱子是那一天（那个月），没点是整段时间
+    final from = bars.first.$4;
+    final booksInRange = ReadingStats.booksOn((d) => picked != null ? d.startsWith(picked.$4) : d.compareTo(from) >= 0).entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final reading = _reading();
+    final doneYear = Volumes.allDone().where((e) => DateTime.fromMillisecondsSinceEpoch(e.$4).year == now.year).toList();
+    final perMonth = List.filled(12, 0);
+    for (final e in doneYear) {
+      perMonth[DateTime.fromMillisecondsSinceEpoch(e.$4).month - 1]++;
+    }
+    final maxMonth = perMonth.fold(1, math.max);
+    final speed = charsPerMinute([
+      for (final aid in ReadingStats.chapterBooks())
+        for (final e in ReadingStats.chapterSeconds(aid).entries)
+          if (ChapterCache.length(aid, e.key) case final n?) (n, e.value.values.fold(0, (a, b) => a + b)),
+    ]);
 
     return Scaffold(
       appBar: AppBar(title: const Text('阅读统计')),
@@ -174,10 +231,10 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                       const SizedBox(height: 4),
                       // 点了柱子显示那一天 / 那个月读了多久，没点时显示平均
                       Text(
-                        _picked != null && _picked! < bars.length
-                            ? '${bars[_picked!].$3} · ${bars[_picked!].$2 == 0 ? '没读' : _duration(bars[_picked!].$2)}'
-                            : (avg == 0 ? '这段时间还没读' : '有阅读的${_range == 2 ? '月份' : '日子'}平均 ${_duration(avg)}，点柱子看每天'),
-                        style: _picked == null ? muted : theme.textTheme.bodyMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w600),
+                        picked != null
+                            ? '${picked.$3} · ${picked.$2 == 0 ? '没读' : _duration(picked.$2)}'
+                            : (avg == 0 ? '这段时间还没读' : '有阅读的${_range == 2 ? '月份' : '日子'}平均 ${_duration(avg)}'),
+                        style: picked == null ? muted : theme.textTheme.bodyMedium?.copyWith(color: scheme.primary, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 16),
                       SizedBox(
@@ -187,29 +244,42 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                for (final (i, (label, sec, _)) in bars.indexed)
+                                for (final (i, (label, sec, _, _)) in bars.indexed)
                                   Expanded(
                                     child: GestureDetector(
                                       behavior: HitTestBehavior.opaque,
                                       onTap: () => setState(() => _picked = _picked == i ? null : i),
                                       child: Padding(
-                                      padding: EdgeInsets.symmetric(horizontal: _range == 1 ? 1 : 4),
-                                      child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        children: [
-                                          AnimatedContainer(
-                                            duration: const Duration(milliseconds: 300),
-                                            curve: Curves.easeOutCubic,
-                                            height: chartH * sec / maxBar + 2,
-                                            decoration: BoxDecoration(
-                                              color: _picked != null ? (_picked == i ? scheme.primary : scheme.primary.withValues(alpha: 0.25)) : (sec >= avg && avg > 0 ? scheme.primary : scheme.primary.withValues(alpha: 0.45)),
-                                              borderRadius: BorderRadius.circular(_range == 1 ? 2 : 5),
+                                        padding: EdgeInsets.symmetric(horizontal: _range == 1 ? 1 : 4),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.end,
+                                          children: [
+                                            AnimatedContainer(
+                                              duration: const Duration(milliseconds: 300),
+                                              curve: Curves.easeOutCubic,
+                                              height: math.max(2, chartH * sec / maxBar), // 最高的正好顶满，不能再加，否则超出 2 像素
+                                              decoration: BoxDecoration(
+                                                color: _picked != null
+                                                    ? (_picked == i ? scheme.primary : scheme.primary.withValues(alpha: 0.25))
+                                                    : (sec >= avg && avg > 0 ? scheme.primary : scheme.primary.withValues(alpha: 0.45)),
+                                                borderRadius: BorderRadius.circular(_range == 1 ? 2 : 5),
+                                              ),
                                             ),
-                                          ),
-                                          SizedBox(height: 20, child: Center(child: Text(label, maxLines: 1, softWrap: false, overflow: TextOverflow.visible, style: theme.textTheme.labelSmall?.copyWith(color: _picked == i ? scheme.primary : scheme.onSurfaceVariant, fontWeight: _picked == i ? FontWeight.w700 : null)))),
-                                        ],
+                                            SizedBox(
+                                              height: 20,
+                                              child: Center(
+                                                child: Text(
+                                                  label,
+                                                  maxLines: 1,
+                                                  softWrap: false,
+                                                  overflow: TextOverflow.visible,
+                                                  style: theme.textTheme.labelSmall?.copyWith(color: _picked == i ? scheme.primary : scheme.onSurfaceVariant, fontWeight: _picked == i ? FontWeight.w700 : null),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
                                     ),
                                   ),
                               ],
@@ -219,11 +289,119 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                               Positioned(
                                 left: 0,
                                 right: 0,
-                                bottom: 20 + chartH * avg / maxBar + 2,
+                                bottom: 20 + chartH * avg / maxBar,
                                 child: IgnorePointer(child: Container(height: 1, color: scheme.onSurfaceVariant.withValues(alpha: 0.5))),
                               ),
                           ],
                         ),
+                      ),
+                      if (booksInRange.isNotEmpty) ...[
+                        const Divider(height: 24),
+                        for (final e in booksInRange.take(5))
+                          InkWell(
+                            onTap: () => context.push(Routes.report(e.key)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 5),
+                              child: Row(
+                                children: [
+                                  Expanded(child: Text(ReadingStats.info(e.key).title, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                  const SizedBox(width: 12),
+                                  Text(_duration(e.value), style: muted),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (reading.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  card(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('在读', style: theme.textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        for (final r in reading)
+                          InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => context.push(Routes.reader(r.aid, r.cid)),
+                            onLongPress: () => context.push(Routes.novel(r.aid)),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                children: [
+                                  SizedBox(width: 40, height: 56, child: CoverImage(cover(r.aid, r.img))),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(r.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyLarge),
+                                        const SizedBox(height: 6),
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(3),
+                                          child: LinearProgressIndicator(
+                                            value: r.total == 0 ? 0 : r.read / r.total,
+                                            minHeight: 5,
+                                            color: scheme.primary,
+                                            backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          '第 ${r.vol + 1} 卷 · 还剩 ${r.total - r.read} 章${r.eta == null ? '' : ' · 约 ${_duration(r.eta!)}'}',
+                                          style: muted,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                // 今年每月读完几卷，点进书籍墙
+                card(
+                  onTap: () => context.push(Routes.wall),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text('今年读完的卷', style: theme.textTheme.titleMedium)),
+                          Text('${doneYear.length} 卷', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600, color: scheme.primary)),
+                          Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          for (var m = 0; m < 12; m++)
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Text(perMonth[m] == 0 ? '' : '${perMonth[m]}', style: theme.textTheme.labelSmall),
+                                  Container(
+                                    height: math.max(2, 36.0 * perMonth[m] / maxMonth),
+                                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                                    decoration: BoxDecoration(
+                                      color: m > now.month - 1 ? scheme.onSurface.withValues(alpha: 0.06) : scheme.primary.withValues(alpha: perMonth[m] == 0 ? 0.15 : 0.8),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text('${m + 1}', style: muted),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ),
@@ -241,23 +419,23 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Row(children: [tile(Icons.schedule_rounded, '累计阅读', _duration(total)), const SizedBox(width: 12), tile(Icons.article_outlined, '读过的章节', '${ReadingStats.chapters}')]),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    tile(Icons.menu_book_rounded, '读过的书', '${perBook.length}'),
-                    const SizedBox(width: 12),
-                    tile(Icons.auto_stories_rounded, '读完的卷 · 书籍墙', '${Volumes.allDone().length}', onTap: () => context.push(Routes.wall)),
-                  ],
+                Text(
+                  [
+                    '累计 ${_duration(total)}',
+                    '读过 ${perBook.length} 本',
+                    '${ReadingStats.chapters} 章',
+                    if (speed != null) '约 $speed 字/分钟',
+                  ].join(' · '),
+                  style: muted,
+                  textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
                 Text('读得最久', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
-                for (final e in top.take(20))
+                for (final e in top.take(10))
                   Builder(
                     builder: (context) {
                       final info = ReadingStats.info(e.key);
-                      final img = queue.bookCover(e.key, info.img.isNotEmpty ? info.img : Wenku8Parser.coverUrl(e.key));
                       return InkWell(
                         borderRadius: BorderRadius.circular(12),
                         onTap: () => context.push(Routes.report(e.key)),
@@ -266,7 +444,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                           padding: const EdgeInsets.symmetric(vertical: 6),
                           child: Row(
                             children: [
-                              SizedBox(width: 40, height: 56, child: CoverImage(img)),
+                              SizedBox(width: 40, height: 56, child: CoverImage(cover(e.key, info.img))),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -295,8 +473,6 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                       );
                     },
                   ),
-                const SizedBox(height: 4),
-                Text('点一本书看阅读报告，长按进详情', style: muted),
               ],
             ),
     );

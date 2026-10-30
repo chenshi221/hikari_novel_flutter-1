@@ -7,10 +7,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../app_prefs.dart';
+import '../bangumi.dart';
 import '../cache.dart';
 import '../cover_trim.dart';
 import '../data.dart';
 import '../image_cache.dart';
+import '../unlock.dart';
 import '../volumes.dart';
 import '../widgets.dart';
 
@@ -36,14 +38,19 @@ class _PickerPage extends ConsumerStatefulWidget {
 
 class _PickerPageState extends ConsumerState<_PickerPage> {
   late Future<List<String>> _images = _load();
+  late Future<BgmSeries?> _bgm = ref.read(bangumiProvider).series(widget.aid);
 
-  /// 插图章节缓存过就直接用，没缓存就联网取一次并存下
+  /// 插图章节缓存过就直接用，没缓存就联网取一次并存下；受限书取不到插图，只能从 Bangumi 挑
   Future<List<String>> _load() async {
     final cid = widget.vol.illus;
     if (cid == null) return const [];
     var content = await ChapterCache.get(widget.aid, cid);
     if (content == null) {
-      content = await ref.read(apiProvider).chapter(widget.aid, cid);
+      try {
+        content = await ref.read(apiProvider).chapter(widget.aid, cid);
+      } on ChapterLockedException {
+        return const [];
+      }
       await ChapterCache.put(widget.aid, cid, content);
     }
     return content.images;
@@ -60,6 +67,68 @@ class _PickerPageState extends ConsumerState<_PickerPage> {
   Widget build(BuildContext context) {
     final current = splitCrop(Volumes.cover(widget.aid, widget.vol.title) ?? '').url;
     final theme = Theme.of(context);
+    final muted = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+
+    Widget head(String text) => SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      sliver: SliverToBoxAdapter(child: Text(text, style: theme.textTheme.titleSmall)),
+    );
+    Widget note(String text, {VoidCallback? retry}) => SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      sliver: SliverToBoxAdapter(
+        child: Row(
+          children: [
+            Expanded(child: Text(text, style: muted)),
+            if (retry != null) TextButton(onPressed: retry, child: const Text('重试')),
+          ],
+        ),
+      ),
+    );
+    // [labels] 是图上角标（Bangumi 的卷号），[mark] 是按卷号对上这一卷的那张
+    Widget grid(List<String> urls, {List<String>? labels, String? mark}) => SliverPadding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      sliver: SliverLayoutBuilder(
+        builder: (context, c) => SliverGrid.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: (c.crossAxisExtent / 130).floor().clamp(3, 6),
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: kCoverAspect,
+          ),
+          itemCount: urls.length,
+          itemBuilder: (context, i) => InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _pick(urls[i]),
+            child: Container(
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainer,
+                borderRadius: BorderRadius.circular(8),
+                border: urls[i] == current
+                    ? Border.all(color: theme.colorScheme.primary, width: 3)
+                    : (urls[i] == mark ? Border.all(color: theme.colorScheme.outline, width: 2) : null),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  NetImage(urls[i], fit: BoxFit.contain),
+                  if (labels != null && labels[i].isNotEmpty)
+                    Positioned(
+                      left: 4,
+                      bottom: 4,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(4)),
+                        child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1), child: Text(labels[i], style: const TextStyle(color: Colors.white, fontSize: 11))),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text('选封面 · ${widget.vol.title}', maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -73,53 +142,47 @@ class _PickerPageState extends ConsumerState<_PickerPage> {
           ),
         ],
       ),
-      body: FutureBuilder<List<String>>(
-        future: _images,
-        builder: (context, snap) {
-          if (snap.hasError) return StatePanel(title: '插图加载失败', detail: '${snap.error}', error: snap.error, onRetry: () => setState(() => _images = _load()));
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final images = snap.data!;
-          if (images.isEmpty) return const StatePanel(title: '这一卷没有插图', detail: '目录里没有插图章节，只能用书的封面。');
-          return contentWidth(
-            CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                  sliver: SliverToBoxAdapter(
-                    child: Text('选一张图，再框出封面那一块', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-                  ),
-                ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  sliver: SliverLayoutBuilder(
-                    builder: (context, c) => SliverGrid.builder(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: (c.crossAxisExtent / 130).floor().clamp(3, 6),
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        childAspectRatio: kCoverAspect,
-                      ),
-                      itemCount: images.length,
-                      itemBuilder: (context, i) => InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: () => _pick(images[i]),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.surfaceContainer,
-                            borderRadius: BorderRadius.circular(8),
-                            border: images[i] == current ? Border.all(color: theme.colorScheme.primary, width: 3) : null,
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: NetImage(images[i], fit: BoxFit.contain),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+      body: contentWidth(
+        CustomScrollView(
+          slivers: [
+            // 插图：选一张再框出封面那一块
+            FutureBuilder<List<String>>(
+              future: _images,
+              builder: (context, snap) {
+                if (snap.hasError) return note('插图加载失败：${snap.error}', retry: () => setState(() => _images = _load()));
+                if (!snap.hasData) return const SliverToBoxAdapter(child: LinearProgressIndicator());
+                if (snap.data!.isEmpty) return const SliverToBoxAdapter();
+                return SliverMainAxisGroup(slivers: [head('插图'), grid(snap.data!)]);
+              },
             ),
-          );
-        },
+            // Bangumi：日文原版封面，按卷号对上这一卷的那张加了框
+            FutureBuilder<BgmSeries?>(
+              future: _bgm,
+              builder: (context, snap) {
+                if (snap.hasError) return SliverMainAxisGroup(slivers: [head('Bangumi'), note('连不上 Bangumi', retry: () => setState(() => _bgm = ref.read(bangumiProvider).series(widget.aid)))]);
+                if (snap.connectionState != ConnectionState.done) return SliverMainAxisGroup(slivers: [head('Bangumi'), const SliverToBoxAdapter(child: LinearProgressIndicator())]);
+                final s = snap.data;
+                if (s == null || s.vols.isEmpty) return SliverMainAxisGroup(slivers: [head('Bangumi'), note('没找到这本书')]);
+                final t = widget.vol.title;
+                final mark = matchVolumeCovers([t], s.vols)[t] ?? matchExtraCovers([t], s)[t];
+                final singles = s.extras.where((x) => x.vols.isEmpty).toList();
+                // 主系列、各个外传系列分开列，外传单本放在一起
+                return SliverMainAxisGroup(
+                  slivers: [
+                    head('Bangumi · ${s.name}'),
+                    grid([for (final v in s.vols) v.img], labels: [for (final (i, v) in s.vols.indexed) '${bgmVolumeNumber(v.name, i) ?? ''}'], mark: mark),
+                    for (final x in s.extras.where((x) => x.vols.isNotEmpty)) ...[
+                      head('Bangumi · ${x.cn.isNotEmpty ? x.cn : x.name}'),
+                      grid([for (final v in x.vols) v.img], labels: [for (var i = 1; i <= x.vols.length; i++) '$i'], mark: mark),
+                    ],
+                    if (singles.isNotEmpty) ...[head('Bangumi · 外传单本'), grid([for (final x in singles) x.img], mark: mark)],
+                  ],
+                );
+              },
+            ),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 24)),
+          ],
+        ),
       ),
     );
   }
@@ -143,6 +206,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
   }();
   Size? _laidOut; // 按哪个框的大小摆过初始位置
   bool _trimOn = AppPrefs.read(P.coverTrim, true);
+  bool _srOn = false; // 提升清晰度（Real-ESRGAN 放大），选了的封面地址带 #sr
   Rect? _inner; // 去掉白边后留下的那块（框里的坐标），没有白边或正在拖时为 null
   (CoverPixels, ui.Size, Size)? _geom; // 现在的图和框
   Timer? _settle;
@@ -219,7 +283,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
               const full = Rect.fromLTWH(0, 0, 1, 1);
               final px = _trimOn ? (await _image).$3 : null;
               final r = px?.trim(full) ?? full;
-              if (context.mounted) Navigator.pop(context, r == full ? widget.url : withCrop(widget.url, r));
+              if (context.mounted) Navigator.pop(context, withSr(r == full ? widget.url : withCrop(widget.url, r), _srOn));
             },
             child: const Text('用整张'),
           ),
@@ -233,7 +297,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
           final (bytes, img, px) = snap.data!;
           return LayoutBuilder(
             builder: (context, c) {
-              final w = math.min(c.maxWidth - 48, (c.maxHeight - 196) * kCoverAspect); // 下面留出去白边开关和按钮两行
+              final w = math.min(c.maxWidth - 48, (c.maxHeight - (ImageStore.srSupported ? 244 : 196)) * kCoverAspect); // 下面留出开关和按钮几行
               final frame = Size(w, w / kCoverAspect);
               final child = _fill(img, frame);
               _geom = (px, img, frame);
@@ -296,6 +360,17 @@ class _CropPageState extends ConsumerState<_CropPage> {
                       ],
                     ),
                   ),
+                  if (ImageStore.srSupported)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 24, 4),
+                      child: Row(
+                        children: [
+                          Switch(value: _srOn, onChanged: (v) => setState(() => _srOn = v)),
+                          const SizedBox(width: 8),
+                          const Expanded(child: Text('提升清晰度', style: TextStyle(color: Colors.white70))),
+                        ],
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                     child: Row(
@@ -307,7 +382,7 @@ class _CropPageState extends ConsumerState<_CropPage> {
                           style: FilledButton.styleFrom(minimumSize: const Size(88, 44)), // 主题默认按钮占满整行，这里要和文字并排
                           onPressed: () {
                             final r = _kept(px, img, frame);
-                            Navigator.pop(context, r.width > 0.995 && r.height > 0.995 ? widget.url : withCrop(widget.url, r));
+                            Navigator.pop(context, withSr(r.width > 0.995 && r.height > 0.995 ? widget.url : withCrop(widget.url, r), _srOn));
                           },
                           child: const Text('完成'),
                         ),
