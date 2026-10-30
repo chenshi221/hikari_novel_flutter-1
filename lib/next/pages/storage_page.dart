@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../cache.dart';
 import '../image_cache.dart';
 import '../router.dart';
+import '../unlock.dart';
 import '../stats.dart';
 import '../x_list.dart';
 
@@ -97,6 +98,7 @@ class _StoragePageState extends ConsumerState<StoragePage> {
                     if (!await _ask('删除这本书的缓存？', '再读时重新下载。')) return;
                     ref.read(downloadProvider.notifier).forget(aid); // 正在下载的先停掉
                     await ChapterCache.remove(aid);
+                    await UnlockStore.forget(aid); // 解锁过的书删了缓存就没法读了，清掉记录，详情页重新出现解锁入口
                     _refresh();
                   },
                 ),

@@ -7,6 +7,7 @@ import '../history.dart';
 import '../progress.dart';
 import '../library.dart';
 import '../router.dart';
+import '../unlock.dart';
 import '../widgets.dart';
 import 'updates_page.dart';
 
@@ -117,6 +118,7 @@ class CachePage extends ConsumerWidget {
                                     // 先停掉这本书的下载，再删；不重建整个下载管理器，别的书的下载不受影响
                                     ref.read(downloadProvider.notifier).forget(b.key);
                                     await ChapterCache.remove(b.key);
+                                    await UnlockStore.forget(b.key); // 解锁过的书删了缓存就没法读了，清掉记录，详情页重新出现解锁入口
                                   }
                                 },
                                 itemBuilder: (_) => const [PopupMenuItem(value: 'manage', child: Text('管理章节')), PopupMenuItem(value: 'delete', child: Text('删除缓存'))],

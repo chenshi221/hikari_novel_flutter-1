@@ -25,6 +25,7 @@ import '../settings.dart';
 import '../swipe.dart';
 import '../theme.dart';
 import '../theme_squire.dart';
+import '../unlock.dart';
 import '../widgets.dart';
 import '../x_list.dart';
 
@@ -35,6 +36,7 @@ enum SettingsSection {
   shelf('书架', Icons.auto_stories_outlined, '封面角标、列数、分类管理'),
   update('更新', Icons.update_outlined, '检查频率、网络条件、检查范围'),
   data('数据与存储', Icons.inventory_2_outlined, '缓存、备份与恢复、同步'),
+  unlock('书籍解锁', Icons.key_outlined, '受限、下架小说的阅读与 TXT 下载'),
   security('安全与隐私', Icons.lock_outline, '生物识别锁、防截屏、无痕模式'),
   network('网络', Icons.language, '站点节点、代理、系统网络栈'),
   about('关于', Icons.info_outline, '版本信息');
@@ -47,10 +49,11 @@ enum SettingsSection {
 }
 
 /// 设置首页的分组：组和组之间一道细线
-const _homeGroups = [
+/// 设置首页的分组。「书籍解锁」是隐藏分组：关于页连点版本号 7 次后才会出现。
+List<List<SettingsSection>> _homeGroups(bool unlockEntry) => [
   [SettingsSection.appearance, SettingsSection.reading, SettingsSection.shelf],
   [SettingsSection.update, SettingsSection.data],
-  [SettingsSection.security, SettingsSection.network, SettingsSection.about],
+  [if (unlockEntry) SettingsSection.unlock, SettingsSection.security, SettingsSection.network, SettingsSection.about],
 ];
 
 /// 能搜到的设置项：(标题, 所在分组, 额外关键词)
@@ -91,6 +94,10 @@ const _items = <(String, SettingsSection, String)>[
   ('章节缓存', SettingsSection.data, '正文 清除 存储 自动清理'),
   ('备份', SettingsSection.data, '导出 导入 恢复'),
   ('同步', SettingsSection.data, '坚果云 webdav 多设备'),
+  ('书籍解锁', SettingsSection.unlock, '受限 下架 版权 解锁 阅读'),
+  ('App 接口解锁', SettingsSection.unlock, '接口 API 中继 正文 目录'),
+  ('TXT 下载编码', SettingsSection.unlock, '下载 TXT gbk utf8 big5 简繁'),
+  ('TXT 下载节点', SettingsSection.unlock, '下载 节点 备用'),
   ('生物识别锁', SettingsSection.security, '指纹 面容 密码 锁定'),
   ('防截屏', SettingsSection.security, '录屏 最近任务 隐私'),
   ('无痕模式', SettingsSection.security, '不记录 历史 进度'),
@@ -112,9 +119,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(appPrefsProvider); // 连点版本号显示「书籍解锁」后，首页分组和搜索结果要跟着变
     final scheme = Theme.of(context).colorScheme;
+    final unlockEntry = AppPrefs.unlockEntry;
     final q = _q.trim().toLowerCase();
-    final hits = q.isEmpty ? const <(String, SettingsSection, String)>[] : _items.where((e) => '${e.$1} ${e.$3} ${e.$2.title}'.toLowerCase().contains(q)).toList();
+    final hits = q.isEmpty
+        ? const <(String, SettingsSection, String)>[]
+        : _items.where((e) => (unlockEntry || e.$2 != SettingsSection.unlock) && '${e.$1} ${e.$3} ${e.$2.title}'.toLowerCase().contains(q)).toList();
     void open(SettingsSection s) => context.push(Routes.settingsSection(s.name));
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
@@ -143,7 +154,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               if (hits.isEmpty) const XNote('没有匹配的设置'),
               for (final (title, section, _) in hits) XEntry(icon: section.icon, title: title, subtitle: '在「${section.title}」里', onTap: () => open(section)),
             ] else
-              for (final (i, group) in _homeGroups.indexed) ...[
+              for (final (i, group) in _homeGroups(unlockEntry).indexed) ...[
                 if (i > 0) const XDivider(),
                 for (final s in group) XEntry(icon: s.icon, title: s.title, subtitle: s.summary, onTap: () => open(s)),
               ],
@@ -167,12 +178,20 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
   @override
   Widget build(BuildContext context) {
     ref.watch(appPrefsProvider);
+    // 隐藏入口：直接输路由也进不来，提示去哪里打开
+    if (widget.section == SettingsSection.unlock && !AppPrefs.unlockEntry) {
+      return Scaffold(
+        appBar: AppBar(title: Text(widget.section.title)),
+        body: contentWidth(ListView(children: const [XNote('书籍解锁入口是隐藏的。在「设置 → 关于」里连点版本号 7 次可以显示；默认关闭。')])),
+      );
+    }
     final children = switch (widget.section) {
       SettingsSection.appearance => _appearance(),
       SettingsSection.reading => _reading(),
       SettingsSection.shelf => _shelf(),
       SettingsSection.update => _update(),
       SettingsSection.data => _data(),
+      SettingsSection.unlock => _unlock(),
       SettingsSection.security => _security(),
       SettingsSection.network => _network(),
       SettingsSection.about => _about(),
@@ -461,6 +480,80 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
     ];
   }
 
+  // ---- 书籍解锁 ----
+
+  /// 用「文学少女」（aid=1）探测文库 App 接口还能不能取到目录。
+  Future<void> _testAppApi() async {
+    _snack('正在请求文库 App 接口…');
+    try {
+      final volumes = await ref.read(appApiProvider).catalogue('1').timeout(const Duration(seconds: 25));
+      if (mounted) _snack(volumes.isEmpty ? '接口有响应，但没有解析出目录' : 'App 接口可用：解析到 ${volumes.length} 卷');
+    } catch (e) {
+      if (mounted) _snack('App 接口不可用：$e');
+    }
+  }
+
+  List<Widget> _unlock() {
+    final on = _prefs.get(P.unlock, false);
+    return [
+      const XNote('这个入口是隐藏的（类似安卓开发者模式）：在「设置 → 关于」里连点版本号 7 次才会出现。功能默认关闭。'),
+      const XDivider(),
+      XSwitch(
+        title: '启用书籍解锁',
+        subtitle: '被版权限制 / 下架的小说也能读、能下载',
+        value: on,
+        onChanged: (v) => _prefs.set(P.unlock, v),
+        help: '开启后：网页只返回 null 的章节自动改走文库 App 接口取正文；目录被网站屏蔽的书，详情页会出现「解锁本书」，可以用 App 接口或 TXT 全本导入阅读。所有处理都在本机进行。',
+      ),
+      if (on) ...[
+        const XDivider(),
+        const XGroupTitle('阅读通道'),
+        XSwitch(
+          title: '优先使用文库 App 接口',
+          subtitle: '接口不可用时自动改用 TXT',
+          value: _prefs.get(P.unlockApi, true),
+          onChanged: (v) => _prefs.set(P.unlockApi, v),
+          help: '正文和目录来自文库安卓客户端使用的接口（经社区中继 wenku8-relay.mewx.org）。这个接口 2026 年起经常失效；不可用时会自动下载 TXT 全本、解析成章节写进离线缓存，阅读和缓存都照常。',
+        ),
+        XTile(title: '测试 App 接口', subtitle: '用《文学少女》探测目录是否还能取到', onTap: _testAppApi),
+        const XDivider(),
+        const XGroupTitle('TXT 下载'),
+        XChoice<String>(
+          title: '编码',
+          value: _prefs.get(P.unlockType, 'txt'),
+          options: const {'txt': '简体 (GBK)', 'utf8': '简体 (UTF-8)', 'big5': '繁体 (BIG5)'},
+          onChanged: (v) => _prefs.set(P.unlockType, v),
+        ),
+        XChoice<int>(title: '下载节点', value: _prefs.get(P.unlockNode, 1), options: const {1: '节点 1', 2: '节点 2（备用）'}, onChanged: (v) => _prefs.set(P.unlockNode, v)),
+        const XNote('TXT 来自 dl.wenku8.com 的全本下载接口。受限、下架的书也能下；导入阅读时会按 TXT 里的「第X卷 章节名」自动分卷分章。'),
+        const XDivider(),
+        const XGroupTitle('说明'),
+        XTile(
+          title: '清除已解锁记录',
+          subtitle: '只删解锁时存下的目录，已缓存的正文保留',
+          onTap: () => _confirm('清除所有解锁记录？', '解锁过的书会恢复成受限状态；已经写进离线缓存的正文仍保留，但目录要重新解锁才会出现。', '清除', () async {
+            for (final aid in UnlockStore.aids().toList()) {
+              await UnlockStore.forget(aid);
+            }
+          }),
+        ),
+        XTile(
+          title: '隐藏这个入口',
+          subtitle: '从设置和详情页移除，并关闭解锁',
+          onTap: () => _confirm('隐藏书籍解锁入口？', '设置里的这一组、详情页的解锁和下载入口都会消失，解锁功能同时关闭。以后在「关于」里连点版本号 7 次可以重新显示。', '隐藏', () async {
+            _prefs.set(P.unlock, false);
+            _prefs.set(P.unlockShown, false);
+            if (mounted) Navigator.of(context).maybePop();
+          }),
+        ),
+        const XNote('解锁只在本机处理，不上传任何内容，也不修改网站数据。仅供个人自用。'),
+        const XNote('如果「测试 App 接口」提示不可用：在受限书详情页点「解锁本书」走 TXT 通道，或用详情页右上角的「下载 TXT」直接导出全本。'),
+        const XNote('注意：如果网站仍然列出目录、只有单章正文被限制，这类书只能依赖 App 接口取正文；接口失效时请用「下载 TXT」导出后用其他阅读器看。'),
+      ] else
+        const XNote('开启后，受限/下架书的详情页会出现「解锁本书」和 TXT 下载入口。'),
+    ];
+  }
+
   // ---- 安全与隐私 ----
 
   List<Widget> _security() {
@@ -523,10 +616,34 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
 
   // ---- 关于 ----
 
+  int _versionTaps = 0;
+  DateTime _lastVersionTap = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 像安卓开发者模式：在「关于」里连点版本号 7 次，显示隐藏的「书籍解锁」入口（功能本身仍然默认关闭）。
+  void _tapVersion() {
+    if (AppPrefs.unlockEntry) return;
+    final now = DateTime.now();
+    if (now.difference(_lastVersionTap) > const Duration(seconds: 2)) _versionTaps = 0;
+    _lastVersionTap = now;
+    _versionTaps++;
+    final left = 7 - _versionTaps;
+    if (left > 0) {
+      if (left <= 3) _snack('再点 $left 次显示「书籍解锁」');
+      return;
+    }
+    _versionTaps = 0;
+    _prefs.set(P.unlockShown, true);
+    _snack('已显示「书籍解锁」入口：设置 → 书籍解锁（默认关闭，需要手动开启）');
+  }
+
   List<Widget> _about() => [
     FutureBuilder(
       future: PackageInfo.fromPlatform(),
-      builder: (context, snap) => XTile(title: 'Hikari Novel', subtitle: '轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}'),
+      builder: (context, snap) => XTile(
+        title: 'Hikari Novel',
+        subtitle: '轻小说文库第三方客户端 · MIT${snap.hasData ? ' · v${snap.data!.version}+${snap.data!.buildNumber}' : ''}',
+        onTap: AppPrefs.unlockEntry ? null : _tapVersion,
+      ),
     ),
   ];
 }
