@@ -151,7 +151,6 @@ class ChapterCache {
   static Future<int> clearRead() async {
     var n = 0;
     for (final aid in cachedBooks().toList()) {
-      if (UnlockStore.source(aid) == 'txt') continue; // TXT 解锁的正文删了补不回来
       final read = ReadState.read(aid);
       final cids = [for (final k in _keys(aid)) k.substring(aid.length + 1)].where(read.contains).toList();
       if (cids.isEmpty) continue;
@@ -282,7 +281,12 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
       for (final c in chapters) {
         if (_cancelled.contains(aid)) break;
         if (ChapterCache.has(aid, c.cid)) continue;
-        final content = await api.chapter(aid, c.cid);
+        final Content content;
+        try {
+          content = await api.chapter(aid, c.cid);
+        } on ChapterLockedException {
+          continue; // 受限书 TXT 里没有的章（插图），跳过
+        }
         // 请求期间可能已经暂停或删除了缓存：此时不能再写回去
         if (_cancelled.contains(aid)) break;
         await ChapterCache.put(aid, c.cid, content);

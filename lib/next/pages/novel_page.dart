@@ -20,9 +20,7 @@ import '../read_state.dart';
 import '../router.dart';
 import '../swipe.dart';
 import '../session.dart';
-import '../unlock.dart';
 import '../widgets.dart';
-import 'txt_download_sheet.dart';
 
 /// 详情 + 目录：存过的先给（不等网络，挂 VPN 时也秒开），再联网取最新的；联网失败而本地有就不报错。
 final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref, aid) async* {
@@ -36,8 +34,7 @@ final novelProvider = StreamProvider.autoDispose.family<NovelPage, String>((ref,
     final fresh = await api.novel(aid);
     final d = fresh.detail;
     ref.read(libraryProvider.notifier).noteDetail(aid, title: d.title, img: d.imgUrl, status: d.status);
-    if (fresh.locked && saved != null) return; // 本地有目录就别用「受限 + 空目录」盖掉
-    if (fresh.catalogue.isNotEmpty) await Volumes.saveCatalogue(aid, fresh.catalogue);
+    await Volumes.saveCatalogue(aid, fresh.catalogue);
     // 读过的书补记书名（离线时读的统计里没有书名，会显示成"书号"）
     if (ReadingStats.perBook().containsKey(aid)) await ReadingStats.setMeta(aid, d.title, d.author, d.imgUrl);
     yield fresh;
@@ -54,35 +51,8 @@ class NovelPageView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final novel = ref.watch(novelProvider(aid));
-    final title = novel.value?.detail.title ?? '';
-    final unlockEntry = AppPrefs.unlockEntry; // 隐藏入口：连点版本号 7 次后才显示
-    final unlocked = unlockEntry && UnlockStore.has(aid);
     return Scaffold(
-      appBar: AppBar(
-        actions: [
-          if (unlockEntry)
-            PopupMenuButton<String>(
-            tooltip: '更多',
-            onSelected: (v) async {
-              switch (v) {
-                case 'txt':
-                  if (title.isEmpty) return;
-                  await showTxtDownloadSheet(context, ref, aid: aid, title: title);
-                case 'unlock':
-                  await context.push(Routes.settingsSection('unlock'));
-                case 'forget':
-                  await ref.read(unlockServiceProvider).forget(aid);
-                  ref.invalidate(novelProvider(aid));
-              }
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(value: 'txt', enabled: title.isNotEmpty, child: const Text('下载 TXT')),
-              const PopupMenuItem(value: 'unlock', child: Text('书籍解锁设置')),
-              if (unlocked) const PopupMenuItem(value: 'forget', child: Text('清除本书解锁记录')),
-            ],
-          ),
-        ],
-      ),
+      appBar: AppBar(),
       body: novel.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => StatePanel(title: '加载失败', detail: e.toString(), error: e, onRetry: () => ref.invalidate(novelProvider(aid))),
@@ -155,18 +125,8 @@ class _BodyState extends ConsumerState<_Body> {
     return chapters.where((c) => chapterTri(_chl.unread, () => !read.contains(c.cid)) && chapterTri(_chl.bookmarked, () => marked.contains(c.cid)) && chapterTri(_chl.cached, () => ChapterCache.has(aid, c.cid)));
   }
 
-  /// 章节在整本书里按网站顺序数是第几章（从 1 开始），"标题前加序号"用。
-  /// 解锁后目录会从空变成有：目录换了才重算。
-  List<CatVolume>? _indexFor;
-  Map<String, int> _indexMap = const {};
-
-  Map<String, int> get _indexOf {
-    if (!identical(_indexFor, data.catalogue)) {
-      _indexFor = data.catalogue;
-      _indexMap = {for (final (i, c) in data.catalogue.expand((v) => v.chapters).indexed) c.cid: i + 1};
-    }
-    return _indexMap;
-  }
+  /// 章节在整本书里按网站顺序数是第几章（从 1 开始），"标题前加序号"用
+  late final Map<String, int> _indexOf = {for (final (i, c) in data.catalogue.expand((v) => v.chapters).indexed) c.cid: i + 1};
 
   String? _firstCid() => data.catalogue.expand((v) => v.chapters).firstOrNull?.cid;
 
@@ -277,13 +237,9 @@ class _BodyState extends ConsumerState<_Body> {
             ),
           ],
         ),
-        if (data.locked) ...[
-          _UnlockCard(aid: aid, title: d.title),
-          const SizedBox(height: 8),
-        ],
-        if (!data.locked) _DownloadRow(aid: aid, title: d.title, data: data),
+        _DownloadRow(aid: aid, title: d.title, data: data),
         const SizedBox(height: 8),
-        if (!data.locked) Card(
+        Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -336,21 +292,19 @@ class _BodyState extends ConsumerState<_Body> {
             );
           },
         ),
-        if (!data.locked) ...[
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(child: Text('目录', style: theme.textTheme.titleMedium)),
-              TextButton.icon(
-                onPressed: () => showChapterListSheet(context, aid, (o) => setState(() => _chl = o)),
-                icon: Icon(Icons.filter_list, size: 18, color: _chl.filtering ? theme.colorScheme.primary : null),
-                label: Text('${_chl.filtering ? '已筛选 · ' : ''}${_chl.reverse ? '倒序' : '正序'}'),
-              ),
-            ],
-          ),
-          Text('长按章节可多选：批量标记已读、缓存', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          const SizedBox(height: 4),
-        ],
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(child: Text('目录', style: theme.textTheme.titleMedium)),
+            TextButton.icon(
+              onPressed: () => showChapterListSheet(context, aid, (o) => setState(() => _chl = o)),
+              icon: Icon(Icons.filter_list, size: 18, color: _chl.filtering ? theme.colorScheme.primary : null),
+              label: Text('${_chl.filtering ? '已筛选 · ' : ''}${_chl.reverse ? '倒序' : '正序'}'),
+            ),
+          ],
+        ),
+        Text('长按章节可多选：批量标记已读、缓存', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 4),
         for (final CatVolume v in _chl.reverse ? data.catalogue.reversed : data.catalogue)
           if (!_chl.filtering || _visible(v.chapters).isNotEmpty)
           ExpansionTile(
@@ -504,101 +458,6 @@ class _DownloadRow extends ConsumerWidget {
           TextButton(onPressed: () => context.push(Routes.cacheBook(aid)), child: const Text('管理')),
         ],
       ],
-    );
-  }
-}
-
-/// 受限/下架书的「书籍解锁」入口：先试文库 App 接口，失败再下载 TXT 全本、解析成章节写进离线缓存。
-class _UnlockCard extends ConsumerStatefulWidget {
-  const _UnlockCard({required this.aid, required this.title});
-
-  final String aid;
-  final String title;
-
-  @override
-  ConsumerState<_UnlockCard> createState() => _UnlockCardState();
-}
-
-class _UnlockCardState extends ConsumerState<_UnlockCard> {
-  bool _busy = false;
-  String? _error;
-
-  Future<void> _unlock() async {
-    final service = ref.read(unlockServiceProvider);
-    if (!service.enabled) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('书籍解锁没有开启：设置 → 书籍解锁')));
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final report = await service.unlock(widget.aid, widget.title);
-      if (!mounted) return;
-      setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已解锁（${report.source == 'api' ? 'App 接口' : 'TXT 全本'}），共 ${report.chapters} 章')));
-      ref.invalidate(novelProvider(widget.aid));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _error = '$e';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final muted = theme.textTheme.bodySmall?.copyWith(height: 1.5, color: theme.colorScheme.onSurfaceVariant);
-    return Card(
-      color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.key_outlined, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Expanded(child: Text('书籍解锁', style: theme.textTheme.titleMedium)),
-                if (_busy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '这本书被文库限制（版权原因或已下架），网站不再提供目录和正文。解锁会先试文库 App 接口；接口不可用时下载 TXT 全本，按「第X卷」自动分卷分章写进离线缓存，之后可以正常阅读、缓存和统计。',
-              style: muted,
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text('解锁失败：$_error', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error)),
-            ],
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _busy ? null : _unlock,
-                    icon: const Icon(Icons.key_outlined, size: 18),
-                    label: Text(_busy ? '解锁中…' : '解锁本书'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : () => showTxtDownloadSheet(context, ref, aid: widget.aid, title: widget.title),
-                    icon: const Icon(Icons.file_download_outlined, size: 18),
-                    label: const Text('下载 TXT'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

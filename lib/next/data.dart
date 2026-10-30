@@ -30,13 +30,10 @@ class PageResult {
 }
 
 class NovelPage {
-  const NovelPage(this.detail, this.catalogue, {this.locked = false});
+  const NovelPage(this.detail, this.catalogue);
 
   final Wenku8NovelDetail detail;
   final List<CatVolume> catalogue;
-
-  /// 网站不提供这本书的目录/正文（版权受限或下架），界面据此显示「书籍解锁」入口。
-  final bool locked;
 }
 
 /// 所有网络请求的入口：每个方法 = 请求页面 + 交给解析层。页面结构不对（多半是没登录）时抛出
@@ -48,10 +45,8 @@ class Api {
   final Wenku8Urls _urls;
   final String _base;
 
-  /// 书籍解锁：网页拒绝提供目录/正文（受限、下架）时，改走文库 App 接口或本地 TXT。
+  /// 受限书的正文改从文库 App 接口或全本 TXT 取
   final UnlockService? unlock;
-
-  bool get _unlockEnabled => unlock?.enabled ?? false;
 
   /// 当前用户 ID（游客为 guest）：账号私有页面（书架）的离线备份按它分开存。
   final String _scope;
@@ -138,102 +133,30 @@ class Api {
   Future<List<RecommendBlock>> recommend() => _cached(_urls.home(), Wenku8Parser.recommend);
 
   /// 存过的详情和目录（不联网），没存过或解析失败为 null。详情页先显示它，再联网刷新。
-  /// 解锁过的书：网站目录一直取不到，用解锁时存下来的目录顶上，打开详情页仍然秒开。
   Future<NovelPage?> saved(String aid) async {
     final detail = await PageStore.get(_urls.novelDetail(aid));
-    if (detail == null) return null;
     final cat = await PageStore.get(_urls.catalogue(aid));
-    if (cat != null) {
-      try {
-        final parsed = Wenku8Parser.catalogue(cat);
-        if (parsed.isNotEmpty) return NovelPage(Wenku8Parser.novelDetail(detail), parsed);
-      } catch (_) {}
+    if (detail == null || cat == null) return null;
+    try {
+      return NovelPage(Wenku8Parser.novelDetail(detail), Wenku8Parser.catalogue(cat));
+    } catch (_) {
+      return null;
     }
-    if (_unlockEnabled) {
-      final unlocked = await unlock!.storedCatalogue(aid);
-      if (unlocked != null && unlocked.isNotEmpty) {
-        try {
-          return NovelPage(Wenku8Parser.novelDetail(detail), unlocked);
-        } catch (_) {}
-      }
-    }
-    return null;
   }
 
   bool hasDetail(String aid) => PageStore.has(_urls.novelDetail(aid));
 
-  /// 解锁只在网站明确不给时才走：页面解析不出、目录或正文为空。断网、HTTP 错误照常报错；
-  /// 游客打不开多半是没登录，也不算，免得登录提示被「解锁本书」盖掉。
-  bool get _canUnlock => _unlockEnabled && _scope != 'guest';
+  Future<Wenku8NovelDetail> detail(String aid) => _cached(_urls.novelDetail(aid), Wenku8Parser.novelDetail);
 
-  bool _refused(Object e) => _canUnlock && e is Wenku8UnexpectedPageException;
-
-  Future<Wenku8NovelDetail> detail(String aid) async {
-    try {
-      return await _cached(_urls.novelDetail(aid), Wenku8Parser.novelDetail);
-    } catch (e) {
-      // 网页详情页异常（改版、拦截）时用文库 App 接口的元信息兜底
-      if (_refused(e)) {
-        final meta = await unlock!.apiDetail(aid);
-        if (meta != null) return meta;
-      }
-      rethrow;
-    }
-  }
-
-  Future<NovelPage> novel(String aid) async {
-    final d = await detail(aid);
-    try {
-      return NovelPage(d, await catalogue(aid));
-    } catch (e) {
-      // 目录被网站屏蔽（例如版权下架）：先给一个「待解锁」的详情页，正文由解锁功能补
-      if (_refused(e)) return NovelPage(d, const [], locked: true);
-      rethrow;
-    }
-  }
+  Future<NovelPage> novel(String aid) async => NovelPage(await detail(aid), await catalogue(aid));
 
   /// 只取目录（检查更新用，比 [novel] 少一次请求）。
-  Future<List<CatVolume>> catalogue(String aid) async {
-    Object error;
-    try {
-      final list = await _cached(_urls.catalogue(aid), Wenku8Parser.catalogue, referer: '$_base/book/$aid.htm');
-      if (list.isNotEmpty || !_canUnlock) return list;
-      error = const Wenku8UnexpectedPageException('目录为空');
-    } catch (e) {
-      if (!_refused(e)) rethrow;
-      error = e;
-    }
-    // TXT 解锁的书 cid 是本地编的（u1、u2…），只能用存下的目录，别被 App 接口的真实 cid 换掉
-    final stored = await unlock!.storedCatalogue(aid);
-    if (stored != null && UnlockStore.source(aid) == 'txt') return stored;
-    final api = await unlock!.apiCatalogue(aid);
-    if (api != null && api.isNotEmpty) return api;
-    if (stored != null && stored.isNotEmpty) return stored;
-    throw error;
-  }
+  Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue, referer: '$_base/book/$aid.htm');
 
-  /// 正文。受限章节网页只返回 `null`，解锁开启时改用 App 接口取回全文。
   Future<Content> chapter(String aid, String cid) async {
-    Object error;
-    try {
-      final content = Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
-      if (!_canUnlock || !_isLockedContent(content)) return content;
-      error = const Wenku8UnexpectedPageException('本章受版权限制，网站不提供正文');
-    } catch (e) {
-      if (!_refused(e)) rethrow;
-      error = e;
-    }
-    final content = await unlock!.apiChapter(aid, cid);
-    if (content != null) return content;
-    throw error;
-  }
-
-  /// 受限章节网页只用 `null` 占位（正文页可能已改成错误页，那种情况解析层会直接抛错）。
-  /// 只认整整一个 `null`，避免把正文里恰好出现 "null"/"不提供" 的正常章节误判成锁定。
-  static bool _isLockedContent(Content c) {
-    final text = c.text.trim();
-    if (text.isEmpty && c.images.isEmpty) return true;
-    return text.toLowerCase() == 'null';
+    final content = Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
+    if (!isLockedContent(content) || !(unlock?.enabled ?? false)) return content;
+    return unlock!.chapter(aid, cid, () => catalogue(aid));
   }
 
   Future<Bookshelf> bookshelf(int classId, {bool fresh = false}) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true, fresh: fresh);

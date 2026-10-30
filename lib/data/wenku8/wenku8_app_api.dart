@@ -6,7 +6,6 @@ import '../../common/image_url_helper.dart';
 import '../../models/cat_chapter.dart';
 import '../../models/cat_volume.dart';
 import '../../models/content.dart';
-import 'wenku8_parser.dart';
 
 /// 调用文库 Android App 接口失败：所有端点都不可用、返回的是 HTML 错误页、目录/正文为空等。
 class Wenku8AppApiException implements Exception {
@@ -20,9 +19,9 @@ class Wenku8AppApiException implements Exception {
 
 /// 文库 Android App 接口客户端。
 ///
-/// 网站对版权受限、已下架的小说不再提供目录和正文页面（详情页只剩简介），但官方 App 接口
+/// 网站对版权受限的小说不再提供正文（只剩一句「因版权问题…」），但官方 App 接口
 /// 仍然会返回这些内容。这里按 Greasyfork「轻小说文库+」脚本逆向出的协议直接请求：
-/// `POST android.php`，请求体见 [requestBody]，目录/正文/书信息通过 base64 编码的 action 区分。
+/// `POST android.php`，请求体见 [requestBody]，目录/正文通过 base64 编码的 action 区分。
 ///
 /// 接口本身随时可能失效（返回 Welcome / Bad request. / Cloudflare 页面），因此按构造参数 endpoints
 /// 的顺序逐个回退；全部端点失败时抛 [Wenku8AppApiException]，由界面按「接口不可用」处理。
@@ -51,7 +50,6 @@ class Wenku8AppApi {
   static final RegExp _separatorPattern = RegExp(r'^[\s★☆◆◇■□▲△▼▽○●◎※＊*\-—–_=＝~～·・]+$');
   static final RegExp _volumePattern = RegExp(r'<volume\b([^>]*)>(.*?)</volume>', caseSensitive: false, dotAll: true);
   static final RegExp _chapterPattern = RegExp(r'<chapter\b([^>]*)>(.*?)</chapter>', caseSensitive: false, dotAll: true);
-  static final RegExp _dataPattern = RegExp(r'<data\b([^>]*?)(?:/>|>(.*?)</data>)', caseSensitive: false, dotAll: true);
   static final RegExp _entityPattern = RegExp(r'&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);');
 
   final Dio _dio;
@@ -110,48 +108,6 @@ class Wenku8AppApi {
     final volumes = _parseCatalogue(xml);
     if (volumes.isEmpty) throw Wenku8AppApiException('目录接口没有返回任何章节（aid=$aid）');
     return volumes;
-  }
-
-  /// 取书的元信息，用于补齐下架小说的详情页。
-  ///
-  /// 元信息和简介是两个 action：元信息失败（或没有标题）时返回 null，表示接口这条路走不通；
-  /// 简介失败只影响 [Wenku8NovelDetail.introduce]，留空字符串。
-  /// 热度、标签这类只有网页版才有的字段按接口能力置空。
-  Future<Wenku8NovelDetail?> meta(String aid) async {
-    final String xml;
-    try {
-      xml = await _request(
-        'action=book&do=meta&aid=$aid&t=0',
-        accept: (value) => value.toLowerCase().contains('<metadata') || value.toLowerCase().contains('<data'),
-      );
-    } catch (_) {
-      return null;
-    }
-
-    final data = _parseMetaXml(xml);
-    final title = data['Title']?.trim() ?? '';
-    if (title.isEmpty) return null;
-
-    var introduce = '';
-    try {
-      final intro = await _request('action=book&do=intro&aid=$aid&t=0', accept: (value) => value.trim().isNotEmpty);
-      introduce = intro.replaceAll(RegExp(r'\r\n|\r'), '\n').trim();
-    } catch (_) {
-      // 简介拿不到不影响目录和正文，留空即可
-    }
-
-    return Wenku8NovelDetail(
-      title: title,
-      author: data['Author']?.trim() ?? '',
-      status: data['BookStatus']?.trim() ?? '',
-      lastUpdate: _nullIfEmpty(data['LastUpdate']),
-      imgUrl: _coverUrl(aid),
-      introduce: introduce,
-      tags: const [],
-      heat: null,
-      trending: null,
-      isAnimated: false,
-    );
   }
 
   /// 按构造参数 endpoints 的顺序请求，返回第一个通过 [accept] 校验的响应；全部失败时汇总每个端点的原因后抛错。
@@ -255,21 +211,6 @@ class Wenku8AppApi {
     return chapters;
   }
 
-  /// 解析 `<metadata><data name="..." value="..."/>…</metadata>`，name → value。
-  static Map<String, String> _parseMetaXml(String xml) {
-    final result = <String, String>{};
-    for (final data in _dataPattern.allMatches(xml)) {
-      final attributes = data.group(1) ?? '';
-      final name = _attribute(attributes, 'name');
-      if (name.isEmpty) continue;
-      final fromAttribute = _attribute(attributes, 'value');
-      final fromText = data.group(2) == null ? '' : _xmlText(data.group(2)!);
-      final value = fromAttribute.isNotEmpty ? fromAttribute : fromText;
-      if (!result.containsKey(name) || result[name]!.isEmpty) result[name] = value;
-    }
-    return result;
-  }
-
   /// 读标签属性，值里的 XML 实体也一并解开（例如作者名里的 `&amp;`）。
   static String _attribute(String source, String name) {
     final pattern = RegExp('(?:^|\\s)${RegExp.escape(name)}\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\')', caseSensitive: false);
@@ -299,17 +240,6 @@ class Wenku8AppApi {
         _ => match.group(0)!,
       };
     });
-  }
-
-  /// App 接口的封面地址：`https://img.wenku8.com/image/<aid~/1000>/<aid>/<aid>s.jpg`。
-  static String _coverUrl(String aid) {
-    final id = int.tryParse(aid) ?? 0;
-    return 'https://img.wenku8.com/image/${id ~/ 1000}/$id/${id}s.jpg';
-  }
-
-  static String? _nullIfEmpty(String? value) {
-    final trimmed = value?.trim() ?? '';
-    return trimmed.isEmpty ? null : trimmed;
   }
 
   static String _describeDioException(DioException error) {

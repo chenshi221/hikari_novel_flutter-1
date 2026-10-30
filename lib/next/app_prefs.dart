@@ -75,12 +75,10 @@ class P {
   // 数据
   static const autoClear = 'data.autoClear'; // bool 每次打开 App 自动清理读过时缓存的章节
 
-  // 书籍解锁（被限制 / 下架的小说）
+  // 书籍解锁（受限书的正文）
   static const unlockShown = 'unlock.shown'; // bool 入口是否已显示（关于页连点版本 7 次，类似安卓开发者模式）
   static const unlock = 'unlock.enabled'; // bool 书籍解锁总开关
-  static const unlockApi = 'unlock.api'; // bool 先试文库 App 接口（目录、正文）
-  static const unlockType = 'unlock.type'; // String TXT 编码：txt = 简体 GBK，utf8 = 简体 UTF-8，big5 = 繁体
-  static const unlockNode = 'unlock.node'; // int TXT 全本下载节点 1 / 2
+  static const unlockApi = 'unlock.api'; // bool 先试文库 App 接口（带插图），不行再用全本 TXT
 
   // 安全
   static const lock = 'sec.lock'; // bool 生物识别锁

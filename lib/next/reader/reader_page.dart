@@ -35,6 +35,7 @@ import '../stats.dart';
 import '../volumes.dart';
 import '../theme_doodle.dart';
 import '../theme_squire.dart';
+import '../unlock.dart';
 import '../widgets.dart';
 import '../x_list.dart';
 import 'paginator.dart';
@@ -42,8 +43,14 @@ import 'reader_body.dart';
 import 'tts_notice.dart';
 import 'volume_done.dart';
 
-/// 每个非空行当一段：去掉网页里零散的空白，统一首行缩进两个全角空格。
-String formatChapter(String raw) => raw.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).map((l) => '　　$l').join('\n');
+/// 每个非空行当一段：去掉网页里零散的空白，统一首行缩进两个全角空格；全角英文、数字转半角。
+String formatChapter(String raw) => halfWidth(raw).split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).map((l) => '　　$l').join('\n');
+
+/// 「Ｄｉｖｅ　Ｍａｓｓｉｖｅｌｙ」这种全角英文每个字母占一个汉字宽，排出来字距很怪：字母、数字转半角，
+/// 英文之间的全角空格、连字符也换成半角。一个字换一个字，阅读进度、书签的位置不变。
+String halfWidth(String s) => s
+    .replaceAllMapped(RegExp('[０-９Ａ-Ｚａ-ｚ]'), (m) => String.fromCharCode(m[0]!.codeUnitAt(0) - 0xFEE0))
+    .replaceAllMapped(RegExp(r'(?<=[0-9A-Za-z])[　－](?=[0-9A-Za-z])'), (m) => m[0] == '　' ? ' ' : '-');
 
 /// 章节：先查离线缓存，再联网；套用替换规则、统一缩进后算出高亮位置。
 /// 读过的章节在内存里留 3 分钟（预加载的下一章、来回翻章都不用重新取），之后释放。
@@ -52,8 +59,15 @@ final chapterProvider = FutureProvider.autoDispose.family<Chapter, (String, Stri
   final timer = Timer(const Duration(minutes: 3), link.close);
   ref.onDispose(timer.cancel);
   var raw = await ChapterCache.get(key.$1, key.$2);
+  if (raw != null && isLockedContent(raw) && ref.read(unlockServiceProvider).enabled) raw = null; // 以前存下的「因版权问题…」，重新取
   if (raw == null) {
-    raw = await ref.read(apiProvider).chapter(key.$1, key.$2);
+    try {
+      raw = await ref.read(apiProvider).chapter(key.$1, key.$2);
+    } on ChapterLockedException catch (e) {
+      // 受限书里取不到的章（多半是插图）：给一句说明照常往后翻；不存缓存，下次还会再试
+      final text = formatChapter(e.message);
+      return Chapter(text: text, images: const [], marks: ReplaceRules.marks(text, null, key.$1));
+    }
     // 读过的章节顺手存下来，断网也能再看；写失败不影响阅读
     try {
       await ChapterCache.put(key.$1, key.$2, raw);
