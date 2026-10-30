@@ -200,7 +200,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                                           AnimatedContainer(
                                             duration: const Duration(milliseconds: 300),
                                             curve: Curves.easeOutCubic,
-                                            height: chartH * sec / maxBar + 2,
+                                            height: (chartH - 2) * sec / maxBar + 2, // 2 是没读的日子也留的一条底
                                             decoration: BoxDecoration(
                                               color: _picked != null ? (_picked == i ? scheme.primary : scheme.primary.withValues(alpha: 0.25)) : (sec >= avg && avg > 0 ? scheme.primary : scheme.primary.withValues(alpha: 0.45)),
                                               borderRadius: BorderRadius.circular(_range == 1 ? 2 : 5),
@@ -219,7 +219,7 @@ class _StatsPageState extends ConsumerState<StatsPage> {
                               Positioned(
                                 left: 0,
                                 right: 0,
-                                bottom: 20 + chartH * avg / maxBar + 2,
+                                bottom: 20 + (chartH - 2) * avg / maxBar + 2,
                                 child: IgnorePointer(child: Container(height: 1, color: scheme.onSurfaceVariant.withValues(alpha: 0.5))),
                               ),
                           ],
