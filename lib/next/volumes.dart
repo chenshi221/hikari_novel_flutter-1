@@ -7,6 +7,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../models/cat_volume.dart';
 import 'cache.dart';
 import 'data.dart';
+import 'unlock.dart';
 import 'image_cache.dart';
 import 'progress.dart';
 import 'read_state.dart';
@@ -237,6 +238,9 @@ class VolumeCoverQueue {
         if (content == null) {
           try {
             content = await _ref.read(apiProvider).chapter(aid, v.illus!);
+          } on ChapterLockedException {
+            await Volumes.setCover(aid, title, ''); // 受限书的插图取不到，用书的封面
+            continue;
           } catch (_) {
             _queue.clear();
             _bg.clear(); // 网络出问题就先停，下次打开 App 再接着取

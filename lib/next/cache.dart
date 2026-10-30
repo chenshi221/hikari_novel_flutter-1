@@ -12,6 +12,7 @@ import 'data.dart';
 import 'image_cache.dart';
 import 'library.dart';
 import 'read_state.dart';
+import 'unlock.dart';
 
 /// 离线章节缓存。正文放在 LazyBox（只在读的时候才从磁盘取，不常驻内存），
 /// 章数、大小、书的信息放在一个很小的普通 Box 里，列表和计数不用碰正文。
@@ -280,7 +281,12 @@ class DownloadController extends Notifier<Map<String, DownloadState>> {
       for (final c in chapters) {
         if (_cancelled.contains(aid)) break;
         if (ChapterCache.has(aid, c.cid)) continue;
-        final content = await api.chapter(aid, c.cid);
+        final Content content;
+        try {
+          content = await api.chapter(aid, c.cid);
+        } on ChapterLockedException {
+          continue; // 受限书 TXT 里没有的章（插图），跳过
+        }
         // 请求期间可能已经暂停或删除了缓存：此时不能再写回去
         if (_cancelled.contains(aid)) break;
         await ChapterCache.put(aid, c.cid, content);

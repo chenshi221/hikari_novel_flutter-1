@@ -16,6 +16,7 @@ import '../models/recommend_block.dart';
 import '../models/reply_item.dart';
 import 'cache.dart';
 import 'session.dart';
+import 'unlock.dart';
 
 /// 列表的一页：[maxPage] 为 0 表示不知道总页数。
 /// 最近一次解析失败的搜索页原文，搜索页的"复制页面源码"用它，方便排查网站结构变化。
@@ -38,11 +39,14 @@ class NovelPage {
 /// 所有网络请求的入口：每个方法 = 请求页面 + 交给解析层。页面结构不对（多半是没登录）时抛出
 /// [Wenku8UnexpectedPageException]，界面据此提示去登录。
 class Api {
-  Api(this._client, this._urls, this._base, this._scope);
+  Api(this._client, this._urls, this._base, this._scope, {this.unlock});
 
   final Wenku8Client _client;
   final Wenku8Urls _urls;
   final String _base;
+
+  /// 受限书的正文改从文库 App 接口或全本 TXT 取
+  final UnlockService? unlock;
 
   /// 当前用户 ID（游客为 guest）：账号私有页面（书架）的离线备份按它分开存。
   final String _scope;
@@ -149,7 +153,11 @@ class Api {
   /// 只取目录（检查更新用，比 [novel] 少一次请求）。
   Future<List<CatVolume>> catalogue(String aid) => _cached(_urls.catalogue(aid), Wenku8Parser.catalogue, referer: '$_base/book/$aid.htm');
 
-  Future<Content> chapter(String aid, String cid) async => Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
+  Future<Content> chapter(String aid, String cid) async {
+    final content = Wenku8Parser.chapterContent(await _client.getPage(_urls.chapterContent(aid, cid), charsetParam: false, referer: _urls.catalogue(aid)));
+    if (!isLockedContent(content) || !(unlock?.enabled ?? false)) return content;
+    return unlock!.chapter(aid, cid, () => catalogue(aid));
+  }
 
   Future<Bookshelf> bookshelf(int classId, {bool fresh = false}) => _cached(_urls.bookshelf(classId), (html) => Wenku8Parser.bookshelf(html, classId), private: true, fresh: fresh);
 
@@ -181,5 +189,5 @@ class Api {
 final apiProvider = Provider<Api>((ref) {
   final node = ref.watch(nodeProvider);
   final scope = ref.watch(sessionProvider.select((s) => s is SessionLoggedIn ? s.user.uid : 'guest'));
-  return Api(ref.watch(wenku8ClientProvider), ref.watch(wenku8UrlsProvider), siteBase(node), scope);
+  return Api(ref.watch(wenku8ClientProvider), ref.watch(wenku8UrlsProvider), siteBase(node), scope, unlock: ref.watch(unlockServiceProvider));
 });

@@ -2,7 +2,7 @@ import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hikari_novel_flutter/next/reader/paginator.dart';
 import 'package:hikari_novel_flutter/next/reader/reader_body.dart' show readerStrut;
-import 'package:hikari_novel_flutter/next/reader/reader_page.dart' show formatChapter;
+import 'package:hikari_novel_flutter/next/reader/reader_page.dart' show formatChapter, halfWidth;
 
 void main() {
   const style = TextStyle(fontSize: 16, height: 1.5);
@@ -47,6 +47,12 @@ void main() {
   test('章节格式化：每段两个全角空格缩进，去掉空行和多余空白', () {
     expect(formatChapter('   第一段\n\n  第二段  \n\n'), '　　第一段\n　　第二段');
     expect(formatChapter(''), '');
+  });
+
+  test('全角英文、数字转半角，长度不变；中文标点和缩进不动', () {
+    const raw = '「Ｄｉｖｅ　Ｍａｓｓｉｖｅｌｙ」的ＤＭＭＯ－ＲＰＧ，第１章！　　中文';
+    expect(halfWidth(raw), '「Dive Massively」的DMMO-RPG，第1章！　　中文');
+    expect(halfWidth(raw).length, raw.length);
   });
 
   test('固定行高：带颜色的文字所在的行和别的行一样高，每页行数和切页时算的一致', () {
