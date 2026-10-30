@@ -3,14 +3,15 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 /// 封面四周的白边：框出来的封面常常带上旁边的白底（封面比框窄、框得不够准），扫描图本身也常有一圈白边。
-/// 图片解码成长边不超过 [maxSide] 的小图来找，够准也够快。
+/// 图片解码成长边不超过 [maxSide] 的图来找。不能缩得太小：跨页里框出的封面只占三成宽，
+/// 缩到 600 时十来像素的白边只剩一两个像素，就找不出来了。
 class CoverPixels {
   CoverPixels(this.rgba, this.w, this.h);
 
   final Uint8List rgba;
   final int w, h;
 
-  static Future<CoverPixels> decode(Uint8List bytes, {int maxSide = 600}) async {
+  static Future<CoverPixels> decode(Uint8List bytes, {int maxSide = 1600}) async {
     final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
     final desc = await ui.ImageDescriptor.encoded(buffer);
     final s = math.min(1.0, maxSide / math.max(desc.width, desc.height));
@@ -45,8 +46,8 @@ class CoverPixels {
     while (b < maxY && _blank(x0 + l, x1 - r, y1 - b - 1, y1 - b)) {
       b++;
     }
-    // 两三个像素的不算（缩小、压缩糊出来的），不值得改裁剪框
-    int real(int n) => n < 3 ? 0 : n + 1; // 收了的再多收 1 像素：白边到画面之间那条过渡的浅色
+    // 一两个像素的白边放大显示也是一条白线，照样收；收了的再多收 1 像素：白边到画面之间那条过渡的浅色
+    int real(int n) => n == 0 ? 0 : n + 1;
     l = real(l);
     r = real(r);
     t = real(t);

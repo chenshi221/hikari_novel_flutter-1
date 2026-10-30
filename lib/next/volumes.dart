@@ -7,6 +7,7 @@ import 'package:hive_ce_flutter/hive_flutter.dart';
 import '../models/cat_volume.dart';
 import 'cache.dart';
 import 'cover_trim.dart';
+import 'app_prefs.dart';
 import 'data.dart';
 import 'unlock.dart';
 import 'image_cache.dart';
@@ -286,6 +287,30 @@ class VolumeCoverQueue {
       }
     }
     await box.put('coverSkipDropped', true);
+  }
+
+  /// 有去白边以前挑好的卷封面补做一次（只做一次）：只收白边，不动框的位置；只用本机已有的图，不联网。
+  /// 手动框的仍记成手动框的（`#crop=`），关了「自动去白边」就不动它们。
+  Future<void> retrimOnce(Iterable<String> aids) async {
+    final box = Hive.box('session');
+    if (box.get('coverRetrimmed') == true) return;
+    final store = _ref.read(imageStoreProvider);
+    final manualOn = AppPrefs.read(P.coverTrim, true);
+    for (final aid in aids) {
+      for (final MapEntry(key: title, value: saved) in Volumes._covers(aid).entries) {
+        final manual = saved.contains('#crop=');
+        if (saved.isEmpty || (manual && !manualOn)) continue;
+        final (:url, :crop) = splitCrop(saved);
+        final bytes = await store.cached(url);
+        if (bytes == null) continue;
+        try {
+          final from = crop ?? const ui.Rect.fromLTWH(0, 0, 1, 1);
+          final r = (await CoverPixels.decode(bytes)).trim(from, maxTrim: manual ? 0.15 : 0.1);
+          if (r != from) await Volumes.setCover(aid, title, withCrop(url, r, auto: !manual));
+        } catch (_) {} // 解码不了就保持原样
+      }
+    }
+    await box.put('coverRetrimmed', true);
   }
 
   /// 自动挑的封面四周有白边（扫描图常有）就记一个裁剪框去掉（`#trim=`，见 [splitCrop]）。只收很窄的一圈，
