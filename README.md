@@ -106,6 +106,8 @@
 - [PiliPalaX](https://github.com/orz12/PiliPalaX)
 - [PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus)
 
+封面「提升清晰度」用的是 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) 的 realesr-animevideov3 模型（BSD-3-Clause，© Xintao Wang），转成 TFLite 后放在 `android/app/src/main/assets/sr_x4.tflite`。卷封面还会从 [Bangumi](https://bgm.tv) 找各卷的封面。
+
 ## 📄 许可证
 
 [MIT](./LICENSE) © 2026 [15dd](https://github.com/15dd)。本 fork 的修改同样以 MIT 发布，原作者的版权声明保留不变。

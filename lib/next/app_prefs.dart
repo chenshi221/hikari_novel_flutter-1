@@ -50,6 +50,7 @@ class P {
   static const lastTab = 'shelf.lastTab'; // String 上次停在的标签 id
   static const resumeBar = 'shelf.resumeBar'; // bool 书架顶上的「继续阅读」条
   static const coverTrim = 'shelf.coverTrim'; // bool 框封面时自动去掉四周的白边
+  static const coverSr = 'shelf.coverSr'; // int 提升清晰度：0 自动（长边不到 600 像素的图），1 手动（框封面时选）
 
   // 发现
   static const discoverRank = 'discover.rank'; // String 上次的排行榜

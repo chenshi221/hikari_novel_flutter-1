@@ -306,6 +306,12 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
   /// 标签栏：点一下切换，长按拖动调整顺序
   PreferredSizeWidget _tabStrip(List<LibCategory> tabs, TabController tc, LibraryState lib) {
     final counts = AppPrefs.read(P.tabCounts, false);
+    final query = ref.watch(shelfQueryProvider);
+    final opts = ref.watch(shelfOptionsProvider);
+    // 搜索时每个标签显示找到几本（和标签里列出来的一样，也算上筛选）
+    String label(LibCategory c) => query.isNotEmpty
+        ? '${c.name} ${_arrange(_booksIn(lib, c.id), shelfOptionsFor(opts, c.id), query, c.id).length}'
+        : (counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name);
     final theme = Theme.of(context);
     return PreferredSize(
       preferredSize: const Size.fromHeight(44),
@@ -356,7 +362,7 @@ class _BookshelfPageState extends ConsumerState<BookshelfPage> with TickerProvid
                           alignment: Alignment.center,
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           child: Text(
-                            counts ? '${c.name} ${_booksIn(lib, c.id).length}' : c.name,
+                            label(c),
                             style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color.lerp(theme.colorScheme.onSurfaceVariant, theme.colorScheme.primary, near)),
                           ),
                         ),
@@ -810,11 +816,36 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     final b = ref.read(libraryProvider).books[_selected.first];
     if (b == null) return;
     final controller = TextEditingController(text: b.shown);
+    final alts = titleAlternatives(b.title);
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('显示名称'),
-        content: TextField(controller: controller, autofocus: true, decoration: InputDecoration(hintText: b.title), onSubmitted: (v) => Navigator.pop(context, v)),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 两个译名点一个就用，书名长也能看全
+              for (final a in alts)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(a == b.shown ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                  title: Text(a),
+                  onTap: () => Navigator.pop(context, a),
+                ),
+              TextField(
+                controller: controller,
+                autofocus: alts.isEmpty,
+                minLines: 1,
+                maxLines: 4,
+                keyboardType: TextInputType.text, // 多行显示，但回车是确定不是换行
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(hintText: b.title),
+                onSubmitted: (v) => Navigator.pop(context, v),
+              ),
+            ],
+          ),
+        ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('确定'))],
       ),
     );
@@ -885,14 +916,14 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
     ref.watch(updateProvider); // 检查完更新后刷新未读数
     ref.watch(volumeChangesProvider); // 取到卷封面后换上
     final theme = Theme.of(context);
-    final inCat = query.isEmpty ? _booksIn(lib, widget.catId) : lib.books.values; // 搜索时不分标签，整个书架里找
+    final inCat = _booksIn(lib, widget.catId); // 搜索也只在这个标签里找，别的标签找到几本标在标签上
     final books = _arrange(inCat, o, query, widget.catId);
 
     final Widget body;
     if (lib.books.isEmpty) {
       body = const StatePanel(title: '书架还是空的', detail: '在书籍详情页点"加入书架"。登录后下拉可以把网站上的书架同步过来。');
     } else if (books.isEmpty) {
-      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : (query.isEmpty ? '没有符合条件的书' : '书架里没有找到「$query」'), detail: inCat.isEmpty && !widget.catId.startsWith('auto:') ? '在书架长按书本，选"分类"放进来。' : null);
+      body = StatePanel(title: inCat.isEmpty ? '这个分类还没有书' : (query.isEmpty ? '没有符合条件的书' : '这个分类里没有「$query」'), detail: inCat.isEmpty && !widget.catId.startsWith('auto:') ? '在书架长按书本，选"分类"放进来。' : null);
     } else if (o.sort == ShelfSort.custom && query.isEmpty && !o.filtering) {
       body = _reorderable(books);
     } else if (o.display == 2) {
@@ -947,11 +978,12 @@ class _ShelfState extends ConsumerState<_Shelf> with AutomaticKeepAliveClientMix
                   children: [
                     IconButton(icon: const Icon(Icons.close), onPressed: () => setState(_selected.clear)),
                     Expanded(child: Text('${_selected.length} 本', maxLines: 1, softWrap: false, overflow: TextOverflow.fade)),
-                    TextButton(onPressed: () => setState(() => _selected.addAll(books.map((b) => b.aid))), child: const Text('全选')),
-                    if (_selected.length == 1) TextButton(onPressed: _rename, child: const Text('改名')),
-                    if (_selected.length == 1) TextButton(onPressed: _pickCover, child: const Text('封面')),
-                    TextButton(onPressed: _setCats, child: const Text('分类')),
-                    TextButton(onPressed: _remove, child: const Text('移出')),
+                    // 和 Mihon 一样只放图标（长按看名字），文字按钮一行放不下
+                    IconButton(tooltip: '全选', icon: const Icon(Icons.select_all), onPressed: () => setState(() => _selected.addAll(books.map((b) => b.aid)))),
+                    if (_selected.length == 1) IconButton(tooltip: '改名', icon: const Icon(Icons.drive_file_rename_outline), onPressed: _rename),
+                    if (_selected.length == 1) IconButton(tooltip: '封面', icon: const Icon(Icons.image_outlined), onPressed: _pickCover),
+                    IconButton(tooltip: '分类', icon: const Icon(Icons.label_outline), onPressed: _setCats),
+                    IconButton(tooltip: '移出书架', icon: const Icon(Icons.delete_outline), onPressed: _remove),
                     PopupMenuButton<VoidCallback>(
                       tooltip: '更多',
                       onSelected: (f) => f(),

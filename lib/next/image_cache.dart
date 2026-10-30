@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' show Rect;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'app_prefs.dart';
 import 'cache.dart';
 import 'library.dart';
 import 'session.dart';
@@ -53,19 +54,30 @@ class ImageStore {
 
   static String _norm(String url) => splitCrop(url).url.replaceFirst('http://', 'https://');
 
-  /// 内存里有就直接给（同步），没有返回 null。
+  Uint8List? _hit(String key) {
+    final hit = _mem.remove(key);
+    return hit == null ? null : _mem[key] = hit;
+  }
+
+  /// 内存里有就直接给（同步），没有返回 null。放大过清晰度的图给放大后的（还没读进内存时返回 null，免得先闪一下原图）。
   Uint8List? peek(String rawUrl) {
     final url = _norm(rawUrl);
-    final hit = _mem.remove(url);
-    return hit == null ? null : _mem[url] = hit;
+    return _srShown(rawUrl, url) ? _hit('$url#sr') : _hit(url);
   }
 
   /// 这张图是不是本次运行时从网上下载的（界面据此决定要不要淡入）。
   bool downloaded(String rawUrl) => _downloaded.contains(_norm(rawUrl));
 
-  Future<Uint8List> load(String rawUrl) {
+  /// 图片字节；要放大清晰度的（见 [srSupported]）给放大后的，还没放大好就先给原图、排队去放大
+  Future<Uint8List> load(String rawUrl) async {
+    final bytes = await _load(rawUrl);
+    return srSupported ? _srOr(rawUrl, bytes) : bytes;
+  }
+
+  /// 原图字节（不管清晰度）
+  Future<Uint8List> _load(String rawUrl) {
     final url = _norm(rawUrl);
-    final hit = peek(url);
+    final hit = _hit(url);
     if (hit != null) return Future.value(hit);
     final running = _inflight[url];
     if (running != null) return running;
@@ -132,12 +144,98 @@ class ImageStore {
       await file.writeAsBytes(bytes);
       _downloaded.add(url);
     }
-    _memUsed += bytes.length - (_mem.remove(url)?.length ?? 0);
-    _mem[url] = bytes;
+    _put(url, bytes);
+    return bytes;
+  }
+
+  void _put(String key, Uint8List bytes) {
+    _memUsed += bytes.length - (_mem.remove(key)?.length ?? 0);
+    _mem[key] = bytes;
     while (_memUsed > _memBytes && _mem.length > 1) {
       _memUsed -= _mem.remove(_mem.keys.first)!.length;
     }
-    return bytes;
+  }
+
+  // ---- 提升清晰度（Real-ESRGAN 放大 4 倍，只有安卓，见 Upscaler.kt）----
+  // 自动模式放大长边不到 600 像素的图（文库的小封面、Bangumi 的老封面），手动模式只放大地址带 `#sr` 的（框封面时选的）。
+  // 放大好的存在 imgsr 目录，文件名和原图一样；不归图片缓存的清理管，清空图片缓存时一起删。
+
+  static bool get srSupported => !kIsWeb && Platform.isAndroid;
+
+  static bool get _srAuto => AppPrefs.read(P.coverSr, 0) == 0;
+
+  static const _upscale = MethodChannel('hikari/upscale');
+
+  /// 有图放大好了、模式换了：显示中的图重新取一次
+  final srVersion = ValueNotifier<int>(0);
+  Directory? _srDirCache;
+  Set<String>? _srDone; // 放大好的（原图文件名），第一次用到时从目录读
+  final _srQueue = <String>[];
+  final _srSkip = <String>{}; // 不用放大（太大）或放大失败的，这次运行不再试
+  bool _srRunning = false;
+
+  Future<Directory> _srDir() async => _srDirCache ??= await Directory(p.join((await getApplicationSupportDirectory()).path, 'imgsr')).create(recursive: true);
+
+  Future<Set<String>> _srIndex() async {
+    if (_srDone case final done?) return done;
+    final names = {await for (final f in (await _srDir()).list()) if (f is File) p.basename(f.path)};
+    if (_srDone != null) return _srDone!;
+    _srDone = names;
+    if (names.isNotEmpty) srVersion.value++; // 读到之前显示的是原图，换一下
+    return names;
+  }
+
+  bool _srShown(String raw, String url) => srSupported && (_srAuto || wantsSr(raw)) && (_srDone?.contains(_name(url)) ?? false);
+
+  Future<Uint8List> _srOr(String raw, Uint8List orig) async {
+    final manual = wantsSr(raw);
+    if (!_srAuto && !manual) return orig;
+    final url = _norm(raw);
+    final name = _name(url);
+    final done = await _srIndex();
+    if (done.contains(name)) {
+      final hit = _hit('$url#sr');
+      if (hit != null) return hit;
+      final f = File(p.join((await _srDir()).path, name));
+      if (await f.exists()) {
+        final b = await f.readAsBytes();
+        _put('$url#sr', b);
+        return b;
+      }
+      done.remove(name);
+    }
+    if (_srSkip.contains(url) || _srQueue.contains(url)) return orig;
+    if (!manual && (await imageSize(orig)).longestSide >= 600) {
+      _srSkip.add(url);
+      return orig;
+    }
+    _srQueue.add(url);
+    _pumpSr().ignore();
+    return orig;
+  }
+
+  /// 一次放大一张（手机上一张一两秒，几张一起跑会卡）
+  Future<void> _pumpSr() async {
+    if (_srRunning) return;
+    _srRunning = true;
+    try {
+      while (_srQueue.isNotEmpty) {
+        final url = _srQueue.removeAt(0);
+        try {
+          final out = await _upscale.invokeMethod<Uint8List>('upscale', {'bytes': await _load(url)});
+          if (out == null) throw StateError('empty');
+          await File(p.join((await _srDir()).path, _name(url))).writeAsBytes(out);
+          (await _srIndex()).add(_name(url));
+          _put('$url#sr', out);
+          srVersion.value++;
+        } catch (e) {
+          debugPrint('upscale $url: $e');
+          _srSkip.add(url);
+        }
+      }
+    } finally {
+      _srRunning = false;
+    }
   }
 
   /// 把磁盘上已有的这些图按顺序读进内存（不联网），内存用到一半就停，免得把别的图挤掉。
@@ -188,6 +286,11 @@ class ImageStore {
   Future<void> clearDisk() async {
     final dir = await _cacheDir();
     if (await dir.exists()) await dir.delete(recursive: true);
+    if (srSupported) {
+      await (await _srDir()).delete(recursive: true);
+      _srDirCache = null;
+      _srDone = null;
+    }
     _dir = null;
     _mem.clear();
     _memUsed = 0;
@@ -224,10 +327,11 @@ class ImageStore {
   }
 
   Future<int> diskBytes() async {
-    final dir = await _cacheDir();
     var n = 0;
-    await for (final f in dir.list()) {
-      if (f is File) n += await f.length();
+    for (final dir in [await _cacheDir(), if (srSupported) await _srDir()]) {
+      await for (final f in dir.list()) {
+        if (f is File) n += await f.length();
+      }
     }
     return n;
   }
@@ -289,12 +393,23 @@ Future<void> trimDir(Directory dir, int maxBytes, {Set<String> keep = const {}})
 /// 自选封面的裁剪框记在地址后面：`图片地址#crop=左,上,宽,高`（都是 0~1 的比例）。下载、缓存都按去掉它的地址算。
 /// 自动挑的封面去掉白边时记成 `#trim=`，显示上一样，只是不算手动挑的（图片缓存清理时可以删）。
 ({String url, Rect? crop}) splitCrop(String s) {
+  s = s.replaceFirst('#sr', '');
   var i = s.indexOf('#crop=');
   if (i < 0) i = s.indexOf('#trim=');
   if (i < 0) return (url: s, crop: null);
   final n = s.substring(i + 6).split(',').map(double.tryParse).toList();
   if (n.length != 4 || n.contains(null)) return (url: s.substring(0, i), crop: null);
   return (url: s.substring(0, i), crop: Rect.fromLTWH(n[0]!, n[1]!, n[2]!, n[3]!));
+}
+
+/// 框封面时选了「提升清晰度」：地址后面加 `#sr`（在裁剪框前面：`图片地址#sr#crop=…`），见 [ImageStore.load]
+bool wantsSr(String s) => s.contains('#sr');
+
+String withSr(String s, bool on) {
+  final clean = s.replaceFirst('#sr', '');
+  if (!on) return clean;
+  final i = clean.indexOf('#');
+  return i < 0 ? '$clean#sr' : '${clean.substring(0, i)}#sr${clean.substring(i)}';
 }
 
 String withCrop(String url, Rect r, {bool auto = false}) => '$url#${auto ? 'trim' : 'crop'}=${[r.left, r.top, r.width, r.height].map((e) => e.toStringAsFixed(4)).join(',')}';

@@ -8,6 +8,7 @@ import '../models/cat_volume.dart';
 import 'cache.dart';
 import 'cover_trim.dart';
 import 'app_prefs.dart';
+import 'bangumi.dart';
 import 'data.dart';
 import 'unlock.dart';
 import 'image_cache.dart';
@@ -78,6 +79,13 @@ class Volumes {
   static Future<void> setCover(String aid, String title, String url, {bool picked = false}) async {
     await _box.put('vcover2:$aid', {..._covers(aid), title: url});
     if (picked) await _box.put('vpick:$aid', (_picked(aid)..add(title)).toList());
+    changes.value++;
+  }
+
+  /// 一次记好几卷的封面（只发一次变化通知）
+  static Future<void> setCovers(String aid, Map<String, String> covers) async {
+    if (covers.isEmpty) return;
+    await _box.put('vcover2:$aid', {..._covers(aid), ...covers});
     changes.value++;
   }
 
@@ -182,6 +190,9 @@ class VolumeCoverQueue {
   final _queue = <(String, String)>[];
   final _bg = <(String, String)>[]; // 后台慢慢取的，排在眼前要看的后面
   bool _running = false;
+  final _bgmTried = <(String, String)>{}; // 这次运行里已经按 Bangumi 补过（或者对不上）的卷
+  final _bgmFilling = <String>{};
+  final _bgmFailed = <String>{}; // 连不上 Bangumi、图下不下来的书，这次运行不再试
 
   /// 后台把这些书在书架上显示的封面（第一卷的）取下来（打开 App、同步完书架后调用）。其他卷不常看，打开卷册页时再取。
   void prefetchAll(Iterable<String> aids) {
@@ -215,6 +226,7 @@ class VolumeCoverQueue {
       _queue.add((aid, v.title));
       Future.microtask(_pump);
     }
+    if (url == '' && !_bgmTried.contains((aid, v.title))) Future.microtask(() => _fillFromBangumi(aid));
     return url == null || url.isEmpty ? null : url;
   }
 
@@ -234,6 +246,7 @@ class VolumeCoverQueue {
         if (v == null || Volumes.cover(aid, title) != null) continue;
         if (v.illus == null) {
           await Volumes.setCover(aid, title, '');
+          _fillFromBangumi(aid).ignore();
           continue;
         }
         var content = await ChapterCache.get(aid, v.illus!);
@@ -241,7 +254,11 @@ class VolumeCoverQueue {
           try {
             content = await _ref.read(apiProvider).chapter(aid, v.illus!);
           } on ChapterLockedException {
-            await Volumes.setCover(aid, title, ''); // 受限书的插图取不到，用书的封面
+            // 受限书：哪一卷的插图都取不到，不用一卷一卷去试；没取过的都记成没插图，再一次按卷号从 Bangumi 补上
+            await Volumes.setCovers(aid, {for (final x in Volumes.of(aid)) if (Volumes.cover(aid, x.title) == null) x.title: ''});
+            _queue.removeWhere((e) => e.$1 == aid);
+            _bg.removeWhere((e) => e.$1 == aid);
+            _fillFromBangumi(aid).ignore();
             continue;
           } catch (_) {
             _queue.clear();
@@ -287,6 +304,32 @@ class VolumeCoverQueue {
       }
     }
     await box.put('coverSkipDropped', true);
+  }
+
+  /// 没插图的卷（受限书、没有插图章节的卷）去 Bangumi 找封面补上：正卷按卷号，8.5 卷、外传按 [matchExtraCovers]，对不上的不补，有封面的不动。
+  /// 哪一卷变成没插图了就来补一次；Bangumi 的结果存在本机，不会每次联网。
+  Future<void> _fillFromBangumi(String aid) async {
+    if (_bgmFailed.contains(aid) || !_bgmFilling.add(aid)) return;
+    try {
+      final s = await _ref.read(bangumiProvider).series(aid);
+      // 补的时候又有卷变成没插图的（比如受限书一次记了一整本），接着补
+      while (true) {
+        final vols = Volumes.of(aid);
+        final empty = {for (final v in vols) if (Volumes.cover(aid, v.title) == '' && _bgmTried.add((aid, v.title))) v.title};
+        if (empty.isEmpty || s == null) break;
+        // 拿所有卷去对（Bangumi 认不出卷号时要按全部正卷的顺序对），只用没插图的那些；正卷之外的（8.5 卷、外传）再按外传对
+        final titles = [for (final v in vols) v.title];
+        for (final MapEntry(key: title, value: img) in {...matchExtraCovers(titles, s), ...matchVolumeCovers(titles, s.vols)}.entries) {
+          if (!empty.contains(title)) continue;
+          final url = await _trimmed(img);
+          if (Volumes.cover(aid, title) == '') await Volumes.setCover(aid, title, url); // 下载期间手动换过的不动
+        }
+      }
+    } catch (_) {
+      _bgmFailed.add(aid);
+    } finally {
+      _bgmFilling.remove(aid);
+    }
   }
 
   /// 有去白边以前挑好的卷封面补做一次（只做一次）：只收白边，不动框的位置；只用本机已有的图，不联网。

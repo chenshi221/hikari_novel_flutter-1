@@ -10,4 +10,14 @@ void main() {
     // 跨月
     expect(readingStreak({'2026-03-01': 60, '2026-02-28': 60}, DateTime(2026, 3, 1)), 2);
   });
+
+  test('读一章平均多久：不到一分钟的章不算，不到两章返回 null', () {
+    expect(secondsPerChapter([{'d1': 300}, {'d1': 200, 'd2': 100}, {'d1': 30}]), 300);
+    expect(secondsPerChapter([{'d1': 300}, {'d1': 30}]), isNull);
+  });
+
+  test('阅读速度：字数除以时间，不到三章返回 null', () {
+    expect(charsPerMinute([(6000, 600), (3000, 300), (4000, 400), (9999, 10)]), 600);
+    expect(charsPerMinute([(6000, 600), (3000, 300)]), isNull);
+  });
 }

@@ -8,6 +8,24 @@ import 'catalog.dart';
 import 'data.dart';
 import 'session.dart';
 
+/// 有多个译名的书，网站把第二个译名用括号包在书名最后：「败北女角太多了！(败犬女主太多了！)」。
+/// 拆成 [前面的, 括号里的] 给改名时挑；只看最后一组括号（前面的括号是书名本身的一部分），拆不出两个返回空。
+List<String> titleAlternatives(String title) {
+  final t = title.trim();
+  if (!t.endsWith(')') && !t.endsWith('）')) return const [];
+  var depth = 0;
+  for (var i = t.length - 1; i >= 0; i--) {
+    final c = t[i];
+    if (c == ')' || c == '）') depth++;
+    if (c == '(' || c == '（') depth--;
+    if (depth > 0) continue;
+    String clean(String s) => s.replaceAll(RegExp(r'^[\s\-—–_]+|[\s\-—–_]+$'), '');
+    final main = clean(t.substring(0, i)), alt = clean(t.substring(i + 1, t.length - 1));
+    return main.isEmpty || alt.isEmpty || main == alt ? const [] : [main, alt];
+  }
+  return const [];
+}
+
 /// 本地书架里的一本书。书架页只读本地，网站书架只是定期对一下。
 class LibBook {
   const LibBook({required this.aid, required this.title, required this.img, this.added = 0, this.cats = const [], this.bid, this.done = false, this.name});

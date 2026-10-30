@@ -639,6 +639,8 @@ class _PagedBodyState extends State<PagedBody> {
   int _cols = 1; // 一屏几页（1 或 2）；_page、翻页动画的"页"都以一屏为单位
   double _head = 0; // 第一页开头章节标题的高度
   double _width = 0;
+  Size _imgBox = Size.zero; // 插图页的大小（整页，双页时一半），按它提前解码
+  Chapter? _fetched; // 已经开始在后台下载整章插图的那一章
 
   @override
   void initState() {
@@ -728,6 +730,21 @@ class _PagedBodyState extends State<PagedBody> {
     _cur = _offsetOf(page);
     widget.onOffset(_cur);
     if (page >= _units - 1) widget.onEnd();
+    _prefetch();
+  }
+
+  /// 插图章：整章的图按顺序在后台下好；前后一屏的图提前解码，翻过去直接出图（翻页时下一页才建出来）
+  void _prefetch() {
+    if (_c.images.isEmpty || _imgBox.isEmpty) return;
+    if (!identical(_fetched, _c)) {
+      _fetched = _c;
+      for (final url in _c.images) {
+        NetImage.precache(context, url, _imgBox, decode: false);
+      }
+    }
+    for (var i = (_page - 1) * _cols; i < (_page + 2) * _cols; i++) {
+      if (i >= _textPages && i < _total) NetImage.precache(context, _c.images[i - _textPages], _imgBox, fit: BoxFit.contain);
+    }
   }
 
   Widget _pageContent(BuildContext context, int unit, bool live, EdgeInsets pad) {
@@ -816,6 +833,10 @@ class _PagedBodyState extends State<PagedBody> {
           _cur = _offsetOf(_page);
           _keys.clear();
           _publish();
+          _imgBox = Size(box.maxWidth / cols, box.maxHeight);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _prefetch();
+          });
         }
         final Widget pages;
         if (widget.curl) {

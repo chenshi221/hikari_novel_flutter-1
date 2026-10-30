@@ -367,6 +367,17 @@ class _SectionState extends ConsumerState<SettingsSectionPage> {
       _switch('继续阅读按钮', P.resumeButton, true),
       _switch('未读章数角标', P.unreadBadge, true),
       _switch('已缓存章数角标', P.cacheBadge, false),
+      if (ImageStore.srSupported)
+        XChoice<int>(
+          title: '提升清晰度',
+          subtitle: _prefs.get(P.coverSr, 0) == 0 ? '小于 600 像素的图自动放大' : '框封面时自己选',
+          value: _prefs.get(P.coverSr, 0),
+          options: const {0: '自动', 1: '手动'},
+          onChanged: (v) {
+            _prefs.set(P.coverSr, v);
+            ref.read(imageStoreProvider).srVersion.value++;
+          },
+        ),
       const XDivider(),
       const XGroupTitle('书架顶部'),
       _switch('继续阅读条', P.resumeBar, true, subtitle: '最近读的一本，往下滑书架时自动收起'),
